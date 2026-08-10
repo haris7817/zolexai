@@ -190,29 +190,65 @@ npm run qa:flow         # 41-check demo walkthrough
 
 Guide §5 requires: *click link → interact*. No ZIP, no install, no source, no commands.
 
-**Recommended — Vercel**, free tier, native Next.js support:
+Every route is Static/SSG, so the recommended approach is to **build locally and
+deploy the finished folder**. That removes all build risk from the host.
+
+### Why prebuilt rather than build-on-host
+
+`apps/web/package.json` keeps `playwright` as a devDependency for the QA
+harnesses, and its install step downloads browsers. A host that runs
+`npm install && npm run build` will therefore be slow and may fail. Deploying the
+prebuilt output sidesteps it entirely. (If you'd rather let the host build, set
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` in its environment.)
+
+### Step 1 — build
 
 ```bash
-cd apps/web
-npx vercel            # first run links the project
-npx vercel --prod     # deploy
+cd e:\zolexai\apps\web
+npm run build:static
 ```
 
-Root Directory must be `apps/web` (it's a monorepo). No environment variables
-are needed — the demo has no backend.
+Produces `apps/web/out` — 29 pages, ~2.6 MB. **Verified fully interactive** from
+this folder: FAQ accordion, example-prompt helper, the complete simulated
+pipeline through to a result, client-side navigation between workflows, and
+Music correctly hiding its quality section.
 
-Then, per guide §5, point a **dedicated subdomain** at it and keep it separate
-from the eventual production URL:
+### Step 2 — publish `out/`
+
+**Vercel** (recommended — free, keeps the door open for `demo.zolexai.com`):
+
+```bash
+cd out
+npx vercel            # first run: log in + link the project
+npx vercel --prod     # returns the public URL
+```
+
+Vercel treats `out/` as a static site, so there is no install and no build.
+
+**Netlify Drop** (fastest, no account needed to start): open
+<https://app.netlify.com/drop> and drag the `out` folder in. Instant URL.
+
+**Cloudflare Pages**: `npx wrangler pages deploy out`.
+
+### Step 3 — subdomain (guide §5)
+
+Point a dedicated subdomain at the deployment, kept separate from the eventual
+production URL:
 
 ```
-demo.zolexai.com      ← preferred
+demo.zolexai.com
 ```
 
-Netlify or Cloudflare Pages work equally well. Avoid a static export: several
-screens are client-interactive and the routing is cleaner served properly.
+### Notes
 
-The demo is marked `robots: noindex, nofollow` so it can't be indexed while the
-real product is unbuilt.
+- The demo is `robots: noindex, nofollow`, so it cannot be indexed while the
+  real product doesn't exist.
+- No environment variables are required — there is no backend.
+- **Local check before serving `out/` yourself:** use `npx serve out`, not
+  `python -m http.server`. Python's server is single-threaded and stalls on
+  Next's parallel chunk requests, which silently breaks hydration and makes a
+  perfectly good build look dead.
+- Re-run `npm run build:static` after any revision; the folder is not live-linked.
 
 ---
 
