@@ -1,0 +1,20 @@
+{
+  "name": "zolexai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZolexAI - premium AI media-generation platform (monorepo)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=web",
+    "build": "npm run build --workspace=web",
+    "start": "npm run start --workspace=web",
+    "lint": "npm run lint --workspace=web",
+    "typecheck": "npm run typecheck --workspace=web"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}
