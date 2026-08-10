@@ -14,19 +14,22 @@ import path from "node:path";
  */
 const isStaticExport = process.env.NEXT_OUTPUT === "export";
 
-const nextConfig: NextConfig = {
-  // Monorepo: pin tracing to the repo root so Next does not guess from
-  // the nearest lockfile.
-  outputFileTracingRoot: path.join(__dirname, "../../"),
-
-  ...(isStaticExport
-    ? {
-        output: "export" as const,
-        // Static hosts serve /path/index.html rather than /path
-        trailingSlash: true,
-        images: { unoptimized: true },
-      }
-    : {}),
-};
+const nextConfig: NextConfig = isStaticExport
+  ? {
+      output: "export",
+      // Static hosts serve /path/index.html rather than /path
+      trailingSlash: true,
+      images: { unoptimized: true },
+      // NOTE: outputFileTracingRoot is deliberately NOT set here.
+      // Tracing is only meaningful for a server deployment, and forcing it
+      // during an export makes Next look for a trace manifest for the
+      // generated `icon.svg` metadata route, which does not exist:
+      //   ENOENT .next/server/app/icon.svg/route.js.nft.json
+    }
+  : {
+      // Monorepo: pin tracing to the repo root so Next does not guess from
+      // the nearest lockfile.
+      outputFileTracingRoot: path.join(__dirname, "../../"),
+    };
 
 export default nextConfig;
