@@ -9,7 +9,8 @@
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "qa:responsive": "node scripts/qa-responsive.mjs ./qa-output",
-    "qa:flow": "node scripts/qa-flow.mjs"
+    "qa:flow": "node scripts/qa-flow.mjs",
+    "build:static": "node scripts/build-static.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.31.0",
