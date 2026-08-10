@@ -149,11 +149,11 @@ function RecommendationCard({
   return (
     <Link
       href={href}
-      className="rounded-zx-lg border-zx-border-active hover:border-zx-border-active flex items-center gap-[18px] border bg-[linear-gradient(120deg,rgba(109,61,245,0.14),rgba(23,22,31,0.6))] p-5 transition-colors duration-150"
+      className="rounded-zx-lg border-zx-border-active hover:border-zx-border-active flex items-center gap-[18px] border bg-[linear-gradient(120deg,rgba(190,242,8,0.14),rgba(21,21,24,0.6))] p-5 transition-colors duration-150"
     >
       <span
         aria-hidden="true"
-        className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[13px] bg-[image:var(--zx-gradient-primary)] text-white"
+        className="flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[13px] bg-[image:var(--zx-gradient-primary)] text-zx-on-primary"
       >
         <Icon name={icon} size={20} />
       </span>

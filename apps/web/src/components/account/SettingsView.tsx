@@ -162,7 +162,7 @@ function ProfileSection() {
       <div className="mb-6 flex items-center gap-4">
         <span
           aria-hidden="true"
-          className="flex h-16 w-16 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--zx-accent),#5636C9)] text-[20px] font-extrabold text-white"
+          className="flex h-16 w-16 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--zx-accent),#6E8F05)] text-[20px] font-extrabold text-zx-on-primary"
         >
           {mockUser.initials}
         </span>

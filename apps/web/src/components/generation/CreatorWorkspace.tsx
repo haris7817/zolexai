@@ -133,7 +133,7 @@ export function CreatorWorkspace({
           </div>
         </div>
 
-        <div className="rounded-zx-lg border-zx-border relative flex min-h-[52vh] flex-1 items-center justify-center overflow-hidden border bg-[radial-gradient(ellipse_at_50%_18%,rgba(109,61,245,0.07),transparent_60%),var(--zx-bg-secondary)] tablet:min-h-0">
+        <div className="rounded-zx-lg border-zx-border relative flex min-h-[52vh] flex-1 items-center justify-center overflow-hidden border bg-[radial-gradient(ellipse_at_50%_18%,rgba(190,242,8,0.07),transparent_60%),var(--zx-bg-secondary)] tablet:min-h-0">
           {!selectedJob ? <EmptyGenerationState workflow={workflow} /> : null}
           {selectedJob && jobRunning ? (
             <GenerationProgress job={selectedJob} />

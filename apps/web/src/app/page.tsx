@@ -76,7 +76,7 @@ export default function LandingPage() {
               },
             ].map((step) => (
               <div key={step.n} className="px-6 py-8 text-center">
-                <div className="border-zx-border-active text-zx-primary-light mx-auto mb-5 flex h-[52px] w-[52px] items-center justify-center rounded-[16px] border bg-[linear-gradient(135deg,rgba(109,61,245,0.3),rgba(157,107,255,0.15))] text-[20px] font-extrabold">
+                <div className="border-zx-border-active text-zx-primary-light mx-auto mb-5 flex h-[52px] w-[52px] items-center justify-center rounded-[16px] border bg-[linear-gradient(135deg,rgba(190,242,8,0.3),rgba(198,242,36,0.15))] text-[20px] font-extrabold">
                   {step.n}
                 </div>
                 <div className="mb-2 text-[19px] font-extrabold">
@@ -108,7 +108,7 @@ export default function LandingPage() {
               className={`border-zx-border relative overflow-hidden rounded-[14px] border ${item.span}`}
               style={{ background: item.bg }}
             >
-              <span className="text-zx-text absolute bottom-3 left-[14px] rounded-[7px] bg-[rgba(13,12,19,0.65)] px-[10px] py-1 text-[11.5px] font-bold backdrop-blur-[4px]">
+              <span className="text-zx-text absolute bottom-3 left-[14px] rounded-[7px] bg-[rgba(10,10,11,0.65)] px-[10px] py-1 text-[11.5px] font-bold backdrop-blur-[4px]">
                 {item.label}
               </span>
             </div>
@@ -128,7 +128,7 @@ export default function LandingPage() {
                 key={benefit.title}
                 className="bg-zx-surface border-zx-border rounded-zx-lg border p-6"
               >
-                <span className="border-zx-border-active text-zx-primary-light mb-4 flex h-11 w-11 items-center justify-center rounded-[13px] border bg-[linear-gradient(135deg,rgba(109,61,245,0.3),rgba(157,107,255,0.12))]">
+                <span className="border-zx-border-active text-zx-primary-light mb-4 flex h-11 w-11 items-center justify-center rounded-[13px] border bg-[linear-gradient(135deg,rgba(190,242,8,0.3),rgba(198,242,36,0.12))]">
                   <Icon name={benefit.icon} size={19} />
                 </span>
                 <div className="mb-2 text-[16px] font-extrabold">
@@ -159,7 +159,7 @@ export default function LandingPage() {
           <div className="relative text-left">
             <div
               aria-hidden="true"
-              className="absolute -inset-px rounded-[21px] bg-[linear-gradient(135deg,#9D6BFF,rgba(109,61,245,0.2)_50%,#6D3DF5)]"
+              className="absolute -inset-px rounded-[21px] bg-[linear-gradient(135deg,#C6F224,rgba(190,242,8,0.2)_50%,#33430D)]"
             />
             <div className="bg-zx-surface relative rounded-[20px] p-7 laptop:p-9">
               <div className="mb-2 flex items-center justify-between gap-3">
@@ -244,18 +244,18 @@ const g = (a: string, b: string) => `linear-gradient(140deg, ${a}, ${b})`;
 const SHOWCASE = [
   {
     span: "col-span-2",
-    bg: g("#3B2B85", "#191436"),
+    bg: g("#222C10", "#121808"),
     label: "Video · Neon city flythrough",
   },
-  { span: "col-span-1", bg: g("#5636C9", "#241C4E"), label: "Image · Portrait study" },
-  { span: "col-span-1", bg: g("#2E2260", "#151129"), label: "Audio · Ambient score" },
-  { span: "col-span-1", bg: g("#1F1A45", "#4A2FA0"), label: "Video · Product loop" },
+  { span: "col-span-1", bg: g("#2C3A0B", "#141A0C"), label: "Image · Portrait study" },
+  { span: "col-span-1", bg: g("#18200A", "#0E1207"), label: "Audio · Ambient score" },
+  { span: "col-span-1", bg: g("#101318", "#242A32"), label: "Video · Product loop" },
   {
     span: "col-span-2",
-    bg: g("#211A48", "#6D3DF5"),
+    bg: g("#182008", "#33430D"),
     label: "Music video · Synthwave",
   },
-  { span: "col-span-1", bg: g("#42309A", "#171331"), label: "Image · Concept art" },
+  { span: "col-span-1", bg: g("#28340D", "#10160A"), label: "Image · Concept art" },
 ];
 
 const BENEFITS: { icon: IconName; title: string; desc: string }[] = [

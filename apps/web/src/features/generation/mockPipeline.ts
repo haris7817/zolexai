@@ -103,8 +103,8 @@ export function runMockPipeline(
 
 /** Placeholder thumbnails, cycled so consecutive jobs look distinct. */
 export const MOCK_THUMBS: string[] = [
-  "linear-gradient(140deg, #3B2B85, #191436)",
-  "linear-gradient(140deg, #5636C9, #241C4E)",
-  "linear-gradient(140deg, #6D3DF5, #211A48)",
-  "linear-gradient(140deg, #42309A, #171331)",
+  "linear-gradient(140deg, #222C10, #121808)",
+  "linear-gradient(140deg, #2C3A0B, #141A0C)",
+  "linear-gradient(140deg, #33430D, #182008)",
+  "linear-gradient(140deg, #28340D, #10160A)",
 ];

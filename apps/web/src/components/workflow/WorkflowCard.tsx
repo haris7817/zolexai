@@ -57,7 +57,7 @@ export function WorkflowCard({
       )}
     >
       <span
-        className="mb-[14px] flex h-[38px] w-[38px] items-center justify-center rounded-[11px] text-[#E4DFFF]"
+        className="mb-[14px] flex h-[38px] w-[38px] items-center justify-center rounded-[11px] text-zx-text"
         style={{ background: workflow.thumb }}
       >
         <Icon name={workflow.icon} size={17} />

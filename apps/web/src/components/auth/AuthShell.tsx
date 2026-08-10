@@ -34,7 +34,7 @@ export function AuthShell({
     <div className="bg-zx-bg text-zx-text relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-5 py-12">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute top-[-220px] left-1/2 h-[560px] w-[860px] max-w-[150vw] -translate-x-1/2 bg-[radial-gradient(ellipse_at_center,rgba(109,61,245,0.22)_0%,rgba(109,61,245,0)_65%)]"
+        className="pointer-events-none absolute top-[-220px] left-1/2 h-[560px] w-[860px] max-w-[150vw] -translate-x-1/2 bg-[radial-gradient(ellipse_at_center,rgba(190,242,8,0.14)_0%,rgba(190,242,8,0)_65%)]"
       />
 
       <div className="relative w-full max-w-[400px]">
@@ -45,7 +45,7 @@ export function AuthShell({
         <div className="relative">
           <div
             aria-hidden="true"
-            className="absolute -inset-px rounded-[19px] bg-[linear-gradient(135deg,rgba(157,107,255,0.45),rgba(109,61,245,0.12)_50%,rgba(157,107,255,0.3))]"
+            className="absolute -inset-px rounded-[19px] bg-[linear-gradient(135deg,rgba(198,242,36,0.45),rgba(190,242,8,0.12)_50%,rgba(198,242,36,0.3))]"
           />
           <div className="bg-zx-surface relative rounded-[18px] p-7">
             <h1 className="text-zx-text m-0 mb-[6px] text-[22px] font-extrabold tracking-[-0.02em]">

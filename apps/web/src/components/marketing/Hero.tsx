@@ -13,7 +13,7 @@ export function Hero() {
     <section className="relative px-5 pt-12 pb-16 text-center tablet:px-8 laptop:px-12 laptop:pt-[88px] laptop:pb-24">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute top-[-180px] left-1/2 h-[600px] w-[900px] max-w-[140vw] -translate-x-1/2 bg-[radial-gradient(ellipse_at_center,rgba(109,61,245,0.28)_0%,rgba(109,61,245,0)_65%)]"
+        className="pointer-events-none absolute top-[-180px] left-1/2 h-[600px] w-[900px] max-w-[140vw] -translate-x-1/2 bg-[radial-gradient(ellipse_at_center,rgba(190,242,8,0.16)_0%,rgba(190,242,8,0)_65%)]"
       />
 
       <div className="relative mx-auto max-w-[820px]">
@@ -25,11 +25,14 @@ export function Hero() {
           One workspace. Every AI creation tool.
         </div>
 
-        <h1 className="m-0 mb-6 text-[clamp(38px,8vw,72px)] leading-[1.04] font-extrabold tracking-[-0.035em]">
-          Turn Ideas Into
+        {/* Uppercase display type is wider per character than the previous
+            mixed-case headline, so the clamp floor is raised and the ceiling
+            eased to keep "IMPOSSIBLE." on one line down to 390px. */}
+        <h1 className="m-0 mb-6 text-[clamp(36px,7.5vw,72px)] leading-[1.02] font-extrabold tracking-[-0.03em] uppercase">
+          Create The
           <br />
-          <span className="bg-[linear-gradient(120deg,#9D6BFF,#C4B5FD_60%,#7E52FF)] bg-clip-text text-transparent">
-            Motion.
+          <span className="bg-[linear-gradient(120deg,#D2FF3A,#E6FF9C_55%,#A9DE00)] bg-clip-text text-transparent">
+            Impossible.
           </span>
         </h1>
 
@@ -63,7 +66,7 @@ function WorkspaceMockup() {
     <div className="relative mx-auto mt-14 max-w-[1080px] laptop:mt-[72px]">
       <div
         aria-hidden="true"
-        className="absolute -inset-[2px] rounded-[22px] bg-[linear-gradient(135deg,rgba(157,107,255,0.5),rgba(109,61,245,0.1)_40%,rgba(157,107,255,0.35))] blur-[1px]"
+        className="absolute -inset-[2px] rounded-[22px] bg-[linear-gradient(135deg,rgba(198,242,36,0.5),rgba(190,242,8,0.1)_40%,rgba(198,242,36,0.35))] blur-[1px]"
       />
       <div className="bg-zx-surface border-zx-border relative overflow-hidden rounded-[20px] border shadow-[0_40px_120px_rgba(0,0,0,0.6)]">
         <div className="border-zx-border flex items-center gap-[6px] border-b px-[18px] py-3">
@@ -71,7 +74,7 @@ function WorkspaceMockup() {
             <span
               key={dot}
               aria-hidden="true"
-              className="h-[10px] w-[10px] rounded-full bg-[#2A2545]"
+              className="h-[10px] w-[10px] rounded-full bg-[#26291F]"
             />
           ))}
         </div>
@@ -101,11 +104,11 @@ function WorkspaceMockup() {
             )}
           </div>
 
-          <div className="flex items-center justify-center bg-[radial-gradient(ellipse_at_50%_30%,rgba(109,61,245,0.12),transparent_70%)] p-5 laptop:p-7">
-            <div className="border-zx-border relative flex aspect-video w-full max-w-[560px] items-center justify-center overflow-hidden rounded-[14px] border bg-[linear-gradient(140deg,#1C1838_0%,#2A1F55_50%,#171331_100%)]">
+          <div className="flex items-center justify-center bg-[radial-gradient(ellipse_at_50%_30%,rgba(190,242,8,0.12),transparent_70%)] p-5 laptop:p-7">
+            <div className="border-zx-border relative flex aspect-video w-full max-w-[560px] items-center justify-center overflow-hidden rounded-[14px] border bg-[linear-gradient(140deg,#141A08_0%,#1E2A08_50%,#10160A_100%)]">
               <div
                 aria-hidden="true"
-                className="absolute inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(157,107,255,0.35),transparent_55%)]"
+                className="absolute inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(198,242,36,0.16),transparent_60%)]"
               />
               <div className="relative flex h-[58px] w-[58px] items-center justify-center rounded-full border border-white/25 bg-white/10 backdrop-blur-[6px]">
                 <span
@@ -120,7 +123,7 @@ function WorkspaceMockup() {
             <div className="text-zx-text-muted text-[11px] font-bold tracking-[0.08em]">
               PROMPT
             </div>
-            <div className="border-zx-border text-zx-text-secondary rounded-[10px] border bg-[#171331] p-[10px] text-[11.5px] leading-[1.5]">
+            <div className="border-zx-border text-zx-text-secondary rounded-[10px] border bg-[#10160A] p-[10px] text-[11.5px] leading-[1.5]">
               A slow cinematic dolly shot through a neon-lit city at dusk, rain
               reflections…
             </div>
@@ -140,7 +143,7 @@ function WorkspaceMockup() {
                 </span>
               ))}
             </div>
-            <div className="mt-auto rounded-[10px] bg-[image:var(--zx-gradient-primary)] p-[11px] text-center text-[13px] font-extrabold text-white">
+            <div className="mt-auto rounded-[10px] bg-[image:var(--zx-gradient-primary)] p-[11px] text-center text-[13px] font-extrabold text-zx-on-primary">
               Generate
             </div>
           </div>

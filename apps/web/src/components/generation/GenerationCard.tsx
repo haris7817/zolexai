@@ -48,7 +48,7 @@ export function GenerationCard({ generation }: { generation: MockGeneration }) {
           />
         ) : null}
 
-        <span className="text-zx-text absolute right-[10px] bottom-[10px] rounded-md bg-[rgba(13,12,19,0.7)] px-2 py-[3px] text-[10.5px] font-bold">
+        <span className="text-zx-text absolute right-[10px] bottom-[10px] rounded-md bg-[rgba(10,10,11,0.7)] px-2 py-[3px] text-[10.5px] font-bold">
           {generation.duration}
         </span>
       </div>

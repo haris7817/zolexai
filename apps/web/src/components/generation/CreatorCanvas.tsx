@@ -27,7 +27,7 @@ export function EmptyGenerationState({
         aria-hidden="true"
         className="mx-auto mb-[22px] flex aspect-video w-[120px] items-center justify-center rounded-[10px] border-[1.5px] border-dashed border-white/14"
       >
-        <span className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-[image:var(--zx-gradient-primary)] text-[15px] font-extrabold text-white opacity-55">
+        <span className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-[image:var(--zx-gradient-primary)] text-[15px] font-extrabold text-zx-on-primary opacity-55">
           {brand.shortName}
         </span>
       </div>
@@ -44,7 +44,7 @@ export function EmptyGenerationState({
 export function GenerationProgress({ job }: { job: GenerationJob }) {
   return (
     <div className="animate-zx-fade-up w-[max(220px,min(520px,100%-56px,calc((100vh-380px)*1.78)))] text-center">
-      <div className="rounded-zx-md border-zx-border animate-zx-shimmer mb-[22px] aspect-video border bg-[linear-gradient(110deg,var(--zx-surface)_30%,#221E38_50%,var(--zx-surface)_70%)] bg-[length:200%_100%]" />
+      <div className="rounded-zx-md border-zx-border animate-zx-shimmer mb-[22px] aspect-video border bg-[linear-gradient(110deg,var(--zx-surface)_30%,#1E2418_50%,var(--zx-surface)_70%)] bg-[length:200%_100%]" />
 
       <div
         role="status"
@@ -97,7 +97,7 @@ export function GenerationResult({
       >
         <div
           aria-hidden="true"
-          className="absolute inset-0 bg-[radial-gradient(circle_at_65%_25%,rgba(157,107,255,0.22),transparent_55%)]"
+          className="absolute inset-0 bg-[radial-gradient(circle_at_65%_25%,rgba(198,242,36,0.13),transparent_60%)]"
         />
 
         {isAudio ? <AudioWaveform /> : null}
@@ -113,7 +113,7 @@ export function GenerationResult({
           />
         </button>
 
-        <span className="text-zx-text absolute right-[14px] bottom-3 rounded-md bg-[rgba(13,12,19,0.7)] px-[9px] py-[4px] text-[11px] font-bold">
+        <span className="text-zx-text absolute right-[14px] bottom-3 rounded-md bg-[rgba(10,10,11,0.7)] px-[9px] py-[4px] text-[11px] font-bold">
           {job.parameters.duration}
         </span>
       </div>

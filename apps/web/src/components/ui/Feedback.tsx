@@ -55,7 +55,7 @@ export function StatusPill({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-[6px] rounded-md bg-[rgba(13,12,19,0.7)] px-[9px] py-[3px] text-[10.5px] font-extrabold backdrop-blur-[4px]",
+        "inline-flex items-center gap-[6px] rounded-md bg-[rgba(10,10,11,0.7)] px-[9px] py-[3px] text-[10.5px] font-extrabold backdrop-blur-[4px]",
         TONE_TEXT[tone],
       )}
     >
@@ -98,7 +98,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "animate-zx-shimmer bg-[linear-gradient(110deg,var(--zx-surface)_30%,#221E38_50%,var(--zx-surface)_70%)] bg-[length:200%_100%]",
+        "animate-zx-shimmer bg-[linear-gradient(110deg,var(--zx-surface)_30%,#1E2418_50%,var(--zx-surface)_70%)] bg-[length:200%_100%]",
         className,
       )}
     />

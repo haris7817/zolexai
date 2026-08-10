@@ -17,8 +17,9 @@ export type ButtonVariant = "primary" | "ghost" | "subtle";
 export type ButtonSize = "sm" | "md" | "lg";
 
 const VARIANT: Record<ButtonVariant, string> = {
+  // Near-black text, NOT white: white on lime is ~1.3:1 contrast. See tokens.css.
   primary:
-    "bg-[image:var(--zx-gradient-primary)] text-white font-extrabold shadow-zx-cta hover:brightness-110",
+    "bg-[image:var(--zx-gradient-primary)] text-zx-on-primary font-extrabold shadow-zx-cta hover:brightness-110",
   ghost:
     "bg-zx-surface border border-zx-border text-zx-text-secondary font-bold hover:text-zx-text hover:border-white/16",
   subtle:
@@ -83,7 +84,7 @@ export function ButtonLink({
         fullWidth && "w-full",
         // Links inherit the anchor colour rule in tokens.css; override it.
         "hover:no-underline",
-        variant === "primary" && "text-white hover:text-white",
+        variant === "primary" && "text-zx-on-primary hover:text-zx-on-primary",
         className,
       )}
       {...rest}

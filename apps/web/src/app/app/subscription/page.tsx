@@ -31,7 +31,7 @@ export default function SubscriptionPage() {
           <section className="relative">
             <div
               aria-hidden="true"
-              className="absolute -inset-px rounded-[17px] bg-[linear-gradient(135deg,#9D6BFF,rgba(109,61,245,0.2)_50%,#6D3DF5)]"
+              className="absolute -inset-px rounded-[17px] bg-[linear-gradient(135deg,#C6F224,rgba(190,242,8,0.2)_50%,#8CB80A)]"
             />
             <div className="bg-zx-surface relative rounded-[16px] p-6">
               <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
@@ -215,7 +215,7 @@ export default function SubscriptionPage() {
             </p>
           </section>
 
-          <section className="border-zx-border-active rounded-zx-lg border bg-[linear-gradient(120deg,rgba(109,61,245,0.14),rgba(23,22,31,0.6))] p-5">
+          <section className="border-zx-border-active rounded-zx-lg border bg-[linear-gradient(120deg,rgba(190,242,8,0.14),rgba(21,21,24,0.6))] p-5">
             <h2 className="text-zx-text m-0 mb-2 text-[14px] font-extrabold">
               Need a hand?
             </h2>

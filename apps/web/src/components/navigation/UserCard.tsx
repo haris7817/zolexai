@@ -30,7 +30,7 @@ export function UserCard({
       <div className="flex items-center gap-[10px] pl-[6px]">
         <span
           aria-hidden="true"
-          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--zx-accent),#5636C9)] text-[11px] font-extrabold text-white"
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--zx-accent),#6E8F05)] text-[11px] font-extrabold text-zx-on-primary"
         >
           {mockUser.initials}
         </span>

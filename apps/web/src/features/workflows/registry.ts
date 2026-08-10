@@ -57,7 +57,7 @@ export const WORKFLOWS: Record<WorkflowId, WorkflowDefinition> = {
       reuseSettings: true,
       variation: true,
     },
-    thumb: g("#4A2FA0", "#2A1F55"),
+    thumb: g("#26320C", "#151C08"),
   },
 
   "image-to-video": {
@@ -88,7 +88,7 @@ export const WORKFLOWS: Record<WorkflowId, WorkflowDefinition> = {
       reuseSettings: true,
       variation: true,
     },
-    thumb: g("#6D3DF5", "#1F1A45"),
+    thumb: g("#33430D", "#111708"),
   },
 
   "video-to-video": {
@@ -119,7 +119,7 @@ export const WORKFLOWS: Record<WorkflowId, WorkflowDefinition> = {
       reuseSettings: true,
       variation: true,
     },
-    thumb: g("#3B2B85", "#241C4E"),
+    thumb: g("#222C10", "#141A0C"),
   },
 
   "extend-video": {
@@ -150,7 +150,7 @@ export const WORKFLOWS: Record<WorkflowId, WorkflowDefinition> = {
       reuseSettings: true,
       variation: false,
     },
-    thumb: g("#5636C9", "#1C1838"),
+    thumb: g("#2C3A0B", "#141A08"),
   },
 
   music: {
@@ -182,7 +182,7 @@ export const WORKFLOWS: Record<WorkflowId, WorkflowDefinition> = {
       reuseSettings: true,
       variation: true,
     },
-    thumb: g("#2E2260", "#171331"),
+    thumb: g("#18200A", "#10160A"),
   },
 
   "music-video": {
@@ -213,7 +213,7 @@ export const WORKFLOWS: Record<WorkflowId, WorkflowDefinition> = {
       reuseSettings: true,
       variation: true,
     },
-    thumb: g("#35256E", "#211A48"),
+    thumb: g("#1C240C", "#182008"),
   },
 };
 

@@ -33,7 +33,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "18.4 MB",
     createdLabel: "12 min ago",
     order: 1,
-    thumb: g("#241C4E", "#42309A"),
+    thumb: g("#141A0C", "#28340D"),
   },
   {
     id: "asset_700",
@@ -45,7 +45,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "9.1 MB",
     createdLabel: "1 hour ago",
     order: 2,
-    thumb: g("#6D3DF5", "#211A48"),
+    thumb: g("#33430D", "#182008"),
   },
   {
     id: "asset_699",
@@ -57,7 +57,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "2.3 MB",
     createdLabel: "3 hours ago",
     order: 3,
-    thumb: g("#2E2260", "#171331"),
+    thumb: g("#23262B", "#0D0F12"),
   },
   {
     id: "asset_698",
@@ -69,7 +69,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "4.7 MB",
     createdLabel: "3 hours ago",
     order: 4,
-    thumb: g("#4A2FA0", "#1C1838"),
+    thumb: g("#26320C", "#141A08"),
   },
   {
     id: "asset_697",
@@ -81,7 +81,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "17.9 MB",
     createdLabel: "5 hours ago",
     order: 5,
-    thumb: g("#3B2B85", "#191436"),
+    thumb: g("#222C10", "#121808"),
   },
   {
     id: "asset_696",
@@ -93,7 +93,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "41.2 MB",
     createdLabel: "Yesterday",
     order: 6,
-    thumb: g("#2A2233", "#17141F"),
+    thumb: g("#1C232A", "#0B0E11"),
   },
   {
     id: "asset_695",
@@ -105,7 +105,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "96.8 MB",
     createdLabel: "Yesterday",
     order: 7,
-    thumb: g("#5636C9", "#1C1838"),
+    thumb: g("#2C3A0B", "#141A08"),
   },
   {
     id: "asset_694",
@@ -117,7 +117,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "4.6 MB",
     createdLabel: "3 days ago",
     order: 8,
-    thumb: g("#2E2260", "#151129"),
+    thumb: g("#18200A", "#0E1207"),
   },
   {
     id: "asset_693",
@@ -129,7 +129,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "3.1 MB",
     createdLabel: "3 days ago",
     order: 9,
-    thumb: g("#42309A", "#171331"),
+    thumb: g("#26261F", "#101010"),
   },
   {
     id: "asset_692",
@@ -141,7 +141,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "7.4 MB",
     createdLabel: "4 days ago",
     order: 10,
-    thumb: g("#1F1A45", "#4A2FA0"),
+    thumb: g("#111708", "#26320C"),
   },
   {
     id: "asset_691",
@@ -153,7 +153,7 @@ export const mockMedia: MockMediaItem[] = [
     size: "6.2 MB",
     createdLabel: "1 week ago",
     order: 11,
-    thumb: g("#241C4E", "#3B2B85"),
+    thumb: g("#141A0C", "#222C10"),
   },
   {
     id: "asset_690",
@@ -165,6 +165,6 @@ export const mockMedia: MockMediaItem[] = [
     size: "52.3 MB",
     createdLabel: "1 week ago",
     order: 12,
-    thumb: g("#35256E", "#211A48"),
+    thumb: g("#23262B", "#0D0F12"),
   },
 ];

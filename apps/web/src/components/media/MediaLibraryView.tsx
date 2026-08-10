@@ -177,19 +177,19 @@ function AssetCard({
         className="relative block w-full cursor-pointer"
         style={{ background: item.thumb, aspectRatio: "16 / 10" }}
       >
-        <span className="text-zx-text absolute top-2 left-2 flex items-center gap-[5px] rounded-md bg-[rgba(13,12,19,0.7)] px-[7px] py-[3px] text-[10px] font-bold backdrop-blur-[4px]">
+        <span className="text-zx-text absolute top-2 left-2 flex items-center gap-[5px] rounded-md bg-[rgba(10,10,11,0.7)] px-[7px] py-[3px] text-[10px] font-bold backdrop-blur-[4px]">
           <Icon name={kindIcon} size={11} />
           {item.source === "generated" ? "Generated" : "Upload"}
         </span>
 
         {selected ? (
-          <span className="bg-zx-primary absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full text-white">
+          <span className="bg-zx-primary absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded-full text-zx-on-primary">
             <Icon name="check" size={12} />
           </span>
         ) : null}
 
         {item.duration ? (
-          <span className="text-zx-text absolute right-2 bottom-2 rounded-md bg-[rgba(13,12,19,0.7)] px-[7px] py-[3px] text-[10px] font-bold">
+          <span className="text-zx-text absolute right-2 bottom-2 rounded-md bg-[rgba(10,10,11,0.7)] px-[7px] py-[3px] text-[10px] font-bold">
             {item.duration}
           </span>
         ) : null}

@@ -38,7 +38,7 @@ export function QuickStart() {
       {/* Gradient hairline border from the approved design */}
       <div
         aria-hidden="true"
-        className="absolute -inset-px rounded-[19px] bg-[linear-gradient(120deg,rgba(157,107,255,0.55),rgba(109,61,245,0.12)_45%,rgba(157,107,255,0.35))]"
+        className="absolute -inset-px rounded-[19px] bg-[linear-gradient(120deg,rgba(198,242,36,0.55),rgba(190,242,8,0.12)_45%,rgba(198,242,36,0.35))]"
       />
       <div className="bg-zx-bg-alt relative rounded-[18px] px-5 pt-5 pb-4">
         <label htmlFor="zx-quick-prompt" className="sr-only">
@@ -83,7 +83,7 @@ export function QuickStart() {
           <button
             type="button"
             onClick={start}
-            className="rounded-zx-md shadow-zx-cta inline-flex cursor-pointer items-center gap-2 bg-[image:var(--zx-gradient-primary)] px-[26px] py-[11px] text-[14px] font-extrabold text-white transition-[filter] duration-150 hover:brightness-110"
+            className="rounded-zx-md shadow-zx-cta inline-flex cursor-pointer items-center gap-2 bg-[image:var(--zx-gradient-primary)] px-[26px] py-[11px] text-[14px] font-extrabold text-zx-on-primary transition-[filter] duration-150 hover:brightness-110"
           >
             Generate
             <Icon name="arrowRight" size={15} />

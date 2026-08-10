@@ -44,7 +44,7 @@ export function BrandMark({
       <span
         aria-hidden="true"
         className={cn(
-          "flex shrink-0 items-center justify-center bg-[image:var(--zx-gradient-primary)] font-extrabold text-white",
+          "flex shrink-0 items-center justify-center bg-[image:var(--zx-gradient-primary)] font-extrabold text-zx-on-primary",
           tile,
         )}
       >

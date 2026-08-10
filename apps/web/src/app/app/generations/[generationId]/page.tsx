@@ -85,7 +85,7 @@ export default async function GenerationDetailPage({
               </button>
             ) : null}
 
-            <span className="text-zx-text absolute right-3 bottom-3 rounded-md bg-[rgba(13,12,19,0.7)] px-[9px] py-1 text-[11px] font-bold">
+            <span className="text-zx-text absolute right-3 bottom-3 rounded-md bg-[rgba(10,10,11,0.7)] px-[9px] py-1 text-[11px] font-bold">
               {generation.duration}
             </span>
           </div>

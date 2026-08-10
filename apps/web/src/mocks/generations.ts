@@ -49,7 +49,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "High",
     createdLabel: "12 min ago",
     order: 1,
-    thumb: g("#241C4E", "#42309A"),
+    thumb: g("#141A0C", "#28340D"),
   },
   {
     id: "gen_2480",
@@ -63,7 +63,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "Ultra",
     createdLabel: "18 min ago",
     order: 2,
-    thumb: g("#4A2FA0", "#1C1838"),
+    thumb: g("#26320C", "#141A08"),
   },
   {
     id: "gen_2479",
@@ -77,7 +77,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "High",
     createdLabel: "1 hour ago",
     order: 3,
-    thumb: g("#6D3DF5", "#211A48"),
+    thumb: g("#23262B", "#0D0F12"),
   },
   {
     id: "gen_2478",
@@ -91,7 +91,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: null,
     createdLabel: "3 hours ago",
     order: 4,
-    thumb: g("#2E2260", "#171331"),
+    thumb: g("#18200A", "#10160A"),
   },
   {
     id: "gen_2477",
@@ -105,7 +105,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "High",
     createdLabel: "5 hours ago",
     order: 5,
-    thumb: g("#3B2B85", "#191436"),
+    thumb: g("#222C10", "#121808"),
   },
   {
     id: "gen_2476",
@@ -119,7 +119,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "High",
     createdLabel: "Yesterday",
     order: 6,
-    thumb: g("#2A2233", "#17141F"),
+    thumb: g("#1C232A", "#0B0E11"),
     errorMessage:
       "Generation could not be completed. Please try again or adjust your settings.",
   },
@@ -135,7 +135,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "High",
     createdLabel: "Yesterday",
     order: 7,
-    thumb: g("#5636C9", "#1C1838"),
+    thumb: g("#1C232A", "#0B0E11"),
   },
   {
     id: "gen_2474",
@@ -149,7 +149,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "High",
     createdLabel: "2 days ago",
     order: 8,
-    thumb: g("#35256E", "#211A48"),
+    thumb: g("#1C240C", "#182008"),
   },
   {
     id: "gen_2473",
@@ -163,7 +163,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: null,
     createdLabel: "3 days ago",
     order: 9,
-    thumb: g("#2E2260", "#151129"),
+    thumb: g("#26261F", "#101010"),
   },
   {
     id: "gen_2472",
@@ -177,7 +177,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "Ultra",
     createdLabel: "4 days ago",
     order: 10,
-    thumb: g("#1F1A45", "#4A2FA0"),
+    thumb: g("#111708", "#26320C"),
   },
   {
     id: "gen_2471",
@@ -191,7 +191,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "High",
     createdLabel: "5 days ago",
     order: 11,
-    thumb: g("#42309A", "#171331"),
+    thumb: g("#28340D", "#10160A"),
   },
   {
     id: "gen_2470",
@@ -205,7 +205,7 @@ export const mockGenerations: MockGeneration[] = [
     quality: "Standard",
     createdLabel: "1 week ago",
     order: 12,
-    thumb: g("#241C4E", "#3B2B85"),
+    thumb: g("#23262B", "#0D0F12"),
   },
 ];
 
@@ -226,7 +226,7 @@ export const mockDrafts: MockDraft[] = [
     workflowName: "Text to Video",
     editedLabel: "edited 2h ago",
     progress: "70%",
-    thumb: g("#3B2B85", "#191436"),
+    thumb: g("#222C10", "#121808"),
   },
   {
     id: "draft_2",
@@ -234,7 +234,7 @@ export const mockDrafts: MockDraft[] = [
     workflowName: "Image to Video",
     editedLabel: "edited yesterday",
     progress: "40%",
-    thumb: g("#5636C9", "#241C4E"),
+    thumb: g("#2C3A0B", "#141A0C"),
   },
   {
     id: "draft_3",
@@ -242,6 +242,6 @@ export const mockDrafts: MockDraft[] = [
     workflowName: "Music",
     editedLabel: "edited 3d ago",
     progress: "85%",
-    thumb: g("#2E2260", "#151129"),
+    thumb: g("#1C232A", "#0B0E11"),
   },
 ];
