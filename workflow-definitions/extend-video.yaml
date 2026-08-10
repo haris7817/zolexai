@@ -1,0 +1,30 @@
+id: extend-video
+name: Extend Video
+category: video
+output_type: video
+description: Continue a generated video seamlessly
+
+input_types: [video, prompt]
+prompt_placeholder: "Describe what happens next…"
+media_requirements:
+  kind: a video
+  label: SOURCE VIDEO
+
+# Longer options are offered only where the pipeline genuinely supports them.
+# M2.14/M2.15 must confirm native support or chain extensions — never claim a
+# duration the engine cannot produce (risk R-03).
+supported_durations: ["5s", "10s", "30s", "60s"]
+supported_aspect_ratios: ["16:9", "9:16"]
+supported_quality_levels: [Standard, High, Ultra]
+
+settings:
+  quality: true
+  motion_strength: false
+  prompt_adherence: true
+  seed: false
+
+capabilities:
+  download: true
+  extend: true
+  reuse_settings: true
+  variation: false

@@ -1,0 +1,249 @@
+/* ===========================================================================
+   ZolexAI Design Tokens — PREUI-01
+   ---------------------------------------------------------------------------
+   THE single source of truth for every ZolexAI screen.
+
+   Values are lifted verbatim from the approved `Video Workspace.dc.html`
+   :root block. Landing and Creator Dashboard were designed earlier against a
+   different (warmer, purple-tinted) palette and are retro-fitted onto these.
+   See docs/decisions/0001-unified-design-system.md.
+
+   NOTE: architecture doc §8 lists a stale token set (--zx-surface: #15121F,
+   and missing --zx-surface-hover / --zx-primary-hover / --zx-shadow-cta).
+   The design wins — non-negotiable rule #13. §8 should be corrected to match.
+
+   No component may define a colour, radius, shadow or transition of its own.
+   =========================================================================== */
+
+:root {
+  /* Backgrounds & surfaces — cool neutral greys so the purple carries identity */
+  --zx-bg-primary: #0d0c13;
+  --zx-bg-secondary: #111017;
+  --zx-surface: #17161f;
+  --zx-surface-hover: #1d1c27;
+  --zx-surface-elevated: #211f2c;
+
+  /* Borders */
+  --zx-border: rgba(255, 255, 255, 0.08);
+  --zx-border-active: rgba(157, 107, 255, 0.5);
+
+  /* Purple hierarchy: primary → hover → accent → light */
+  --zx-primary: #6d3df5;
+  --zx-primary-hover: #7e52ff;
+  --zx-primary-light: #c4b5fd;
+  --zx-accent: #9d6bff;
+
+  /* Text */
+  --zx-text-primary: #f2f0fa;
+  --zx-text-secondary: #b0abc6;
+  --zx-text-muted: #847e9e;
+
+  /* Status */
+  --zx-success: #7dd8a0;
+  --zx-warning: #e8b45a;
+  --zx-error: #f08a8a;
+
+  /* Gradient */
+  --zx-gradient-primary: linear-gradient(135deg, #6d3df5, #9d6bff);
+
+  /* Radii */
+  --zx-radius-sm: 8px;
+  --zx-radius-md: 12px;
+  --zx-radius-lg: 16px;
+
+  /* Elevation & motion */
+  --zx-shadow-cta: 0 6px 22px rgba(109, 61, 245, 0.32);
+  --zx-transition: 0.15s ease;
+}
+
+/* ===========================================================================
+   Tailwind v4 theme mapping
+   ---------------------------------------------------------------------------
+   Default breakpoints are RESET so only ZolexAI's four responsive modes exist.
+   This is deliberate: `xl:` (1280px) is not a ZolexAI breakpoint, and silently
+   using it would produce layouts the design never specified.
+
+       mobile   < 768   (unprefixed — mobile-first)
+       tablet   768–1023
+       laptop   1024–1439
+       desktop  >= 1440
+   =========================================================================== */
+
+@theme {
+  --breakpoint-*: initial;
+  --breakpoint-tablet: 768px;
+  --breakpoint-laptop: 1024px;
+  --breakpoint-desktop: 1440px;
+
+  --font-sans: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+
+  --color-zx-bg: var(--zx-bg-primary);
+  --color-zx-bg-alt: var(--zx-bg-secondary);
+  --color-zx-surface: var(--zx-surface);
+  --color-zx-surface-hover: var(--zx-surface-hover);
+  --color-zx-surface-elevated: var(--zx-surface-elevated);
+
+  --color-zx-border: var(--zx-border);
+  --color-zx-border-active: var(--zx-border-active);
+
+  --color-zx-primary: var(--zx-primary);
+  --color-zx-primary-hover: var(--zx-primary-hover);
+  --color-zx-primary-light: var(--zx-primary-light);
+  --color-zx-accent: var(--zx-accent);
+
+  --color-zx-text: var(--zx-text-primary);
+  --color-zx-text-secondary: var(--zx-text-secondary);
+  --color-zx-text-muted: var(--zx-text-muted);
+
+  --color-zx-success: var(--zx-success);
+  --color-zx-warning: var(--zx-warning);
+  --color-zx-error: var(--zx-error);
+
+  --radius-zx-sm: var(--zx-radius-sm);
+  --radius-zx-md: var(--zx-radius-md);
+  --radius-zx-lg: var(--zx-radius-lg);
+
+  --shadow-zx-cta: var(--zx-shadow-cta);
+
+  --animate-zx-shimmer: zx-shimmer 1.8s linear infinite;
+  --animate-zx-pulse: zx-pulse 1.4s infinite;
+  --animate-zx-fade-up: zx-fade-up 0.25s ease;
+  --animate-zx-slide-in: zx-slide-in 0.2s ease;
+
+  @keyframes zx-shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+  @keyframes zx-pulse {
+    0%,
+    100% {
+      opacity: 0.5;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  @keyframes zx-fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes zx-slide-in {
+    from {
+      transform: translateX(-24px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+}
+
+/* ===========================================================================
+   Global base — carried over from the approved Workspace <helmet>
+   ---------------------------------------------------------------------------
+   ⚠️ These MUST live inside `@layer base`.
+
+   Tailwind v4 emits its utilities into `@layer utilities`, and in the CSS
+   cascade an UNLAYERED rule beats any layered one regardless of specificity.
+   With these rules unlayered, `a { color: var(--zx-accent) }` silently
+   overrode every `text-zx-*` utility on every anchor in the app — the whole
+   navigation rendered purple instead of `--zx-text-secondary`.
+
+   Inside `@layer base` the normal order applies (base → components →
+   utilities), so a component that sets its own text colour wins, while links
+   with no explicit colour still fall back to the brand accent.
+   =========================================================================== */
+
+@layer base {
+  body {
+    margin: 0;
+    background: var(--zx-bg-primary);
+    color: var(--zx-text-primary);
+    font-family: var(--font-manrope), sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a {
+    color: var(--zx-accent);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--zx-primary-light);
+  }
+
+  ::selection {
+    background: var(--zx-primary);
+    color: #fff;
+  }
+
+  textarea::placeholder,
+  input::placeholder {
+    color: var(--zx-text-muted);
+  }
+
+  /* Navigation scrolls without a visible scrollbar */
+  nav::-webkit-scrollbar,
+  aside::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+  nav,
+  aside {
+    scrollbar-width: none;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font-family: var(--font-manrope), sans-serif;
+  }
+
+  /* Range inputs pick up the brand purple */
+  input[type="range"] {
+    accent-color: var(--zx-primary);
+  }
+  input[type="checkbox"] {
+    accent-color: var(--zx-primary);
+  }
+}
+
+/* Keyboard focus stays UNLAYERED on purpose: the visible focus ring must not
+   be defeatable by a utility class on an individual control. */
+button:focus-visible,
+a:focus-visible,
+textarea:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--zx-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ===========================================================================
+   Reduced motion — verbatim from the approved design.
+   Everything animated above must stop when the OS asks.
+   =========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

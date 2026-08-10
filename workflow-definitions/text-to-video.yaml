@@ -1,0 +1,24 @@
+id: text-to-video
+name: Text to Video
+category: video
+output_type: video
+description: Describe a scene and generate cinematic video
+
+input_types: [prompt]
+prompt_placeholder: "Describe the video you want to create…"
+
+supported_durations: ["5s", "10s", "15s", "30s"]
+supported_aspect_ratios: ["16:9", "9:16", "1:1", "4:5"]
+supported_quality_levels: [Standard, High, Ultra]
+
+settings:
+  quality: true
+  motion_strength: true
+  prompt_adherence: true
+  seed: true
+
+capabilities:
+  download: true
+  extend: true
+  reuse_settings: true
+  variation: true

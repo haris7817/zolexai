@@ -1,0 +1,27 @@
+id: music-video
+name: Music Video
+category: audio
+output_type: video
+description: Pair audio with visual direction
+
+input_types: [audio, prompt]
+prompt_placeholder: "Describe the visual direction…"
+media_requirements:
+  kind: an audio track
+  label: AUDIO
+
+supported_durations: ["15s", "30s", "60s"]
+supported_aspect_ratios: ["16:9", "9:16", "1:1"]
+supported_quality_levels: [Standard, High]
+
+settings:
+  quality: true
+  motion_strength: true
+  prompt_adherence: true
+  seed: false
+
+capabilities:
+  download: true
+  extend: false
+  reuse_settings: true
+  variation: true

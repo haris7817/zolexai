@@ -6,22 +6,28 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "qa:responsive": "node scripts/qa-responsive.mjs ./qa-output",
+    "qa:flow": "node scripts/qa-flow.mjs"
   },
   "dependencies": {
+    "lucide-react": "^1.31.0",
+    "next": "15.5.23",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "next": "15.5.23"
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4",
     "eslint": "^9",
     "eslint-config-next": "15.5.23",
-    "@eslint/eslintrc": "^3"
+    "playwright": "^1.62.1",
+    "tailwindcss": "^4",
+    "typescript": "^5"
   }
 }

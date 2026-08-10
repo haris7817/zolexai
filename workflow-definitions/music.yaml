@@ -1,0 +1,26 @@
+id: music
+name: Music
+category: audio
+output_type: audio
+description: Generate original tracks from a description
+
+input_types: [prompt]
+prompt_placeholder: "Describe the track — mood, style, tempo…"
+
+supported_durations: ["30s", "60s", "120s"]
+# Audio has no frame: the UI hides the aspect-ratio section entirely.
+supported_aspect_ratios: []
+supported_quality_levels: []
+
+settings:
+  quality: false
+  motion_strength: false
+  prompt_adherence: true
+  seed: true
+
+capabilities:
+  download: true
+  # Audio cannot be extended — Extend must never appear on a music result.
+  extend: false
+  reuse_settings: true
+  variation: true

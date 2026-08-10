@@ -1,0 +1,27 @@
+id: image-to-video
+name: Image to Video
+category: video
+output_type: video
+description: Animate a still image into natural motion
+
+input_types: [image, prompt]
+prompt_placeholder: "Describe how the image should move…"
+media_requirements:
+  kind: an image
+  label: INPUT IMAGE
+
+supported_durations: ["5s", "10s"]
+supported_aspect_ratios: ["16:9", "9:16", "1:1"]
+supported_quality_levels: [Standard, High, Ultra]
+
+settings:
+  quality: true
+  motion_strength: true
+  prompt_adherence: true
+  seed: true
+
+capabilities:
+  download: true
+  extend: true
+  reuse_settings: true
+  variation: true

@@ -70,3 +70,6 @@ desktop.ini
 .vercel
 .turbo
 *.tsbuildinfo
+
+# QA harness output (screenshots + metrics)
+qa-output/

@@ -1,0 +1,27 @@
+id: video-to-video
+name: Video to Video
+category: video
+output_type: video
+description: Restyle and transform existing footage
+
+input_types: [video, prompt]
+prompt_placeholder: "Describe the transformation…"
+media_requirements:
+  kind: a video
+  label: INPUT VIDEO
+
+supported_durations: ["5s", "10s", "15s"]
+supported_aspect_ratios: ["16:9", "9:16"]
+supported_quality_levels: [Standard, High, Ultra]
+
+settings:
+  quality: true
+  motion_strength: true
+  prompt_adherence: true
+  seed: false
+
+capabilities:
+  download: true
+  extend: true
+  reuse_settings: true
+  variation: true
