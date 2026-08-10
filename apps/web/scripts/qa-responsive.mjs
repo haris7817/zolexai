@@ -2,7 +2,7 @@ import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
 
-const BASE = "http://localhost:3213";
+const BASE = process.env.QA_BASE || "http://localhost:3000";
 const OUT = process.argv[2] || "./shots";
 
 const WIDTHS = [

@@ -5,7 +5,7 @@
  */
 import { chromium } from "playwright";
 
-const BASE = process.env.QA_BASE || "http://localhost:3213";
+const BASE = process.env.QA_BASE || "http://localhost:3000";
 const results = [];
 const check = (name, pass, detail = "") =>
   results.push({ name, pass, detail });
@@ -115,7 +115,10 @@ check(
   (await page.getByRole("button", { name: "15s", exact: true }).getAttribute("aria-pressed")) === "true",
 );
 await page.getByRole("link", { name: "Image to Video" }).first().click();
-await page.waitForURL("**/create/image-to-video");
+// Tolerate the trailing slash: the static export uses trailingSlash: true,
+// so the deployed URL is /create/image-to-video/ while `next start` serves it
+// without. This harness must pass against both.
+await page.waitForURL(/\/create\/image-to-video\/?(\?.*)?$/);
 await page.waitForTimeout(300);
 const has15 = await page.getByRole("button", { name: "15s", exact: true }).count();
 const fiveNow = await page
