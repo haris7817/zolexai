@@ -76,4 +76,4 @@ qa-output/
 
 # Track SQLAlchemy application models
 !apps/api/app/models/
-!apps/api/app/models/**
+!apps/api/app/models/*.py
