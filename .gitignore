@@ -73,3 +73,7 @@ desktop.ini
 
 # QA harness output (screenshots + metrics)
 qa-output/
+
+# Track SQLAlchemy application models
+!apps/api/app/models/
+!apps/api/app/models/**
