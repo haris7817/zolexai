@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { WORKFLOW_LIST } from "@/features/workflows/registry";
-import { mockGenerations, mockDrafts } from "@/mocks/generations";
+import { loadWorkflowCatalog } from "@/features/workflows/catalog.server";
 import { mockUser } from "@/mocks/user";
 import { QuickStart } from "@/components/dashboard/QuickStart";
+import { RecentGenerations } from "@/components/dashboard/RecentGenerations";
 import { WorkflowCard } from "@/components/workflow/WorkflowCard";
-import { GenerationCard } from "@/components/generation/GenerationCard";
 import { Icon } from "@/components/ui/Icon";
 
 export const metadata: Metadata = { title: "Home" };
@@ -16,13 +15,17 @@ export const metadata: Metadata = { title: "Home" };
  * Deliberately creator-focused, NOT an analytics dashboard: no charts, no KPI
  * tiles, no usage graphs. The first thing on screen is a way to start creating.
  *
- * Retro-fitted from the original design onto the unified token system (it was
- * drawn against the older #0B0A14 / #110E1E palette with Unicode glyph icons)
- * and given the responsive behaviour it never had — the original was a fixed
- * 240px sidebar with hard 3- and 4-column grids. See ADR 0001.
+ * Retro-fitted from the original design onto the unified token system and
+ * given the responsive behaviour it never had. See ADR 0001.
+ *
+ * The tool grid is server-rendered from the workflow definitions; recent
+ * generations are a client island reading the API. The "Continue creating"
+ * drafts row from the PRE-M1 mock is gone: drafts are not a concept the
+ * platform has, and leaving a fabricated one in place would have promised a
+ * feature no milestone builds.
  */
-export default function DashboardPage() {
-  const recents = mockGenerations.slice(0, 4);
+export default async function DashboardPage() {
+  const workflows = await loadWorkflowCatalog();
   const firstName = mockUser.name.split(" ")[0];
 
   return (
@@ -41,38 +44,8 @@ export default function DashboardPage() {
 
       <SectionHeader title="Tools" actionLabel="All tools" href="/app/tools" />
       <div className="mb-12 grid grid-cols-2 gap-[14px] tablet:grid-cols-3 laptop:grid-cols-[repeat(auto-fill,minmax(170px,1fr))]">
-        {WORKFLOW_LIST.map((workflow) => (
+        {workflows.map((workflow) => (
           <WorkflowCard key={workflow.id} workflow={workflow} />
-        ))}
-      </div>
-
-      <SectionHeader title="Continue creating" />
-      <div className="mb-12 grid grid-cols-1 gap-[14px] tablet:grid-cols-2 laptop:grid-cols-3">
-        {mockDrafts.map((draft) => (
-          <Link
-            key={draft.id}
-            href="/app/create/text-to-video"
-            className="bg-zx-surface border-zx-border hover:border-zx-border-active flex items-center gap-[14px] rounded-[14px] border p-[14px] transition-colors duration-150"
-          >
-            <span
-              aria-hidden="true"
-              className="relative h-12 w-[72px] shrink-0 overflow-hidden rounded-[9px]"
-              style={{ background: draft.thumb }}
-            >
-              <span
-                className="bg-zx-accent absolute bottom-0 left-0 h-[3px]"
-                style={{ width: draft.progress }}
-              />
-            </span>
-            <span className="min-w-0">
-              <span className="text-zx-text block truncate text-[13.5px] font-bold">
-                {draft.title}
-              </span>
-              <span className="text-zx-text-muted mt-[3px] block text-[12px]">
-                {draft.workflowName} · {draft.editedLabel}
-              </span>
-            </span>
-          </Link>
         ))}
       </div>
 
@@ -81,11 +54,7 @@ export default function DashboardPage() {
         actionLabel="View all"
         href="/app/generations"
       />
-      <div className="mb-12 grid grid-cols-1 gap-[14px] tablet:grid-cols-2 desktop:grid-cols-4">
-        {recents.map((generation) => (
-          <GenerationCard key={generation.id} generation={generation} />
-        ))}
-      </div>
+      <RecentGenerations />
 
       <h2 className="text-zx-text m-0 mb-[18px] text-[19px] font-extrabold tracking-[-0.02em]">
         Recommended for you

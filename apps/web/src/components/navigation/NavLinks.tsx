@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  navigationSections,
+  buildNavigationSections,
   isNavItemActive,
   type NavItem,
 } from "@/config/navigation";
+import { useWorkflows } from "@/features/workflows/queries";
 import { Icon } from "@/components/ui/Icon";
 import { cn } from "@/lib/cn";
 
@@ -27,6 +28,11 @@ export function NavLinks({
 }) {
   const pathname = usePathname();
   const isDrawer = variant === "drawer";
+
+  // Seeded on the server from the YAML catalogue, so this renders complete on
+  // first paint rather than as an empty rail.
+  const { workflows } = useWorkflows();
+  const navigationSections = buildNavigationSections(workflows);
 
   return (
     <nav

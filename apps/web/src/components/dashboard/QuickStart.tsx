@@ -2,21 +2,19 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useCreatorParams } from "@/features/workflows/useWorkflowParams";
-import type { WorkflowId } from "@/features/workflows/types";
 import { Icon } from "@/components/ui/Icon";
 import { cn } from "@/lib/cn";
 
 /**
  * The dashboard's quick-create box.
  *
- * Hands the typed prompt to the creator store and routes to the matching
- * workspace, so the dashboard genuinely starts a creation rather than being a
- * decorative panel — the demo should feel connected (PRE-M1 directive:
- * "navigation should not lead to meaningless dead ends").
+ * Carries the typed prompt to the workspace in the URL rather than through a
+ * shared store. That is a deliberate improvement: the resulting link is
+ * shareable and bookmarkable, it survives a refresh, and it removes the last
+ * reason for cross-page client state to exist at all.
  */
 
-const MODES: { label: string; workflowId: WorkflowId }[] = [
+const MODES: { label: string; workflowId: string }[] = [
   { label: "Video", workflowId: "text-to-video" },
   { label: "Music", workflowId: "music" },
   { label: "Music Video", workflowId: "music-video" },
@@ -25,12 +23,12 @@ const MODES: { label: string; workflowId: WorkflowId }[] = [
 export function QuickStart() {
   const [mode, setMode] = useState(MODES[0]);
   const [prompt, setPrompt] = useState("");
-  const setCreatorPrompt = useCreatorParams((state) => state.setPrompt);
   const router = useRouter();
 
   const start = () => {
-    setCreatorPrompt(prompt.trim());
-    router.push(`/app/create/${mode.workflowId}`);
+    const trimmed = prompt.trim();
+    const query = trimmed ? `?prompt=${encodeURIComponent(trimmed)}` : "";
+    router.push(`/app/create/${mode.workflowId}${query}`);
   };
 
   return (
@@ -48,17 +46,21 @@ export function QuickStart() {
           id="zx-quick-prompt"
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={(event) => {
+            // Enter submits, Shift+Enter adds a line — the convention for a
+            // one-line-intent box that happens to be a textarea.
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              start();
+            }
+          }}
           placeholder="Describe a video, a song, a scene… anything."
           rows={2}
           className="text-zx-text w-full resize-none border-none bg-transparent text-[16px] leading-[1.5] outline-none"
         />
 
         <div className="mt-[10px] flex flex-wrap items-center justify-between gap-3">
-          <div
-            role="group"
-            aria-label="Creation type"
-            className="flex flex-wrap gap-2"
-          >
+          <div role="group" aria-label="Creation type" className="flex flex-wrap gap-2">
             {MODES.map((option) => {
               const selected = option.label === mode.label;
               return (
@@ -83,7 +85,7 @@ export function QuickStart() {
           <button
             type="button"
             onClick={start}
-            className="rounded-zx-md shadow-zx-cta inline-flex cursor-pointer items-center gap-2 bg-[image:var(--zx-gradient-primary)] px-[26px] py-[11px] text-[14px] font-extrabold text-zx-on-primary transition-[filter] duration-150 hover:brightness-110"
+            className="rounded-zx-md shadow-zx-cta text-zx-on-primary inline-flex cursor-pointer items-center gap-2 bg-[image:var(--zx-gradient-primary)] px-[26px] py-[11px] text-[14px] font-extrabold transition-[filter] duration-150 hover:brightness-110"
           >
             Generate
             <Icon name="arrowRight" size={15} />

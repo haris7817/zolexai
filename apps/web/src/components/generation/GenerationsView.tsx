@@ -1,46 +1,61 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { mockGenerations, type MockGeneration } from "@/mocks/generations";
-import { WORKFLOW_LIST } from "@/features/workflows/registry";
+import type { JobStatus } from "@zolexai/workflow-contracts";
 import { GenerationCard } from "./GenerationCard";
 import { AppPage, PageHeader } from "@/components/ui/PageHeader";
 import { OptionChip, TextField } from "@/components/ui/Controls";
-import { EmptyState } from "@/components/ui/Feedback";
+import { EmptyState, Skeleton } from "@/components/ui/Feedback";
 import { Icon } from "@/components/ui/Icon";
+import { Button } from "@/components/ui/Button";
+import { useGenerationHistory } from "@/features/generation/queries";
+import { useWorkflows } from "@/features/workflows/queries";
 
 /**
- * Generations — PREUI-07.
+ * Generation history.
  *
- * ⚠️ MOCK: filtering runs client-side over `src/mocks/generations.ts`. Nothing
- * persists and there is no pagination. Real history arrives at M3.08.
+ * Status and workflow filters are applied by the API (indexed, so they stay
+ * fast on a large table), and pages are fetched with the API's opaque keyset
+ * cursor — never an offset, and never "load everything then filter".
  *
- * Deliberately includes a Failed row so the client can approve how an error
- * reads. Note the copy is friendly and generic — architecture rule #10 forbids
- * raw worker/model errors ever reaching a customer.
+ * The prompt search box is the one client-side filter, and deliberately so: it
+ * narrows the pages already loaded rather than pretending to search all
+ * history. Full-text search over prompts is a server capability that does not
+ * exist yet; adding it here would silently return partial results. The label
+ * says "in loaded results" so it does not overpromise.
  */
 
-const STATUSES = ["All", "Completed", "Generating", "Queued", "Failed"] as const;
+const STATUS_FILTERS: { label: string; value: JobStatus[] | null }[] = [
+  { label: "All", value: null },
+  { label: "Completed", value: ["completed"] },
+  {
+    label: "Running",
+    value: ["queued", "assigned", "preparing", "generating", "post_processing", "uploading"],
+  },
+  { label: "Failed", value: ["failed", "cancelled"] },
+];
 
 export function GenerationsView() {
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<string>("All");
-  const [workflowId, setWorkflowId] = useState<string>("all");
+  const [statusIndex, setStatusIndex] = useState(0);
+  const [workflowId, setWorkflowId] = useState<string | null>(null);
+
+  const { workflows } = useWorkflows();
+  const history = useGenerationHistory({
+    status: STATUS_FILTERS[statusIndex].value ?? undefined,
+    workflowId,
+  });
+
+  const items = useMemo(
+    () => history.data?.pages.flatMap((page) => page.items) ?? [],
+    [history.data],
+  );
 
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return mockGenerations
-      .filter((generation) => {
-        const matchesStatus = status === "All" || generation.status === status;
-        const matchesWorkflow =
-          workflowId === "all" || generation.workflowId === workflowId;
-        const matchesQuery =
-          needle.length === 0 ||
-          generation.prompt.toLowerCase().includes(needle);
-        return matchesStatus && matchesWorkflow && matchesQuery;
-      })
-      .sort((a, b) => a.order - b.order);
-  }, [query, status, workflowId]);
+    if (!needle) return items;
+    return items.filter((job) => job.prompt.toLowerCase().includes(needle));
+  }, [items, query]);
 
   return (
     <AppPage>
@@ -59,75 +74,101 @@ export function GenerationsView() {
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search prompts…"
-            aria-label="Search generations"
+            placeholder="Search prompts in loaded results…"
+            aria-label="Search loaded generations by prompt"
             className="pl-9"
           />
         </div>
 
         <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by status">
-          {STATUSES.map((option) => (
+          {STATUS_FILTERS.map((option, index) => (
             <OptionChip
-              key={option}
-              selected={option === status}
-              onClick={() => setStatus(option)}
+              key={option.label}
+              selected={index === statusIndex}
+              onClick={() => setStatusIndex(index)}
               className="px-[14px] py-[8px] text-[12px]"
             >
-              {option}
-              {option !== "All" ? (
-                <span className="text-zx-text-muted ml-[6px] font-semibold">
-                  {countBy(option)}
-                </span>
-              ) : null}
+              {option.label}
             </OptionChip>
           ))}
         </div>
 
         <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by workflow">
           <OptionChip
-            selected={workflowId === "all"}
-            onClick={() => setWorkflowId("all")}
+            selected={workflowId === null}
+            onClick={() => setWorkflowId(null)}
             className="px-[14px] py-[8px] text-[12px]"
           >
             All workflows
           </OptionChip>
-          {WORKFLOW_LIST.map((workflow) => (
+          {workflows.map((workflow) => (
             <OptionChip
               key={workflow.id}
               selected={workflowId === workflow.id}
               onClick={() => setWorkflowId(workflow.id)}
               className="inline-flex items-center gap-[6px] px-[14px] py-[8px] text-[12px]"
             >
-              <Icon name={workflow.icon} size={13} />
+              <Icon name={workflow.ui.icon} size={13} />
               {workflow.name}
             </OptionChip>
           ))}
         </div>
       </div>
 
-      <p className="text-zx-text-muted mb-4 text-[12px] font-bold">
-        {results.length} {results.length === 1 ? "generation" : "generations"}
-      </p>
-
-      {results.length > 0 ? (
-        <div className="grid grid-cols-1 gap-[14px] tablet:grid-cols-2 laptop:grid-cols-3 desktop:grid-cols-4">
-          {results.map((generation) => (
-            <GenerationCard key={generation.id} generation={generation} />
+      {history.isPending ? (
+        <div className="tablet:grid-cols-2 laptop:grid-cols-3 desktop:grid-cols-4 grid grid-cols-1 gap-[14px]">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <Skeleton key={index} className="rounded-[14px]" style={{ aspectRatio: "16 / 13" }} />
           ))}
         </div>
+      ) : history.isError ? (
+        <EmptyState
+          icon="alert"
+          title="Couldn't load your generations"
+          description="The service may be temporarily unavailable. Try again in a moment."
+          action={
+            <Button variant="ghost" size="md" onClick={() => history.refetch()}>
+              Try again
+            </Button>
+          }
+        />
+      ) : results.length > 0 ? (
+        <>
+          <p className="text-zx-text-muted mb-4 text-[12px] font-bold">
+            {results.length} {results.length === 1 ? "generation" : "generations"}
+            {history.hasNextPage ? " loaded" : ""}
+          </p>
+
+          <div className="tablet:grid-cols-2 laptop:grid-cols-3 desktop:grid-cols-4 grid grid-cols-1 gap-[14px]">
+            {results.map((generation) => (
+              <GenerationCard key={generation.id} generation={generation} />
+            ))}
+          </div>
+
+          {history.hasNextPage ? (
+            <div className="mt-7 flex justify-center">
+              <Button
+                variant="ghost"
+                size="md"
+                onClick={() => history.fetchNextPage()}
+                disabled={history.isFetchingNextPage}
+              >
+                {history.isFetchingNextPage ? "Loading…" : "Load more"}
+              </Button>
+            </div>
+          ) : null}
+        </>
       ) : (
         <EmptyState
           icon="history"
-          title="No generations match these filters"
-          description="Try clearing the status or workflow filter, or search for a different prompt."
+          title={items.length ? "No generations match these filters" : "Nothing generated yet"}
+          description={
+            items.length
+              ? "Try clearing the status or workflow filter, or search for a different prompt."
+              : "Pick a tool, describe what you want, and your results will collect here."
+          }
         />
       )}
     </AppPage>
   );
-}
-
-function countBy(status: string): number {
-  return mockGenerations.filter(
-    (generation: MockGeneration) => generation.status === status,
-  ).length;
 }

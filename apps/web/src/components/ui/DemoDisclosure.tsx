@@ -2,80 +2,51 @@ import { featureFlags } from "@/config/feature-flags";
 import { cn } from "@/lib/cn";
 
 /**
- * ===========================================================================
- * Demo disclosure — PREUI-15
- * ===========================================================================
+ * Build-state disclosure.
  *
- * Purpose (guide §3, §4): the client must not mistake simulated progress and
- * placeholder output for connected AI.
+ * The PRE-M1 version said AI generation was simulated. That is no longer true
+ * and the wording has been corrected rather than carried forward: a generation
+ * now creates a real job, a real worker executes it, and progress streams from
+ * the backend. The `DemoSimulationNote` that sat under the progress bar has
+ * been deleted outright, because leaving it would actively misinform.
  *
- * Deliberately subtle. Muted tokens only — no alarm colours, no modal, no
- * layout-shifting banner, and no repeated warning-style messaging. Three
- * placements, each doing a different job:
+ * What IS still unfinished is the account layer — sign-in, plans and billing —
+ * so that is what these two say, and nothing more.
  *
- *   1. DemoBadge          persistent, low-key, always in the shell
- *   2. DemoSimulationNote at the exact point of risk — under the fake progress
- *                         bar and the placeholder result
- *   3. DemoFooterNote     one line on the public landing page
- *
- * All three disappear when `featureFlags.demoMode` is false, so M1 removes the
- * disclosure by flipping one boolean.
+ * Both disappear when `featureFlags.previewBuild` is false.
  */
 
-/** Persistent, unobtrusive marker in the sidebar footer and mobile drawer. */
 export function DemoBadge({
-  className,
   compact = false,
+  className,
 }: {
-  className?: string;
   compact?: boolean;
+  className?: string;
 }) {
-  if (!featureFlags.demoMode) return null;
+  if (!featureFlags.previewBuild) return null;
 
   return (
     <span
       className={cn(
-        "border-zx-border bg-zx-surface text-zx-text-muted inline-flex items-center gap-[6px] rounded-full border px-[10px] py-[4px] text-[10.5px] font-bold",
+        "text-zx-text-muted inline-flex items-center gap-[6px] text-[10.5px] font-bold tracking-[0.06em] uppercase",
         className,
       )}
-      title="AI generation is simulated for design review"
     >
       <span
         aria-hidden="true"
-        className="bg-zx-text-muted h-[5px] w-[5px] rounded-full"
+        className="bg-zx-text-muted/60 inline-block h-[5px] w-[5px] rounded-full"
       />
-      {compact ? "Preview" : "UI Preview"}
+      {compact ? "Preview" : "Preview build"}
     </span>
   );
 }
 
-/**
- * The load-bearing one. Sits directly beneath the generation progress and the
- * generated result — where a client would otherwise read a moving progress bar
- * as real inference (guide §7 Step 4).
- */
-export function DemoSimulationNote({ className }: { className?: string }) {
-  if (!featureFlags.demoMode) return null;
-
-  return (
-    <p
-      className={cn(
-        "text-zx-text-muted text-center text-[11.5px] leading-[1.5]",
-        className,
-      )}
-    >
-      Simulated preview — AI generation is not connected in this demo.
-    </p>
-  );
-}
-
-/** Landing page footer line. */
 export function DemoFooterNote({ className }: { className?: string }) {
-  if (!featureFlags.demoMode) return null;
+  if (!featureFlags.previewBuild) return null;
 
   return (
-    <p className={cn("text-zx-text-muted text-[12.5px]", className)}>
-      Interactive product preview for design review.
+    <p className={cn("text-zx-text-muted m-0 text-[12px] leading-[1.5]", className)}>
+      Preview build — accounts and billing are not connected yet.
     </p>
   );
 }

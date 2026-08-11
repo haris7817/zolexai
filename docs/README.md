@@ -2,58 +2,70 @@
 
 ## Project control documents
 
-These four are authored outside this repository and should be **copied in as-is**. They are the
-planning and commercial reference for the whole engagement.
+Authored outside this repository and copied in as-is. They are the planning and
+commercial reference for the whole engagement.
 
 | File | Source document | Purpose |
 |---|---|---|
-| `architecture.md` | ZolexAI Implementation Architecture & Engineering Blueprint | Technical blueprint — stack, layering, DB model, API contract, security |
-| `milestones.md` | ZolexAI Milestones & Deliverables | Commercial structure — M1/M2/M3, $1,200, acceptance criteria |
-| `delivery-tracker.pdf` | ZolexAI Project Delivery, Milestone & Task Tracker | Task register, gates, dependencies, risks, test matrix |
+| `architecture.md` | ZolexAI Implementation Architecture & Engineering Blueprint | Technical blueprint |
+| `milestones.md` | ZolexAI Milestones & Deliverables | Commercial structure — M1/M2/M3, acceptance criteria |
+| `delivery-tracker.pdf` | ZolexAI Project Delivery, Milestone & Task Tracker | Task register, gates, dependencies, risks |
 | `demo-feedback-guide.md` | ZolexAI Client UI Demo & Feedback Guide | Demo script, feedback questions, freeze criteria |
 
-> **Not yet copied in.** They currently live outside the repo. Drop them here so the repository is
-> self-contained — the plan calls for this, and nothing in the build depends on it.
+> **Not yet copied in.** They live outside the repo. Drop them here so the
+> repository is self-contained — nothing in the build depends on it.
 
 ## Decision records
 
 Written here, in [`decisions/`](./decisions):
 
-| ADR | Subject |
+| ADR | Subject | Milestone |
+|---|---|---|
+| [0001](./decisions/0001-unified-design-system.md) | Unifying three screens onto one design system | PRE-M1 |
+| [0002](./decisions/0002-monorepo-with-independent-services.md) | One repository, three independently deployable services | M1 |
+| [0003](./decisions/0003-stateless-api.md) | The API holds no application state | M1 |
+| [0004](./decisions/0004-postgres-as-the-queue.md) | PostgreSQL is the queue; Redis is a doorbell | M1 |
+| [0005](./decisions/0005-sse-progress-delivery.md) | Progress over SSE with a durable event log | M1 |
+| [0006](./decisions/0006-object-storage-and-presigned-uploads.md) | Media never passes through an app server | M1 |
+| [0007](./decisions/0007-provider-abstraction.md) | Workflow definitions as source of truth; providers behind adapters | M1 |
+
+## Reports
+
+| File | Covers |
 |---|---|
-| [0001](./decisions/0001-unified-design-system.md) | Unifying three screens onto one design system |
-
-## Authority order
-
-When these documents disagree, resolve in this order:
-
-1. The latest **PRE-M1 directive** from the project owner.
-2. **Client UI Demo & Feedback Guide** — for demo, feedback and freeze process.
-3. **Tracker / Milestones / Architecture** — for scope, sequencing and engineering.
-
-One conflict is already known and resolved: the demo guide (§2) anticipates that non-core pages
-"may still be preview/placeholder states", while the PRE-M1 directive requires full visual mockups
-of All Tools, Generations, Media Library, Subscription and Settings. **The directive wins** — all
-five are built.
+| [`PRE-M1-HANDOFF.md`](./PRE-M1-HANDOFF.md) | Client UI/UX demo delivery (design approved) |
+| [`M1-REPORT.md`](./M1-REPORT.md) | Platform foundation delivery |
 
 ## Phase status
 
 | Phase | State |
 |---|---|
-| PRE-M1 — Client UI/UX approval | **In progress** |
-| M1 — Platform & core setup | **BLOCKED** until PREUI-20 |
+| PRE-M1 — Client UI/UX approval | **Complete** — design approved |
+| M1 — Platform & core setup | **Complete** — see [M1-REPORT.md](./M1-REPORT.md) |
 | M2 — AI workflows | Not started (GPU dependency D-03) |
 | M3 — Subscription, testing, deployment | Not started |
 
-### DESIGNED ≠ IMPLEMENTED
+### What M1 did and did not deliver
 
-A screen existing as a demo mockup **never** marks an M1/M2/M3 task complete.
+M1 built the platform. It did **not** build AI generation, authentication or
+billing, and no M2/M3 task is advanced by it.
 
-| State | Meaning | Set by |
-|---|---|---|
-| **DEMO READY** | Visual/UX approval-ready, mock data | PREUI-xx |
-| **IMPLEMENTED** | Real data, persistence, backend | M1/M2/M3 |
+| Area | M1 state |
+|---|---|
+| Generation job system | **Implemented** — real jobs, real queue, real lifecycle |
+| Worker architecture | **Implemented** — real claiming, leasing, retries; **mock** execution |
+| AI generation | **Not started** — M2 |
+| Authentication | **Not started** — M3.01. One seeded dev user; `user_id` is a real FK |
+| Subscription / billing | **Not started** — M3.11. `plan_code` and `concurrency_limit` are unenforced extension points |
+| Media library | **Implemented** — real uploads, real storage, real listing |
 
-Specifically: `/app/media` reaching DEMO READY does **not** advance M3.07; `/app/generations` does
-not advance M3.08/M3.09; `/app/subscription` does not advance M3.15; `/app/settings` does not
-advance M3.18; Login/Register do not advance M3.02.
+The PRE-M1 distinction still applies to anything still on mock data: a screen
+existing does not mark a milestone task complete.
+
+## Authority order
+
+When documents disagree, resolve in this order:
+
+1. The latest **directive** from the project owner.
+2. **Client UI Demo & Feedback Guide** — for demo, feedback and freeze process.
+3. **Tracker / Milestones / Architecture** — for scope, sequencing and engineering.

@@ -1,14 +1,26 @@
 id: music-video
+version: "1"
 name: Music Video
 category: audio
 output_type: video
-description: Pair audio with visual direction
 
-input_types: [audio, prompt]
-prompt_placeholder: "Describe the visual direction…"
-media_requirements:
-  kind: an audio track
-  label: AUDIO
+description: Pair audio with visual direction
+short_description: Audio meets visuals
+marketing_description: Pair audio with visual direction to produce full music videos.
+
+prompt:
+  required: true
+  placeholder: "Describe the visual direction…"
+  max_length: 2000
+
+inputs:
+  - role: source_audio
+    kind: audio
+    required: true
+    label: AUDIO
+    drop_hint: an audio track
+    accept: ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg"]
+    max_size_mb: 64
 
 supported_durations: ["15s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
@@ -22,6 +34,23 @@ settings:
 
 capabilities:
   download: true
+  # The output is cut to the supplied track, so extending it past the audio is
+  # not meaningful.
   extend: false
   reuse_settings: true
   variation: true
+
+ui:
+  icon: clapper
+  thumb: "linear-gradient(140deg, #1C240C, #182008)"
+
+execution:
+  # PRIVATE — stripped from every public API response.
+  runtime: mock
+  # M1 runs the mock runtime, which emits a placeholder image rather than
+  # rendered media. `output_type` above stays the product truth; these two lines
+  # describe what the current runtime actually writes, and the API signs the
+  # worker's upload for exactly this type. Remove both when M2 wires up a real
+  # provider.
+  output_content_type: image/png
+  output_kind: image

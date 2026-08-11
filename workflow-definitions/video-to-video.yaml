@@ -1,14 +1,41 @@
 id: video-to-video
+version: "1"
 name: Video to Video
 category: video
 output_type: video
-description: Restyle and transform existing footage
 
-input_types: [video, prompt]
-prompt_placeholder: "Describe the transformation…"
-media_requirements:
-  kind: a video
-  label: INPUT VIDEO
+description: Restyle and transform existing footage
+short_description: Restyle footage
+marketing_description: Restyle and transform existing footage with a prompt.
+
+prompt:
+  required: true
+  placeholder: "Describe the transformation…"
+  max_length: 2000
+
+inputs:
+  - role: source_video
+    kind: video
+    required: true
+    label: INPUT VIDEO
+    drop_hint: a video
+    accept: ["video/mp4", "video/quicktime", "video/webm"]
+    max_size_mb: 512
+
+  # Optional reference image — requested by the client for a later milestone.
+  #
+  # M1 scope is the CONTRACT ONLY: the input is accepted, validated, stored and
+  # handed to the worker. It does NOT perform identity or character
+  # replacement; that behaviour belongs to M2. The `help` line below is what the
+  # customer reads, and it deliberately promises nothing beyond style guidance.
+  - role: reference_image
+    kind: image
+    required: false
+    label: REFERENCE IMAGE
+    drop_hint: an optional reference image
+    help: Optional. Guides the look of the result.
+    accept: ["image/jpeg", "image/png", "image/webp"]
+    max_size_mb: 25
 
 supported_durations: ["5s", "10s", "15s"]
 supported_aspect_ratios: ["16:9", "9:16"]
@@ -25,3 +52,18 @@ capabilities:
   extend: true
   reuse_settings: true
   variation: true
+
+ui:
+  icon: repeat
+  thumb: "linear-gradient(140deg, #222C10, #141A0C)"
+
+execution:
+  # PRIVATE — stripped from every public API response.
+  runtime: mock
+  # M1 runs the mock runtime, which emits a placeholder image rather than
+  # rendered media. `output_type` above stays the product truth; these two lines
+  # describe what the current runtime actually writes, and the API signs the
+  # worker's upload for exactly this type. Remove both when M2 wires up a real
+  # provider.
+  output_content_type: image/png
+  output_kind: image

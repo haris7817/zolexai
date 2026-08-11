@@ -1,44 +1,52 @@
 "use client";
 
-import {
-  useGenerationJobs,
-  selectSelectedJob,
-} from "@/features/generation/useGenerationJobs";
-import { isRunning, type GenerationJob } from "@/features/generation/types";
+import { isRunning, type GenerationJob } from "@zolexai/workflow-contracts";
 import { StatusDot, type StatusTone } from "@/components/ui/Feedback";
+import { useRecentGenerations } from "@/features/generation/queries";
 import { cn } from "@/lib/cn";
 
 /**
- * Horizontal strip of this session's generations.
+ * Horizontal strip of recent generations.
  *
- * Guide §7 Step 5 asks the demo to show a second generation starting while a
- * result already exists, then switching between them — this is that surface.
- * Jobs keep running while the user navigates, because they live in the store
- * rather than in this component.
+ * Reads the API rather than an in-tab store, which is a real improvement over
+ * the PRE-M1 behaviour: jobs survive a page refresh, appear in a second tab,
+ * and keep running while the user browses other screens — because they live in
+ * PostgreSQL, not in this component's memory.
  */
-export function JobStrip() {
-  const jobs = useGenerationJobs((state) => state.jobs);
-  const selectJob = useGenerationJobs((state) => state.selectJob);
-  const selectedJob = useGenerationJobs(selectSelectedJob);
+export function JobStrip({
+  selectedJobId,
+  onSelect,
+}: {
+  selectedJobId: string | null;
+  onSelect: (jobId: string) => void;
+}) {
+  const { jobs } = useRecentGenerations();
 
   if (jobs.length === 0) return null;
 
   return (
     <div
       role="list"
-      aria-label="Generation jobs"
+      aria-label="Recent generations"
       className="mt-[14px] flex gap-[10px] overflow-x-auto pb-[2px]"
     >
       {jobs.map((job) => (
         <JobCard
           key={job.id}
           job={job}
-          selected={job.id === selectedJob?.id}
-          onSelect={() => selectJob(job.id)}
+          selected={job.id === selectedJobId}
+          onSelect={() => onSelect(job.id)}
         />
       ))}
     </div>
   );
+}
+
+export function statusTone(status: GenerationJob["status"]): StatusTone {
+  if (status === "completed") return "success";
+  if (status === "failed") return "error";
+  if (status === "cancelled") return "muted";
+  return "running";
 }
 
 function JobCard({
@@ -51,12 +59,8 @@ function JobCard({
   onSelect: () => void;
 }) {
   const running = isRunning(job.status);
-  const tone: StatusTone =
-    job.status === "Completed"
-      ? "success"
-      : job.status === "Failed"
-        ? "error"
-        : "running";
+  const thumb = job.outputs.find((output) => output.is_primary)?.url ?? null;
+  const duration = String(job.parameters?.duration ?? "");
 
   return (
     // The source design put role="listitem" and aria-pressed on the same
@@ -76,8 +80,8 @@ function JobCard({
       >
         <span
           aria-hidden="true"
-          className="relative h-8 w-12 shrink-0 overflow-hidden rounded-md"
-          style={{ background: job.thumb }}
+          className="relative h-8 w-12 shrink-0 overflow-hidden rounded-md bg-[#161A12] bg-cover bg-center"
+          style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}
         >
           {running ? (
             <span
@@ -89,12 +93,13 @@ function JobCard({
 
         <span className="block">
           <span className="text-zx-text block max-w-[150px] truncate text-[11.5px] font-bold">
-            {job.prompt}
+            {job.prompt || job.workflow_name}
           </span>
           <span className="mt-[3px] flex items-center gap-[6px]">
-            <StatusDot tone={tone} />
+            <StatusDot tone={statusTone(job.status)} />
             <span className="text-zx-text-muted text-[10.5px] font-bold">
-              {job.status} · {job.workflowName} · {job.parameters.duration}
+              {job.stage_label} · {job.workflow_name}
+              {duration ? ` · ${duration}` : ""}
             </span>
           </span>
         </span>

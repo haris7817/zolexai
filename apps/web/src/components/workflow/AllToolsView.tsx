@@ -1,22 +1,21 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { WORKFLOW_LIST } from "@/features/workflows/registry";
 import { WorkflowCard } from "./WorkflowCard";
 import { AppPage, PageHeader } from "@/components/ui/PageHeader";
 import { OptionChip, TextField } from "@/components/ui/Controls";
 import { EmptyState } from "@/components/ui/Feedback";
 import { Icon } from "@/components/ui/Icon";
+import { useWorkflows } from "@/features/workflows/queries";
 
 /**
- * All Tools — PREUI-06.
+ * All Tools.
  *
- * ⚠️ MOCK filtering: search and category run client-side over the registry.
- * There is no backend. Real workflow metadata arrives from
- * GET /api/v1/workflows at M1.15.
- *
- * Renders the six frozen-scope workflows and nothing else — same registry as
- * the sidebar, Dashboard and Landing, so the four can never disagree.
+ * The catalogue comes from `GET /api/v1/workflows`. Search and category are
+ * filtered client-side, which is correct here and only here: the whole
+ * catalogue is six items served in one response, so a round trip per keystroke
+ * would be pure latency for no benefit. Collections that can grow without
+ * bound — generations, media — filter server-side instead.
  */
 
 const CATEGORIES = [
@@ -28,20 +27,20 @@ const CATEGORIES = [
 export function AllToolsView() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string>("all");
+  const { workflows } = useWorkflows();
 
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return WORKFLOW_LIST.filter((workflow) => {
-      const matchesCategory =
-        category === "all" || workflow.category === category;
+    return workflows.filter((workflow) => {
+      const matchesCategory = category === "all" || workflow.category === category;
       const matchesQuery =
         needle.length === 0 ||
         workflow.name.toLowerCase().includes(needle) ||
         workflow.description.toLowerCase().includes(needle) ||
-        workflow.marketingDescription.toLowerCase().includes(needle);
+        workflow.marketing_description.toLowerCase().includes(needle);
       return matchesCategory && matchesQuery;
     });
-  }, [query, category]);
+  }, [workflows, query, category]);
 
   return (
     <AppPage>
@@ -50,7 +49,7 @@ export function AllToolsView() {
         description="Every ZolexAI creation workflow, organised by what it produces."
       />
 
-      <div className="mb-6 flex flex-col gap-3 tablet:flex-row tablet:items-center">
+      <div className="tablet:flex-row tablet:items-center mb-6 flex flex-col gap-3">
         <div className="relative flex-1">
           <span className="text-zx-text-muted pointer-events-none absolute top-1/2 left-3 -translate-y-1/2">
             <Icon name="search" size={15} />
@@ -80,7 +79,7 @@ export function AllToolsView() {
       </div>
 
       {results.length > 0 ? (
-        <div className="grid grid-cols-1 gap-5 tablet:grid-cols-2 desktop:grid-cols-3">
+        <div className="tablet:grid-cols-2 desktop:grid-cols-3 grid grid-cols-1 gap-5">
           {results.map((workflow) => (
             <WorkflowCard key={workflow.id} workflow={workflow} tone="detailed" />
           ))}
@@ -89,7 +88,7 @@ export function AllToolsView() {
         <EmptyState
           icon="search"
           title="No tools match that search"
-          description="Try a different term, or clear the category filter to see all six workflows."
+          description="Try a different term, or clear the category filter to see every workflow."
         />
       )}
     </AppPage>

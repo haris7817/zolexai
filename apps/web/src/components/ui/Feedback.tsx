@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Icon, type IconName } from "./Icon";
 import { cn } from "@/lib/cn";
 
@@ -94,9 +94,17 @@ export function EmptyState({
 }
 
 /** Shimmer placeholder — the same treatment as the generation canvas. */
-export function Skeleton({ className }: { className?: string }) {
+export function Skeleton({
+  className,
+  style,
+}: {
+  className?: string;
+  style?: CSSProperties;
+}) {
   return (
     <div
+      aria-hidden="true"
+      style={style}
       className={cn(
         "animate-zx-shimmer bg-[linear-gradient(110deg,var(--zx-surface)_30%,#1E2418_50%,var(--zx-surface)_70%)] bg-[length:200%_100%]",
         className,

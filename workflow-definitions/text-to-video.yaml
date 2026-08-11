@@ -1,11 +1,28 @@
+# ZolexAI workflow definition — PUBLIC METADATA.
+#
+# These files are the single source of truth for what ZolexAI offers. The API
+# validates them at startup and serves them at GET /api/v1/workflows; the
+# frontend builds every tool surface from them; the worker dispatches on them.
+#
+# Anything provider-, model- or hardware-specific belongs under `execution:`,
+# which is stripped from every public response. See docs/decisions/0002.
 id: text-to-video
+version: "1"
 name: Text to Video
 category: video
 output_type: video
-description: Describe a scene and generate cinematic video
 
-input_types: [prompt]
-prompt_placeholder: "Describe the video you want to create…"
+description: Describe a scene and generate cinematic video
+short_description: From prompt to motion
+marketing_description: Describe a scene and watch it come to life as cinematic video.
+
+prompt:
+  required: true
+  placeholder: "Describe the video you want to create…"
+  max_length: 2000
+
+# No uploaded assets — the prompt is the only input.
+inputs: []
 
 supported_durations: ["5s", "10s", "15s", "30s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1", "4:5"]
@@ -22,3 +39,18 @@ capabilities:
   extend: true
   reuse_settings: true
   variation: true
+
+ui:
+  icon: sparkles
+  thumb: "linear-gradient(140deg, #26320C, #151C08)"
+
+execution:
+  # PRIVATE — stripped from every public API response.
+  runtime: mock
+  # M1 runs the mock runtime, which emits a placeholder image rather than
+  # rendered media. `output_type` above stays the product truth; these two lines
+  # describe what the current runtime actually writes, and the API signs the
+  # worker's upload for exactly this type. Remove both when M2 wires up a real
+  # provider.
+  output_content_type: image/png
+  output_kind: image

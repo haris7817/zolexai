@@ -1,36 +1,57 @@
 "use client";
 
+import { useState } from "react";
+import type { GenerationJob, Workflow } from "@zolexai/workflow-contracts";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Icon, type IconName } from "@/components/ui/Icon";
-import type { WorkflowDefinition } from "@/features/workflows/types";
+import { primaryOutput } from "@/services/generations";
+import { fetchDownloadUrl } from "@/services/assets";
 
 /**
  * Result actions, driven ENTIRELY by workflow capabilities.
  *
- * This is the mechanism architecture doc §9 and M2.20 require: "no irrelevant
- * action appears". A Music result has `extend: false`, so Extend is simply
- * never rendered — there is no branch on workflow id anywhere in this file.
- *
- * Worth demonstrating explicitly (guide §7 Step 6): switch to Music, generate,
- * and note that Extend is absent while Download / Reuse / Variation remain.
+ * A Music result has `extend: false`, so Extend is simply never rendered —
+ * there is no branch on workflow id anywhere in this file. Adding a workflow in
+ * M2 gets correct actions from its definition alone.
  */
 export function ResultActions({
+  job,
   workflow,
   onReuseSettings,
   onVariation,
 }: {
-  workflow: WorkflowDefinition;
+  job: GenerationJob;
+  workflow: Workflow;
   onReuseSettings: () => void;
   onVariation: () => void;
 }) {
   const { capabilities } = workflow;
+  const output = primaryOutput(job);
+  const [downloading, setDownloading] = useState(false);
+
+  /**
+   * Downloads are a short-lived signed URL fetched on demand, not a link baked
+   * into the page. Two reasons: a URL rendered at page load would already be
+   * expired for a tab left open, and the bucket stays private so a copied link
+   * cannot outlive its window.
+   */
+  const handleDownload = async () => {
+    if (!output) return;
+    setDownloading(true);
+    try {
+      const url = await fetchDownloadUrl(output.asset_id);
+      window.location.assign(url);
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <div className="mt-[18px] flex flex-wrap justify-center gap-[9px]">
-      {capabilities.download ? (
-        <Button variant="primary" size="md" onClick={noopDownload}>
+      {capabilities.download && output ? (
+        <Button variant="primary" size="md" onClick={handleDownload} disabled={downloading}>
           <ActionIcon name="download" />
-          Download
+          {downloading ? "Preparing…" : "Download"}
         </Button>
       ) : null}
 
@@ -41,7 +62,7 @@ export function ResultActions({
         </ButtonLink>
       ) : null}
 
-      {capabilities.reuseSettings ? (
+      {capabilities.reuse_settings ? (
         <Button variant="ghost" size="md" onClick={onReuseSettings}>
           <ActionIcon name="reuse" />
           Reuse Settings
@@ -60,13 +81,4 @@ export function ResultActions({
 
 function ActionIcon({ name }: { name: IconName }) {
   return <Icon name={name} size={15} />;
-}
-
-/**
- * ⚠️ MOCK — there is no generated file to download. Real signed download URLs
- * arrive at M3.06. Kept as a no-op so the button is present for design review
- * without implying a working export.
- */
-function noopDownload() {
-  /* intentionally empty — see comment above */
 }

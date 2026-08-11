@@ -1,29 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { WORKFLOW_LIST } from "@/features/workflows/registry";
-import type { WorkflowId } from "@/features/workflows/types";
 import { Icon } from "@/components/ui/Icon";
+import { useWorkflows } from "@/features/workflows/queries";
 import { cn } from "@/lib/cn";
 
 /**
  * The 2×3 workflow grid in the settings panel.
  *
- * Rendered from the registry, so it can never disagree with the sidebar,
- * All Tools, the Dashboard or the Landing page. Selecting a workflow is real
- * navigation (`/app/create/{id}`), which keeps the workspace URL shareable and
- * gives every tool its own metadata title.
+ * Rendered from the catalogue the API served, so it can never disagree with the
+ * sidebar, All Tools, the Dashboard or the Landing page. Selecting a workflow
+ * is real navigation (`/app/create/{id}`), which keeps the workspace URL
+ * shareable and gives every tool its own metadata title.
  */
 export function WorkflowSelector({
   activeId,
   onSelect,
 }: {
-  activeId: WorkflowId;
+  activeId: string;
   onSelect?: () => void;
 }) {
+  const { workflows } = useWorkflows();
+
   return (
     <div className="mb-6 grid grid-cols-2 gap-2">
-      {WORKFLOW_LIST.map((workflow) => {
+      {workflows.map((workflow) => {
         const selected = workflow.id === activeId;
         return (
           <Link
@@ -38,7 +39,7 @@ export function WorkflowSelector({
                 : "border-zx-border bg-zx-surface text-zx-text-secondary hover:text-zx-text-secondary font-semibold",
             )}
           >
-            <Icon name={workflow.icon} size={17} />
+            <Icon name={workflow.ui.icon} size={17} />
             <span className="text-center leading-tight">{workflow.name}</span>
           </Link>
         );

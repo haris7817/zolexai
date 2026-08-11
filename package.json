@@ -12,7 +12,15 @@
     "build": "npm run build --workspace=web",
     "start": "npm run start --workspace=web",
     "lint": "npm run lint --workspace=web",
-    "typecheck": "npm run typecheck --workspace=web"
+    "typecheck": "npm run typecheck --workspace=web",
+    "infra:up": "docker compose --env-file .env -f infrastructure/compose/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infrastructure/compose/docker-compose.yml down",
+    "infra:reset": "docker compose -f infrastructure/compose/docker-compose.yml down -v",
+    "infra:logs": "docker compose -f infrastructure/compose/docker-compose.yml logs -f",
+    "stack:up": "docker compose --env-file .env -f infrastructure/compose/docker-compose.yml --profile apps up -d --build",
+    "stack:down": "docker compose -f infrastructure/compose/docker-compose.yml --profile apps down",
+    "qa:parity": "npm run qa:parity --workspace=web",
+    "qa:e2e": "npm run qa:e2e --workspace=web"
   },
   "engines": {
     "node": ">=20.9.0"

@@ -1,13 +1,15 @@
 "use client";
 
-import { useActiveJobs } from "@/features/generation/useGenerationJobs";
+import { useActiveGenerations } from "@/features/generation/queries";
 import { cn } from "@/lib/cn";
 
 /**
  * "N generations running" — the shell-level signal that work continues while
- * the user browses elsewhere. Guide §7 Step 5 asks the demo to show exactly
- * this: "users will be able to continue working while generations are running
- * instead of being locked on one loading screen."
+ * the user browses elsewhere.
+ *
+ * Reads the API, not this tab's memory, so it also counts a job started in
+ * another tab or before a page refresh. Jobs live in PostgreSQL and keep
+ * running whatever the browser does.
  *
  * Renders nothing when idle, so it never occupies space it hasn't earned.
  */
@@ -16,7 +18,7 @@ export function ActiveJobsIndicator({
 }: {
   variant?: "sidebar" | "header";
 }) {
-  const activeJobs = useActiveJobs();
+  const { jobs: activeJobs } = useActiveGenerations();
   if (activeJobs.length === 0) return null;
 
   const count = activeJobs.length;

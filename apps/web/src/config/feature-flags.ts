@@ -1,31 +1,25 @@
 /**
- * Feature flags — the demo/production seam.
+ * Feature flags — the "not finished yet" seam.
  *
- * Everything that exists ONLY to support the PRE-M1 client demo is gated here,
- * so Milestone 1 removes demo scaffolding by flipping booleans rather than
- * hunting through components.
+ * PRE-M1 used this to gate demo scaffolding. That scaffolding is gone: the
+ * simulated pipeline, the mock job store and the "Use example prompt" helper
+ * were deleted when generation became real, and `demoMode`/`demoHelpers` went
+ * with them.
+ *
+ * What remains is a narrower and still-true statement about this build.
  */
 export const featureFlags = {
   /**
-   * PRE-M1 master switch. While true the app runs entirely on mock data and
-   * surfaces the "UI Preview" disclosure so the client cannot mistake the
-   * simulated pipeline for connected AI (guide §3, §4).
+   * Accounts, subscriptions and billing are not connected (M3.01, M3.11).
    *
-   * M1: set false once the FastAPI backend and SSE are wired up.
+   * Generation IS connected — a request creates a real job, a real worker
+   * claims it, and progress streams over SSE. Only the account layer is
+   * outstanding, which is exactly what the preview badge now says. Overstating
+   * this ("everything is simulated") would be as misleading as understating it.
+   *
+   * M3: set false once authentication and billing ship.
    */
-  demoMode: true,
-
-  /**
-   * Presenter conveniences used during the guided walkthrough — currently the
-   * "Use example prompt" action beside the PROMPT label (guide §7 Step 3).
-   *
-   * The workspace deliberately opens EMPTY so the client sees a natural creator
-   * state rather than a pre-configured one; this makes the scripted prompt one
-   * click away without faking it.
-   *
-   * M1: set false. This is not product UI.
-   */
-  demoHelpers: true,
+  previewBuild: true,
 } as const;
 
 export type FeatureFlags = typeof featureFlags;

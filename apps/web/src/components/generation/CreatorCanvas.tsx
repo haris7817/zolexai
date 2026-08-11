@@ -1,25 +1,28 @@
 "use client";
 
+import type { GenerationJob, Workflow } from "@zolexai/workflow-contracts";
 import { brand } from "@/config/brand";
-import { DemoSimulationNote } from "@/components/ui/DemoDisclosure";
+import { Icon } from "@/components/ui/Icon";
+import { MediaPreview } from "@/components/media/MediaPreview";
+import { primaryOutput } from "@/services/generations";
+import { cn } from "@/lib/cn";
 import { ResultActions } from "./ResultActions";
-import type { GenerationJob } from "@/features/generation/types";
-import type { WorkflowDefinition } from "@/features/workflows/types";
 
 /**
- * The centre of the creator workspace. Three states, exactly as approved:
+ * The centre of the creator workspace. Four states:
  *
- *   empty     nothing generated yet
- *   progress  simulated pipeline running
- *   result    completed placeholder output + capability-driven actions
+ *   empty     nothing selected yet
+ *   progress  a real job running, driven by SSE
+ *   result    the completed output from object storage
+ *   failed    a safe, human explanation of what went wrong
+ *
+ * The progress numbers here are reported by the worker over Server-Sent Events;
+ * nothing in this file simulates anything. (The PRE-M1 timer that used to drive
+ * it has been deleted.)
  */
 
-export function EmptyGenerationState({
-  workflow,
-}: {
-  workflow: WorkflowDefinition;
-}) {
-  const noun = workflow.outputType === "audio" ? "track" : "video";
+export function EmptyGenerationState({ workflow }: { workflow: Workflow }) {
+  const noun = workflow.output_type === "audio" ? "track" : "video";
 
   return (
     <div className="max-w-[380px] p-8 text-center">
@@ -27,7 +30,7 @@ export function EmptyGenerationState({
         aria-hidden="true"
         className="mx-auto mb-[22px] flex aspect-video w-[120px] items-center justify-center rounded-[10px] border-[1.5px] border-dashed border-white/14"
       >
-        <span className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-[image:var(--zx-gradient-primary)] text-[15px] font-extrabold text-zx-on-primary opacity-55">
+        <span className="text-zx-on-primary flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-[image:var(--zx-gradient-primary)] text-[15px] font-extrabold opacity-55">
           {brand.shortName}
         </span>
       </div>
@@ -41,34 +44,43 @@ export function EmptyGenerationState({
   );
 }
 
-export function GenerationProgress({ job }: { job: GenerationJob }) {
+export function GenerationProgress({
+  job,
+  onCancel,
+  cancelling,
+}: {
+  job: GenerationJob;
+  onCancel: () => void;
+  cancelling: boolean;
+}) {
   return (
     <div className="animate-zx-fade-up w-[max(220px,min(520px,100%-56px,calc((100vh-380px)*1.78)))] text-center">
       <div className="rounded-zx-md border-zx-border animate-zx-shimmer mb-[22px] aspect-video border bg-[linear-gradient(110deg,var(--zx-surface)_30%,#1E2418_50%,var(--zx-surface)_70%)] bg-[length:200%_100%]" />
 
-      <div
-        role="status"
-        className="text-zx-text mb-[5px] text-[15.5px] font-extrabold"
-      >
-        {job.status}
+      {/* aria-live: a screen reader announces each stage change without the
+          user having to go looking for it. */}
+      <div role="status" className="text-zx-text mb-[5px] text-[15.5px] font-extrabold">
+        {job.stage_label}
       </div>
-      <div className="text-zx-text-secondary mb-4 text-[12.5px]">
+      <div className="text-zx-text-secondary mb-4 min-h-[18px] text-[12.5px]">
         {job.hint}
       </div>
 
-      <div
-        aria-hidden="true"
-        className="h-[5px] overflow-hidden rounded-[3px] bg-white/7"
-      >
+      <div aria-hidden="true" className="h-[5px] overflow-hidden rounded-[3px] bg-white/7">
         <div
           className="h-full rounded-[3px] bg-[image:var(--zx-gradient-primary)] transition-[width] duration-400 ease-out"
           style={{ width: `${job.progress}%` }}
         />
       </div>
 
-      {/* Sits exactly where a moving progress bar could be mistaken for real
-          inference — the load-bearing disclosure (guide §7 Step 4). */}
-      <DemoSimulationNote className="mt-4" />
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={cancelling}
+        className="text-zx-text-muted hover:text-zx-text-secondary mt-4 cursor-pointer text-[12px] font-bold transition-colors duration-150 disabled:cursor-default disabled:opacity-50"
+      >
+        {cancelling ? "Cancelling…" : "Cancel generation"}
+      </button>
     </div>
   );
 }
@@ -80,77 +92,86 @@ export function GenerationResult({
   onVariation,
 }: {
   job: GenerationJob;
-  workflow: WorkflowDefinition;
+  workflow: Workflow;
   onReuseSettings: () => void;
   onVariation: () => void;
 }) {
-  const isAudio = workflow.outputType === "audio";
+  const output = primaryOutput(job);
+  const duration = String(job.parameters?.duration ?? "");
 
   return (
     <div className="animate-zx-fade-up w-[max(220px,min(720px,100%-48px,calc((100vh-360px)*1.78)))]">
-      <div
-        className="rounded-zx-md border-zx-border relative flex items-center justify-center overflow-hidden border shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
-        style={{
-          background: job.thumb,
-          aspectRatio: isAudio ? "16 / 6" : "16 / 9",
-        }}
-      >
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 bg-[radial-gradient(circle_at_65%_25%,rgba(198,242,36,0.13),transparent_60%)]"
-        />
+      <MediaPreview
+        url={output?.url ?? null}
+        kind={output?.kind ?? "image"}
+        aspectRatio={output?.kind === "audio" ? "16 / 6" : "16 / 9"}
+        fallbackGradient={workflow.ui.thumb}
+        className="rounded-zx-md border-zx-border border shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
+      />
 
-        {isAudio ? <AudioWaveform /> : null}
-
-        <button
-          type="button"
-          aria-label={isAudio ? "Play track" : "Play video"}
-          className="relative flex h-[60px] w-[60px] cursor-pointer items-center justify-center rounded-full border border-white/25 bg-white/10 backdrop-blur-[6px] transition-colors duration-150 hover:bg-white/18"
-        >
-          <span
-            aria-hidden="true"
-            className="ml-[4px] h-0 w-0 border-y-[10px] border-l-[16px] border-y-transparent border-l-white"
-          />
-        </button>
-
-        <span className="text-zx-text absolute right-[14px] bottom-3 rounded-md bg-[rgba(10,10,11,0.7)] px-[9px] py-[4px] text-[11px] font-bold">
-          {job.parameters.duration}
-        </span>
-      </div>
+      {duration ? (
+        <div className="text-zx-text-muted mt-2 text-right text-[11px] font-bold">
+          {duration}
+        </div>
+      ) : null}
 
       <ResultActions
+        job={job}
         workflow={workflow}
         onReuseSettings={onReuseSettings}
         onVariation={onVariation}
       />
-
-      <DemoSimulationNote className="mt-4" />
     </div>
   );
 }
 
 /**
- * Audio results get a waveform rather than a video frame — architecture doc
- * §31 requires audio to be a first-class output type, not a video with the
- * picture missing.
+ * Failure state.
+ *
+ * Shows the API's customer-safe message and nothing else. Worker internals,
+ * stack traces and model names are sanitized server-side and never reach here
+ * (architecture rule #10, directive §23) — so there is nothing to filter in
+ * this component, by design.
  */
-function AudioWaveform() {
-  const bars = [
-    18, 34, 26, 48, 62, 40, 72, 54, 88, 66, 44, 78, 58, 92, 70, 46, 84, 60, 38,
-    52, 30, 64, 42, 24,
-  ];
+export function GenerationFailed({
+  job,
+  onRetry,
+}: {
+  job: GenerationJob;
+  onRetry: () => void;
+}) {
+  const cancelled = job.status === "cancelled";
+
   return (
-    <div
-      aria-hidden="true"
-      className="absolute inset-x-8 bottom-6 flex items-end justify-center gap-[3px] opacity-45"
-    >
-      {bars.map((height, index) => (
-        <span
-          key={index}
-          className="w-[3px] rounded-full bg-white/70"
-          style={{ height: `${height}%` }}
-        />
-      ))}
+    <div className="animate-zx-fade-up max-w-[420px] p-8 text-center">
+      <div
+        className={cn(
+          "mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] border",
+          cancelled
+            ? "border-zx-border bg-zx-surface text-zx-text-muted"
+            : "border-zx-error/40 bg-zx-error/8 text-zx-error",
+        )}
+      >
+        <Icon name={cancelled ? "close" : "alert"} size={20} />
+      </div>
+
+      <div className="text-zx-text mb-[7px] text-[15.5px] font-extrabold">
+        {cancelled ? "Generation cancelled" : "Generation failed"}
+      </div>
+      <p className="text-zx-text-secondary mb-5 text-[13px] leading-[1.55]">
+        {job.error?.message ??
+          (cancelled
+            ? "You stopped this generation before it finished."
+            : "This generation could not be completed. Please try again.")}
+      </p>
+
+      <button
+        type="button"
+        onClick={onRetry}
+        className="text-zx-primary-light hover:text-zx-text cursor-pointer text-[12.5px] font-bold transition-colors duration-150"
+      >
+        Reuse these settings
+      </button>
     </div>
   );
 }

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { mockUser } from "@/mocks/user";
-import { WORKFLOW_LIST } from "@/features/workflows/registry";
+import { useWorkflows } from "@/features/workflows/queries";
 import { AppPage, PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Icon, type IconName } from "@/components/ui/Icon";
@@ -286,10 +286,14 @@ function PreferencesSection() {
 }
 
 function GenerationSection() {
-  const [workflowId, setWorkflowId] = useState(WORKFLOW_LIST[0].id);
+  const { workflows } = useWorkflows();
+  const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [autoOpen, setAutoOpen] = useState(true);
-  const workflow =
-    WORKFLOW_LIST.find((item) => item.id === workflowId) ?? WORKFLOW_LIST[0];
+
+  // Falls back to the first workflow until one is picked, so this renders
+  // correctly on the first paint before the catalogue query resolves.
+  const workflow = workflows.find((item) => item.id === workflowId) ?? workflows[0];
+  if (!workflow) return null;
 
   return (
     <Panel
@@ -298,14 +302,14 @@ function GenerationSection() {
     >
       <SectionLabel>Default tool</SectionLabel>
       <div className="mb-6 flex flex-wrap gap-2">
-        {WORKFLOW_LIST.map((item) => (
+        {workflows.map((item) => (
           <OptionChip
             key={item.id}
-            selected={item.id === workflowId}
+            selected={item.id === workflow.id}
             onClick={() => setWorkflowId(item.id)}
             className="inline-flex items-center gap-[6px] px-[14px] py-[9px] text-[12px]"
           >
-            <Icon name={item.icon} size={13} />
+            <Icon name={item.ui.icon} size={13} />
             {item.name}
           </OptionChip>
         ))}
@@ -315,7 +319,7 @@ function GenerationSection() {
           tool is selected — the same mechanism the workspace panel uses. */}
       <SectionLabel>Default duration</SectionLabel>
       <div className="mb-6 flex flex-wrap gap-2">
-        {workflow.supportedDurations.map((duration, index) => (
+        {workflow.supported_durations.map((duration, index) => (
           <OptionChip
             key={duration}
             selected={index === 0}
@@ -327,11 +331,11 @@ function GenerationSection() {
         ))}
       </div>
 
-      {workflow.supportedAspectRatios.length > 0 ? (
+      {workflow.supported_aspect_ratios.length > 0 ? (
         <>
           <SectionLabel>Default aspect ratio</SectionLabel>
           <div className="mb-6 flex flex-wrap gap-2">
-            {workflow.supportedAspectRatios.map((ratio, index) => (
+            {workflow.supported_aspect_ratios.map((ratio, index) => (
               <OptionChip
                 key={ratio}
                 selected={index === 0}

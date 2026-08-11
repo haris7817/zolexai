@@ -1,0 +1,171 @@
+# ZolexAI — local development infrastructure.
+#
+# Brings up the three backing services the platform needs. The API, worker and
+# frontend are NOT here by default: during development they are far more useful
+# running on the host with hot reload. Bring them up with the `apps` profile
+# when you want the full containerised stack:
+#
+#   docker compose up -d                    # Postgres + Redis + MinIO
+#   docker compose --profile apps up -d     # ...plus API, worker and web
+#
+# Run from `infrastructure/compose/`. Every service is on one private network;
+# only the ports listed below are published, so PostgreSQL and Redis are never
+# exposed beyond the developer's machine (scalability rule #11).
+
+name: zolexai
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zolexai}
+      POSTGRES_USER: ${POSTGRES_USER:-zolexai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zolexai_dev_password}
+      # Deterministic collation, so ORDER BY behaves identically on every
+      # developer machine regardless of host locale.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` alone reports true during init; naming the database and
+      # user means dependants wait for a genuinely usable server.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-zolexai} -d ${POSTGRES_DB:-zolexai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # No persistence: everything in Redis here is coordination or cache and is
+    # rebuildable from PostgreSQL. `--save ""` makes that explicit rather than
+    # leaving a dump file that could be mistaken for a source of truth.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY:-zolexai_dev}
+      MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_KEY:-zolexai_dev_secret}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  minio-setup:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    # Creates the bucket and applies the CORS rule browsers need for a direct
+    # presigned PUT. Without this the upload fails in the browser with an
+    # opaque CORS error even though the signature is valid.
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${STORAGE_ACCESS_KEY:-zolexai_dev} ${STORAGE_SECRET_KEY:-zolexai_dev_secret} &&
+      mc mb --ignore-existing local/${STORAGE_BUCKET:-zolexai-dev} &&
+      mc anonymous set none local/${STORAGE_BUCKET:-zolexai-dev} &&
+      echo 'MinIO bucket ready: ${STORAGE_BUCKET:-zolexai-dev}'
+      "
+    restart: "no"
+
+  # ── Application services (profile: apps) ────────────────────────────────
+
+  api:
+    profiles: ["apps"]
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-zolexai}:${POSTGRES_PASSWORD:-zolexai_dev_password}@postgres:5432/${POSTGRES_DB:-zolexai}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ENDPOINT: http://minio:9000
+      # The browser cannot resolve `minio`, and the host is part of the
+      # signature — so presigned URLs must be signed against localhost.
+      STORAGE_PUBLIC_ENDPOINT: http://localhost:${MINIO_PORT:-9000}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-zolexai-dev}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-zolexai_dev}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-zolexai_dev_secret}
+      WORKER_API_TOKEN: ${WORKER_API_TOKEN:-dev_worker_token_change_me_0123456789}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      LOG_FORMAT: console
+    ports:
+      - "${API_PORT:-8100}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/v1/health/live')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    profiles: ["apps"]
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    environment:
+      WORKER_NAME: ${WORKER_NAME:-mock-worker-1}
+      API_BASE_URL: http://api:8000
+      WORKER_API_TOKEN: ${WORKER_API_TOKEN:-dev_worker_token_change_me_0123456789}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-zolexai-dev}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-zolexai_dev}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-zolexai_dev_secret}
+      LOG_FORMAT: console
+    depends_on:
+      api:
+        condition: service_healthy
+    # Scale freely — workers claim with FOR UPDATE SKIP LOCKED, so N instances
+    # never collide:  docker compose --profile apps up -d --scale worker=3
+    # (WORKER_NAME is suffixed per replica by the worker itself.)
+
+  web:
+    profiles: ["apps"]
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-8100}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost:${API_PORT:-8100}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  minio_data:

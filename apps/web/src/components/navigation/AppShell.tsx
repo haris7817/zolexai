@@ -114,9 +114,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         </aside>
 
         {/* ── Page content ───────────────────────────────────────────── */}
-        <div className="flex min-w-0 flex-1 flex-col tablet:min-h-0 tablet:overflow-hidden">
+        {/* The ONE main landmark for every app page. Pages must not nest
+            another <main> inside it — the workspace's canvas column is a
+            <section> for exactly that reason. */}
+        <main className="flex min-w-0 flex-1 flex-col tablet:min-h-0 tablet:overflow-hidden">
           {children}
-        </div>
+        </main>
       </div>
     </div>
   );

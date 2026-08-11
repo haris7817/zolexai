@@ -1,24 +1,35 @@
 id: extend-video
+version: "1"
 name: Extend Video
 category: video
 output_type: video
+
 description: Continue a generated video seamlessly
+short_description: Continue any clip
+marketing_description: Continue any generated video seamlessly, as long as you need.
 
-input_types: [video, prompt]
-prompt_placeholder: "Describe what happens next…"
-media_requirements:
-  kind: a video
-  label: SOURCE VIDEO
+prompt:
+  required: true
+  placeholder: "Describe what happens next…"
+  max_length: 2000
 
-# Longer options are offered only where the pipeline genuinely supports them.
-# M2.14/M2.15 must confirm native support or chain extensions — never claim a
-# duration the engine cannot produce (risk R-03).
+inputs:
+  - role: source_video
+    kind: video
+    required: true
+    label: SOURCE VIDEO
+    drop_hint: a video
+    accept: ["video/mp4", "video/quicktime", "video/webm"]
+    max_size_mb: 512
+
 supported_durations: ["5s", "10s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16"]
 supported_quality_levels: [Standard, High, Ultra]
 
 settings:
   quality: true
+  # The motion of an extension is inherited from the source clip, so exposing a
+  # motion-strength control here would be a slider that changes nothing.
   motion_strength: false
   prompt_adherence: true
   seed: false
@@ -27,4 +38,21 @@ capabilities:
   download: true
   extend: true
   reuse_settings: true
+  # A "variation" of an extension is just another extension of the same source —
+  # the Extend action already covers it.
   variation: false
+
+ui:
+  icon: extend
+  thumb: "linear-gradient(140deg, #2C3A0B, #141A08)"
+
+execution:
+  # PRIVATE — stripped from every public API response.
+  runtime: mock
+  # M1 runs the mock runtime, which emits a placeholder image rather than
+  # rendered media. `output_type` above stays the product truth; these two lines
+  # describe what the current runtime actually writes, and the API signs the
+  # worker's upload for exactly this type. Remove both when M2 wires up a real
+  # provider.
+  output_content_type: image/png
+  output_kind: image

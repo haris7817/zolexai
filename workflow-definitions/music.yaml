@@ -1,14 +1,23 @@
 id: music
+version: "1"
 name: Music
 category: audio
 output_type: audio
-description: Generate original tracks from a description
 
-input_types: [prompt]
-prompt_placeholder: "Describe the track — mood, style, tempo…"
+description: Generate original tracks from a description
+short_description: Original tracks
+marketing_description: Generate original tracks from a mood, style or description.
+
+prompt:
+  required: true
+  placeholder: "Describe the track — mood, style, tempo…"
+  max_length: 1000
+
+inputs: []
 
 supported_durations: ["30s", "60s", "120s"]
-# Audio has no frame: the UI hides the aspect-ratio section entirely.
+# Audio has no frame. The API rejects an aspect ratio on this workflow and the
+# settings panel hides the section entirely.
 supported_aspect_ratios: []
 supported_quality_levels: []
 
@@ -24,3 +33,18 @@ capabilities:
   extend: false
   reuse_settings: true
   variation: true
+
+ui:
+  icon: music
+  thumb: "linear-gradient(140deg, #18200A, #10160A)"
+
+execution:
+  # PRIVATE — stripped from every public API response.
+  runtime: mock
+  # M1 runs the mock runtime, which emits a placeholder image rather than
+  # rendered media. `output_type` above stays the product truth; these two lines
+  # describe what the current runtime actually writes, and the API signs the
+  # worker's upload for exactly this type. Remove both when M2 wires up a real
+  # provider.
+  output_content_type: image/png
+  output_kind: image

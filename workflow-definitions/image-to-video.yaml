@@ -1,14 +1,26 @@
 id: image-to-video
+version: "1"
 name: Image to Video
 category: video
 output_type: video
-description: Animate a still image into natural motion
 
-input_types: [image, prompt]
-prompt_placeholder: "Describe how the image should move…"
-media_requirements:
-  kind: an image
-  label: INPUT IMAGE
+description: Animate a still image into natural motion
+short_description: Animate any image
+marketing_description: Animate any still image into smooth, natural motion.
+
+prompt:
+  required: true
+  placeholder: "Describe how the image should move…"
+  max_length: 2000
+
+inputs:
+  - role: source_image
+    kind: image
+    required: true
+    label: INPUT IMAGE
+    drop_hint: an image
+    accept: ["image/jpeg", "image/png", "image/webp"]
+    max_size_mb: 25
 
 supported_durations: ["5s", "10s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
@@ -25,3 +37,18 @@ capabilities:
   extend: true
   reuse_settings: true
   variation: true
+
+ui:
+  icon: image
+  thumb: "linear-gradient(140deg, #33430D, #111708)"
+
+execution:
+  # PRIVATE — stripped from every public API response.
+  runtime: mock
+  # M1 runs the mock runtime, which emits a placeholder image rather than
+  # rendered media. `output_type` above stays the product truth; these two lines
+  # describe what the current runtime actually writes, and the API signs the
+  # worker's upload for exactly this type. Remove both when M2 wires up a real
+  # provider.
+  output_content_type: image/png
+  output_kind: image

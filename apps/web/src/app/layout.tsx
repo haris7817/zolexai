@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Manrope } from "next/font/google";
 import { brand } from "@/config/brand";
+import { Providers } from "./providers";
+import { loadWorkflowCatalog } from "@/features/workflows/catalog.server";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -16,7 +18,6 @@ export const metadata: Metadata = {
     template: `${brand.name} — %s`,
   },
   description: brand.description,
-  // The demo is not a public product surface — keep it out of search results.
   robots: { index: false, follow: false },
 };
 
@@ -26,12 +27,22 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({
+/**
+ * The catalogue is read from the YAML definitions on the server and handed to
+ * the query cache, so navigation and tool grids paint complete on first render
+ * instead of as skeletons — and the landing page keeps working even if the API
+ * is unreachable. The live query still runs and takes over.
+ */
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const workflows = await loadWorkflowCatalog();
+
   return (
     <html lang="en" className={manrope.variable}>
-      <body className="bg-zx-bg text-zx-text antialiased">{children}</body>
+      <body className="bg-zx-bg text-zx-text antialiased">
+        <Providers initialWorkflows={workflows}>{children}</Providers>
+      </body>
     </html>
   );
 }

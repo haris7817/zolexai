@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { brand } from "@/config/brand";
-import { WORKFLOW_LIST } from "@/features/workflows/registry";
+import { loadWorkflowCatalog } from "@/features/workflows/catalog.server";
 import { mockPlan } from "@/mocks/plan";
 import { MarketingNav } from "@/components/marketing/MarketingNav";
 import { Hero } from "@/components/marketing/Hero";
@@ -21,12 +21,17 @@ export const metadata: Metadata = { title: brand.tagline };
  *
  * NOTE ON SCOPE: the original design showed SEVEN tool cards, including
  * "AI Editing Tools". That tool is not in the frozen scope (milestones §8.1),
- * so it is deliberately absent — the grid renders the six registry entries and
+ * so it is deliberately absent — the grid renders the workflow definitions and
  * nothing else, so no surface can imply a seventh tool exists.
  *
- * No provider, model or infrastructure name appears anywhere (guide §4).
+ * The catalogue is read from the YAML definitions at render time, NOT fetched
+ * from the API. This is a public marketing page: an API deploy or outage must
+ * not empty its tool grid. The app itself reads the API at runtime.
+ *
+ * No provider, model or infrastructure name appears anywhere.
  */
-export default function LandingPage() {
+export default async function LandingPage() {
+  const workflows = await loadWorkflowCatalog();
   return (
     <div className="bg-zx-bg text-zx-text min-h-screen overflow-x-hidden">
       <MarketingNav />
@@ -42,7 +47,7 @@ export default function LandingPage() {
           subtitle="A growing suite of creation tools — new workflows ship regularly."
         />
         <div className="grid grid-cols-1 gap-5 tablet:grid-cols-2 laptop:grid-cols-3">
-          {WORKFLOW_LIST.map((workflow) => (
+          {workflows.map((workflow) => (
             <WorkflowCard key={workflow.id} workflow={workflow} tone="detailed" />
           ))}
         </div>

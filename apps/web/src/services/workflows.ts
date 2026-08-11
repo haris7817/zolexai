@@ -1,0 +1,59 @@
+import {
+  workflowListSchema,
+  workflowSchema,
+  type Workflow,
+} from "@zolexai/workflow-contracts";
+import { apiFetch } from "@/lib/api/client";
+
+/**
+ * Workflow catalogue access.
+ *
+ * Definitions are version-controlled YAML loaded at API startup, so they change
+ * only on deploy. `revalidate: 60` lets a server render reuse a cached
+ * catalogue for a minute rather than hitting the API on every page.
+ */
+
+export async function fetchWorkflows(signal?: AbortSignal): Promise<Workflow[]> {
+  const data = await apiFetch("/workflows", workflowListSchema, { signal, revalidate: 60 });
+  return data.workflows;
+}
+
+export async function fetchWorkflow(id: string, signal?: AbortSignal): Promise<Workflow> {
+  return apiFetch(`/workflows/${id}`, workflowSchema, { signal, revalidate: 60 });
+}
+
+/* ── Derived helpers ────────────────────────────────────────────────────
+   Kept here rather than inside components so no screen re-derives workflow
+   behaviour with its own `if (workflow.id === ...)`. A difference between
+   tools belongs in the definition, never in a branch (architecture rule #6). */
+
+export function findWorkflow(workflows: Workflow[], id: string): Workflow | undefined {
+  return workflows.find((workflow) => workflow.id === id);
+}
+
+export function requiredInputs(workflow: Workflow) {
+  return workflow.inputs.filter((input) => input.required);
+}
+
+export function optionalInputs(workflow: Workflow) {
+  return workflow.inputs.filter((input) => !input.required);
+}
+
+export function hasAdvancedSettings(workflow: Workflow): boolean {
+  const { motion_strength, prompt_adherence, seed } = workflow.settings;
+  return motion_strength || prompt_adherence || seed;
+}
+
+export function showsQuality(workflow: Workflow): boolean {
+  return workflow.settings.quality && workflow.supported_quality_levels.length > 0;
+}
+
+export function showsAspectRatio(workflow: Workflow): boolean {
+  return workflow.supported_aspect_ratios.length > 0;
+}
+
+/** Accepted MIME types for a role, as an `<input accept>` value. */
+export function acceptAttribute(workflow: Workflow, role: string): string {
+  const input = workflow.inputs.find((candidate) => candidate.role === role);
+  return input?.accept.join(",") ?? "";
+}

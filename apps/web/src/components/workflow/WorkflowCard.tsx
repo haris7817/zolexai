@@ -1,12 +1,12 @@
 import Link from "next/link";
+import type { Workflow } from "@zolexai/workflow-contracts";
 import { Icon } from "@/components/ui/Icon";
-import type { WorkflowDefinition } from "@/features/workflows/types";
 import { cn } from "@/lib/cn";
 
 /**
  * Tool card — shared by the Creator Dashboard, All Tools and the Landing page.
  *
- * One component reading one registry is why those three surfaces can never
+ * One component reading one catalogue is why those three surfaces can never
  * disagree about which tools exist. `tone` only changes copy density:
  *
  *   compact    dashboard grid      — short description
@@ -17,7 +17,7 @@ export function WorkflowCard({
   tone = "compact",
   href,
 }: {
-  workflow: WorkflowDefinition;
+  workflow: Workflow;
   tone?: "compact" | "detailed";
   href?: string;
 }) {
@@ -29,12 +29,9 @@ export function WorkflowCard({
         href={target}
         className="bg-zx-surface border-zx-border rounded-zx-lg hover:border-zx-border-active block overflow-hidden border transition-[transform,border-color] duration-200 hover:-translate-y-[3px]"
       >
-        <div
-          className="relative h-[130px]"
-          style={{ background: workflow.thumb }}
-        >
+        <div className="relative h-[130px]" style={{ background: workflow.ui.thumb }}>
           <span className="border-zx-border bg-zx-surface-elevated text-zx-primary-light absolute bottom-[-18px] left-5 flex h-10 w-10 items-center justify-center rounded-[11px] border">
-            <Icon name={workflow.icon} size={18} />
+            <Icon name={workflow.ui.icon} size={18} />
           </span>
         </div>
         <div className="px-5 pt-[30px] pb-[22px]">
@@ -42,7 +39,7 @@ export function WorkflowCard({
             {workflow.name}
           </div>
           <p className="text-zx-text-secondary text-[14px] leading-[1.5]">
-            {workflow.marketingDescription}
+            {workflow.marketing_description}
           </p>
         </div>
       </Link>
@@ -57,16 +54,14 @@ export function WorkflowCard({
       )}
     >
       <span
-        className="mb-[14px] flex h-[38px] w-[38px] items-center justify-center rounded-[11px] text-zx-text"
-        style={{ background: workflow.thumb }}
+        className="text-zx-text mb-[14px] flex h-[38px] w-[38px] items-center justify-center rounded-[11px]"
+        style={{ background: workflow.ui.thumb }}
       >
-        <Icon name={workflow.icon} size={17} />
+        <Icon name={workflow.ui.icon} size={17} />
       </span>
-      <div className="text-zx-text mb-1 text-[14.5px] font-extrabold">
-        {workflow.name}
-      </div>
+      <div className="text-zx-text mb-1 text-[14.5px] font-extrabold">{workflow.name}</div>
       <div className="text-zx-text-muted text-[12.5px] leading-[1.45]">
-        {workflow.shortDescription}
+        {workflow.short_description}
       </div>
     </Link>
   );
