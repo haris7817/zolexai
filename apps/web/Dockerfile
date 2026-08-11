@@ -26,6 +26,13 @@ COPY packages ./packages
 COPY apps/web ./apps/web
 COPY workflow-definitions ./workflow-definitions
 
+# The app has no static assets yet, so `apps/web/public` does not exist in the
+# repository and Docker cannot COPY a missing path — the runner stage failed
+# with "/repo/apps/web/public: not found". Creating it here keeps that COPY
+# unconditional, and the directory becomes real the moment a favicon or an OG
+# image is added, with no Dockerfile change needed.
+RUN mkdir -p /repo/apps/web/public
+
 # Baked into the bundle at build time, so it must be correct for the target
 # environment — a NEXT_PUBLIC_* value cannot be changed at runtime.
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
