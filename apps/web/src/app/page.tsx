@@ -43,7 +43,7 @@ export default async function LandingPage() {
         className="mx-auto max-w-[1280px] px-5 py-16 tablet:px-8 laptop:px-12 laptop:py-20"
       >
         <SectionHeading
-          title="One platform, every medium"
+          title="ONE PLATFORM, LIMITLESS CREATION."
           subtitle="A growing suite of creation tools — new workflows ship regularly."
         />
         <div className="grid grid-cols-1 gap-5 tablet:grid-cols-2 laptop:grid-cols-3">
@@ -125,7 +125,7 @@ export default async function LandingPage() {
       <section className="bg-zx-bg-alt border-zx-border border-y px-5 py-16 tablet:px-8 laptop:px-12 laptop:py-20">
         <div className="mx-auto max-w-[1080px]">
           <h2 className="m-0 mb-12 text-center text-[30px] font-extrabold tracking-[-0.03em] laptop:text-[42px]">
-            Built for people who ship
+            BUILT FOR CREATORS WHO REFUSE LIMITS.
           </h2>
           <div className="grid grid-cols-1 gap-5 tablet:grid-cols-2 laptop:grid-cols-3">
             {BENEFITS.map((benefit) => (
@@ -155,7 +155,7 @@ export default async function LandingPage() {
       >
         <div className="mx-auto max-w-[520px] text-center">
           <h2 className="m-0 mb-3 text-[30px] font-extrabold tracking-[-0.03em] laptop:text-[42px]">
-            Simple pricing
+            ONE PRICE. UNLIMITED POWER.
           </h2>
           <p className="text-zx-text-secondary m-0 mb-11 text-[16px]">
             One plan. Everything included.
@@ -214,7 +214,7 @@ export default async function LandingPage() {
       <section className="px-5 pb-20 tablet:px-8 laptop:px-12 laptop:pb-24">
         <div className="mx-auto max-w-[720px]">
           <h2 className="m-0 mb-10 text-center text-[26px] font-extrabold tracking-[-0.03em] laptop:text-[34px]">
-            Frequently asked questions
+            FREQUENTLY ASKED QUESTIONS
           </h2>
           <FaqAccordion />
         </div>
