@@ -18,7 +18,31 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+
+def _repo_root(start: Path | None = None) -> Path:
+    """Locates the repository root, in a way that survives the container.
+
+    In the repo this file is `apps/worker/worker/core/config.py`, so the root
+    is four parents up. Inside the image it is `/app/worker/core/config.py` —
+    only three parents exist. Indexing `parents[4]` unconditionally raised
+    `IndexError` at import time, before the worker could even start.
+
+    The only thing derived from this is the OPTIONAL `.env`, which exists in
+    development and never in the image (where every value is supplied by the
+    environment), so falling back to the filesystem root is harmless: pydantic
+    ignores an env_file that is not there.
+
+    `start` exists so a test can pass a simulated location; production always
+    uses this module's own path.
+    """
+    here = (start or Path(__file__)).resolve()
+    for parent in here.parents:
+        if (parent / ".env").is_file() or (parent / "workflow-definitions").is_dir():
+            return parent
+    return here.parents[-1]
+
+
+REPO_ROOT = _repo_root()
 
 
 class WorkerSettings(BaseSettings):

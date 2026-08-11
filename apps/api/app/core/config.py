@@ -17,8 +17,32 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# apps/api/app/core/config.py -> repo root is four parents up.
-REPO_ROOT = Path(__file__).resolve().parents[4]
+def _repo_root(start: Path | None = None) -> Path:
+    """Locates the repository root, in a way that survives the container.
+
+    In the repo this file is `apps/api/app/core/config.py`, so the root is four
+    parents up. Inside the image it is `/app/app/core/config.py` — only three
+    parents exist, because the Dockerfile copies just what the service needs
+    and there is no repository. Indexing `parents[4]` unconditionally raised
+    `IndexError` at import time and killed the process before any handler ran.
+
+    So: walk upwards looking for the workflow definitions, which are the one
+    directory both layouts genuinely have (the image places them at
+    `/workflow-definitions`). Fall back to the filesystem root, where the only
+    two things derived from this — the optional `.env` and the definitions
+    directory — are either absent-and-ignored or supplied by the environment.
+
+    `start` exists so a test can pass a simulated location; production always
+    uses this module's own path.
+    """
+    here = (start or Path(__file__)).resolve()
+    for parent in here.parents:
+        if (parent / "workflow-definitions").is_dir():
+            return parent
+    return here.parents[-1]
+
+
+REPO_ROOT = _repo_root()
 
 
 class Settings(BaseSettings):

@@ -257,6 +257,35 @@ Docker-only alternative: `npm run stack:up`.
 | 13 | Multiple instances safe | statelessness + `SKIP LOCKED` + `SET NX` tests; no in-memory truth |
 | 14 | Tests pass | 66 + 14, plus parity and e2e harnesses |
 
+## 15b. Post-delivery fix — container path resolution
+
+**Found in production, 2026-08-11.** `alembic upgrade head` inside the API
+container failed at import with `IndexError: 4`.
+
+**Cause.** `REPO_ROOT` was `Path(__file__).resolve().parents[4]`. That is
+correct in the repository — `apps/api/app/core/config.py` genuinely is four
+levels below the root — and out of range in the image, where the same module
+sits at `/app/app/core/config.py` with only three parents. The worker carried
+the identical defect at `/app/worker/core/config.py`; it had simply not been
+reached yet.
+
+**Why the M1 verification missed it.** Every check ran against a host checkout,
+where the assumption holds. The unit suites, the API suite and the browser
+end-to-end run all imported the module from the repo. Building the image would
+not have caught it either: the failure is at *runtime*, and `docker build`
+never imports the module. The Dockerfiles were written and reviewed but never
+built-and-run, and that is the specific gap.
+
+**Fix.** Both resolvers now walk upwards for a marker that exists in either
+layout and degrade to the filesystem root when there is none — safe, because
+the only two values derived from it (`.env`, the definitions directory) are
+optional or environment-supplied in a deployed service.
+
+**Regression cover.** `apps/api/tests/test_deployment_layout.py` and
+`apps/worker/tests/test_deployment_layout.py` exercise the resolver against a
+simulated container layout at every depth down to the root, so a future fixed
+`parents[N]` index fails in CI rather than in production.
+
 ## 16. What the next stage needs from the client
 
 1. **GPU provider account** (Vast.ai per the architecture doc) with billing
