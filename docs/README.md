@@ -7,13 +7,33 @@ commercial reference for the whole engagement.
 
 | File | Source document | Purpose |
 |---|---|---|
+| [`milestones.md`](./milestones.md) | ZolexAI Milestones & Deliverables — rev. 12 Aug 2026 | Commercial structure — M1/M2/M3, acceptance criteria |
+| [`delivery-tracker.md`](./delivery-tracker.md) | ZolexAI Project Delivery, Milestone & Task Tracker — rev. 12 Aug 2026 | Task register, gates, dependencies, risks |
 | `architecture.md` | ZolexAI Implementation Architecture & Engineering Blueprint | Technical blueprint |
-| `milestones.md` | ZolexAI Milestones & Deliverables | Commercial structure — M1/M2/M3, acceptance criteria |
-| `delivery-tracker.pdf` | ZolexAI Project Delivery, Milestone & Task Tracker | Task register, gates, dependencies, risks |
 | `demo-feedback-guide.md` | ZolexAI Client UI Demo & Feedback Guide | Demo script, feedback questions, freeze criteria |
 
-> **Not yet copied in.** They live outside the repo. Drop them here so the
-> repository is self-contained — nothing in the build depends on it.
+The first two are current as of **12 August 2026**. They are client-facing
+control documents, not engineering records: they describe agreed scope and
+commercial state, and are **replaced wholesale** when a new revision is issued
+rather than edited to track implementation. What the code actually does belongs
+in [`M1-REPORT.md`](./M1-REPORT.md) and the decision records.
+
+> **`architecture.md` and `demo-feedback-guide.md` are not yet copied in.** They
+> live outside the repo. Drop them here so the repository is self-contained —
+> nothing in the build depends on it.
+
+### Open client revisions carried by these documents
+
+Recorded in the tracker's change log; **none are implemented yet**:
+
+| CR | Revision | State |
+|---|---|---|
+| CR-001 | Three-step section heading → **IMAGINE IT. GENERATE IT. GO VIRAL.** | Approved, not applied |
+| CR-002 | Latest first-fold/mobile hero reference (prominent logo, Start Creating CTA) | Approved, not applied |
+| CR-003 | Final brand logo integration | Pending asset |
+
+CR-004 … CR-010 are M2 workflow/quality requirements and are captured in
+[`milestones.md`](./milestones.md) §§5–13.
 
 ## Decision records
 
