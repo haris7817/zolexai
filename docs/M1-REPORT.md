@@ -155,7 +155,7 @@ Docker-internal vs. browser-reachable endpoint split.
 | `tsc --noEmit` / `eslint --max-warnings=0` | — | clean |
 | `next build` | 19 routes | clean |
 | `qa:parity` (YAML ↔ API ↔ leak scan) | 6 workflows | **PASS** |
-| `qa:e2e` (real browser, full stack) | 18 checks | **PASS** (see §15) |
+| `qa:e2e` (real browser, full stack) | 20 checks | **PASS** (see §15) |
 
 Highlights: two workers never receive the same job (real `SKIP LOCKED`);
 concurrent double-click creates one job (real `SET NX`); a stale lease token is

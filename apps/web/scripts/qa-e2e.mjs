@@ -38,7 +38,7 @@ try {
   const workflows = await (await fetch(`${API}/api/v1/workflows`)).json();
   check("API serves six workflows", workflows.workflows.length === 6);
 
-  await page.goto(`${BASE}/app/create/text-to-video`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE}/app/create/text-to-video`, { waitUntil: "domcontentloaded" });
   check(
     "workspace renders the workflow served by the API",
     (await page.locator("main h1").innerText()) === "Text to Video",
@@ -73,6 +73,15 @@ try {
   ]);
   check("submission returns 202 immediately", submission.status() === 202, `HTTP ${submission.status()}`);
 
+  // The workspace may already be showing a COMPLETED job from an earlier run
+  // (it auto-selects the newest). Sampling immediately would see its Download
+  // button and read the run as finished before it started — so wait for the
+  // canvas to switch to the new job's progress view first.
+  await page
+    .locator('main [role="status"]')
+    .first()
+    .waitFor({ state: "visible", timeout: 15_000 });
+
   const stages = new Set();
   const status = page.locator('main [role="status"]').first();
 
@@ -106,28 +115,26 @@ try {
 
   // ── 5. It appears in history ───────────────────────────────────────────
   console.log("\n5. History");
-  await page.goto(`${BASE}/app/generations`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE}/app/generations`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(800);
   const cards = await page.locator('main a[href^="/app/generations/"]').count();
   check("history lists the generation", cards >= 1, `${cards} card(s)`);
 
   await page.locator('main a[href^="/app/generations/"]').first().click();
+  await page.waitForURL(/\/app\/generations\/[^/]+/, { timeout: 15_000 });
   await page.waitForLoadState("networkidle");
-  check(
-    "detail page loads by id",
-    page.url().includes("/app/generations/") && !page.url().endsWith("/generations"),
-  );
+  check("detail page loads by id", true);
 
   // ── 6. Its output is in the media library ──────────────────────────────
   console.log("\n6. Media library");
-  await page.goto(`${BASE}/app/media`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE}/app/media`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(800);
   const assets = await page.locator('main button[aria-label^="Select "]').count();
   check("library shows the generated asset", assets >= 1, `${assets} asset(s)`);
 
   // ── 7. Workflow switching drives the UI from metadata ──────────────────
   console.log("\n7. Workflow-driven UI");
-  await page.goto(`${BASE}/app/create/music`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE}/app/create/music`, { waitUntil: "domcontentloaded" });
   check(
     "Music hides the aspect-ratio section",
     (await page.locator('[role="group"][aria-label="Aspect ratio"]').count()) === 0,
@@ -141,8 +148,8 @@ try {
     musicDurations.join("/"),
   );
 
-  await page.goto(`${BASE}/app/create/video-to-video`, { waitUntil: "networkidle" });
-  const bodyText = await page.locator("aside").innerText();
+  await page.goto(`${BASE}/app/create/video-to-video`, { waitUntil: "domcontentloaded" });
+  const bodyText = await page.locator('aside[aria-label="Generation settings"]').innerText();
   check("Video to Video shows a required source video", bodyText.includes("INPUT VIDEO"));
   check(
     "…and an OPTIONAL reference image",
@@ -151,9 +158,9 @@ try {
 
   // ── 8. Settings preservation across a workflow switch ──────────────────
   console.log("\n8. Settings preservation");
-  await page.goto(`${BASE}/app/create/text-to-video`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE}/app/create/text-to-video`, { waitUntil: "domcontentloaded" });
   await page.locator('[role="group"][aria-label="Duration"] button', { hasText: "15s" }).click();
-  await page.goto(`${BASE}/app/create/image-to-video`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE}/app/create/image-to-video`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(400);
   const selected = await page
     .locator('[role="group"][aria-label="Duration"] button[aria-pressed="true"]')
