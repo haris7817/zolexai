@@ -25,7 +25,7 @@ apps/api/                        NEW — the entire FastAPI service
   app/integrations/storage/        ObjectStorage protocol + S3/MinIO impl
   app/api/v1/                      health, workflows, generations, assets, internal
   migrations/                      Alembic (async, env-driven URL)
-  tests/                           64 tests
+  tests/                           66 tests
   Dockerfile · pyproject.toml · alembic.ini
 
 apps/worker/                     NEW — the generation worker
