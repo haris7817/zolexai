@@ -22,9 +22,17 @@ one of those limits is a measurement, not a guess (RTX 5090, 2026-08-12):
     its current runtime until the audio pipeline is wired separately.
   * Image conditioning uses the pipeline's `--image PATH FRAME_IDX STRENGTH`
     input pinned at frame 0, full strength — the still becomes the first
-    frame and the prompt says how it moves. Video extension will reuse this
-    exact seam later: extract a source's final frame, condition on it,
-    stitch. Video/audio-conditioned modes stay refused until then.
+    frame and the prompt says how it moves.
+  * Video extension is that same seam driven in a loop: the source's final
+    frame conditions the first continuation, each further segment chains off
+    the previous segment's final frame (`plan_segments` keeps every pass
+    inside the measured ceiling, so a 60s extension is two 30s renders), and
+    the media layer normalizes and stitches source + continuations into one
+    file at the source's own resolution. The generation grid follows the
+    SOURCE's aspect, not the request's — the I2V benchmark showed a
+    mismatched aspect makes the model keep the style and replace the
+    subject, which for an extension means a different video after the seam.
+    Video-to-video (restyling) stays refused until it is wired separately.
 
 Each refusal is `retriable=False` with the real reason in `internal_detail` —
 a mis-routed job should fail once with a clear log line, not burn three
@@ -44,20 +52,34 @@ made deliberately, after the GPU-side smoke test passes.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import math
 import zlib
 from collections import deque
+from collections.abc import Coroutine
 from pathlib import Path
+from typing import Any
 
 from worker.adapters.base import (
     AdapterError,
     AdapterJob,
     AdapterResult,
+    JobCancelled,
     ProgressCallback,
     parse_duration_seconds,
 )
 from worker.core.config import settings
 from worker.core.logging import get_logger
-from worker.media import FfmpegError, ffmpeg, probe_media, verify_duration
+from worker.media import (
+    FfmpegError,
+    concat_segments,
+    extract_final_frame,
+    ffmpeg,
+    normalize_clip,
+    plan_segments,
+    probe_media,
+    verify_duration,
+)
 
 logger = get_logger(__name__)
 
@@ -86,6 +108,63 @@ _DIMENSIONS: dict[str, tuple[int, int]] = {
     "4:5": (512, 640),
 }
 _DEFAULT_DIMENSIONS = (896, 512)
+
+#: The largest frame the RTX 5090 benchmark proved (896x512). Grids chosen for
+#: arbitrary source aspects must stay within it or a 30s pass OOMs again.
+_PIXEL_BUDGET = 896 * 512
+
+#: Extension output is delivered at the source's own resolution (a user's
+#: 1080p clip must not come back as 512p), capped at full HD — beyond that the
+#: normalization re-encode cost stops being worth invisible extra pixels.
+_MAX_OUTPUT_LONG_SIDE = 1920
+_MAX_OUTPUT_SHORT_SIDE = 1080
+
+
+def grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
+    """The /64 generation grid closest to the source's aspect, within budget.
+
+    The I2V benchmark made this non-negotiable: conditioning survives only
+    when the render's aspect matches the conditioning image's. Grids are the
+    model's constraint (each side divisible by 64), the budget is the GPU's.
+    Ties in aspect error go to the larger frame.
+    """
+    if not width or not height:
+        return _DEFAULT_DIMENSIONS
+    aspect = math.log(width / height)
+
+    def error(grid: tuple[int, int]) -> float:
+        return abs(math.log(grid[0] / grid[1]) - aspect)
+
+    grids = [
+        (w, h)
+        for h in range(256, 897, 64)
+        for w in range(256, 897, 64)
+        if w * h <= _PIXEL_BUDGET
+    ]
+    # Within a small aspect error the crop is invisible and more pixels win —
+    # otherwise 576x320 (1.80) would beat 896x512 (1.75) for a 16:9 source on
+    # a 1% aspect technicality while halving the frame.
+    close = [grid for grid in grids if error(grid) <= 0.08]
+    if close:
+        return max(close, key=lambda grid: (grid[0] * grid[1], -error(grid)))
+    return min(grids, key=error)
+
+
+def output_dimensions(width: int | None, height: int | None) -> tuple[int, int]:
+    """The stitched file's resolution: the source's own, capped, made even.
+
+    Even dimensions because yuv420p subsamples chroma 2x2 — libx264 refuses
+    odd sizes outright.
+    """
+    if not width or not height:
+        return _DEFAULT_DIMENSIONS
+    long_side, short_side = max(width, height), min(width, height)
+    scale = min(1.0, _MAX_OUTPUT_LONG_SIDE / long_side, _MAX_OUTPUT_SHORT_SIDE / short_side)
+
+    def even(value: float) -> int:
+        return max(2, int(value * scale) // 2 * 2)
+
+    return even(width), even(height)
 
 #: Progress stays inside the 15–85 `generating` band for the same reason the
 #: harness's does: the API ranks statuses strictly forward, so hopping out of
@@ -132,13 +211,19 @@ class LtxAdapter:
     name = "ltx"
 
     def supports(self, workflow_id: str) -> bool:
-        return workflow_id in {"text-to-video", "image-to-video"}
+        return workflow_id in {"text-to-video", "image-to-video", "extend-video"}
 
     async def run(self, job: AdapterJob, on_progress: ProgressCallback) -> AdapterResult:
         await on_progress("preparing", 10, "Setting up your generation…")
+        self._require_models()
+
+        # Extension is its own orchestration (probe, chain, stitch) built from
+        # the same seams — dispatched on the workflow, not on input presence,
+        # so a mis-routed video-to-video job cannot be quietly "extended".
+        if job.workflow_id == "extend-video":
+            return await self._run_extension(job, on_progress)
 
         self._require_supported_shape(job)
-        self._require_models()
         seconds = self._target_seconds(job)
         conditioning_image = await self._conditioning_image(job)
 
@@ -264,6 +349,190 @@ class LtxAdapter:
             )
         return seconds
 
+    # ── Video extension ──────────────────────────────────────────────────
+
+    async def _run_extension(self, job: AdapterJob, on_progress: ProgressCallback) -> AdapterResult:
+        """source → final frame → continuation segment(s) → normalize → stitch.
+
+        Every pass stays inside the measured per-pass ceiling; `plan_segments`
+        decides how many passes a request needs (5–30s: one; 60s: two), and
+        each pass after the first chains off the previous segment's final
+        frame. The finished file is the untouched-in-content source plus the
+        continuation, both normalized to one set of encoder parameters at the
+        source's own (capped) resolution.
+        """
+        item = job.input_for("source_video")
+        if item is None:
+            raise AdapterError(
+                "This generation could not be started.",
+                internal_detail="extend-video job arrived without a source_video input",
+                retriable=False,
+            )
+        staged = item.require_path()
+
+        try:
+            source = await probe_media(staged)
+        except FfmpegError as exc:
+            raise AdapterError(
+                "That video could not be read. Please try another.",
+                internal_detail=f"probe of source_video failed: {exc}",
+                retriable=False,
+            ) from exc
+        if not source.has_video or not source.duration_seconds:
+            raise AdapterError(
+                "That video could not be read. Please try another.",
+                internal_detail=f"source_video is not usable video: {source}",
+                retriable=False,
+            )
+
+        extension_seconds = parse_duration_seconds(job.parameters.get("duration"))
+        if extension_seconds is None:
+            raise AdapterError(
+                "This generation could not be started.",
+                internal_detail=f"no usable duration in {job.parameters!r}",
+                retriable=False,
+            )
+
+        per_pass = float(job.execution_int("max_segment_seconds", settings.ltx_max_seconds))
+        segments = plan_segments(extension_seconds, max_segment_seconds=per_pass)
+        grid = grid_for_source(source.width, source.height)
+
+        try:
+            conditioning = await self._cancellable(
+                job,
+                extract_final_frame(staged, job.workspace / "condition-0000.png"),
+            )
+        except FfmpegError as exc:
+            raise AdapterError(
+                "That video could not be read. Please try another.",
+                internal_detail=f"final-frame extraction from source failed: {exc}",
+                retriable=False,
+            ) from exc
+
+        # ── Continuation segments (all inside the `generating` band) ─────
+        total = len(segments)
+        span = _GENERATE_TO - _GENERATE_FROM
+        rendered: list[Path] = []
+        for segment in segments:
+            job.raise_if_cancelled()
+            part = job.workspace / f"continuation-{segment.index:04d}.mp4"
+            band = (
+                _GENERATE_FROM + span * segment.index // total,
+                _GENERATE_FROM + span * (segment.index + 1) // total,
+            )
+            command = self._command(
+                job,
+                segment.duration_seconds,
+                part,
+                conditioning_image=conditioning,
+                dimensions=grid,
+                # Distinct per segment or every chained pass replays the same
+                # noise; still deterministic so a retried job reproduces.
+                seed=zlib.crc32(f"{job.job_id}:{segment.index}".encode()),
+            )
+            await self._execute(
+                job=job,
+                cmd=command,
+                on_progress=on_progress,
+                band=band,
+                section=(segment.index + 1, total) if total > 1 else None,
+            )
+            rendered.append(part)
+
+            if segment.index + 1 < total:
+                try:
+                    conditioning = await self._cancellable(
+                        job,
+                        extract_final_frame(
+                            part, job.workspace / f"condition-{segment.index + 1:04d}.png"
+                        ),
+                    )
+                except FfmpegError as exc:
+                    # The GENERATED segment being unreadable is a generation
+                    # flake, not a bad upload — retrying can genuinely help.
+                    raise AdapterError(
+                        "This generation could not be completed. Please try again.",
+                        internal_detail=f"segment {segment.index} unreadable: {exc}",
+                    ) from exc
+
+        # ── Assembly: normalize both parts, then a deterministic concat ──
+        await on_progress("post_processing", 88, "Stitching your video…")
+        out_width, out_height = output_dimensions(source.width, source.height)
+        out_fps = min(60.0, max(10.0, source.fps or float(settings.ltx_frame_rate)))
+        keep_audio = source.has_audio
+
+        output = job.workspace / "output.mp4"
+        try:
+            continuation = await self._cancellable(
+                job, concat_segments(rendered, job.workspace / "continuation.mp4")
+            )
+            parts = []
+            for index, clip in enumerate((staged, continuation)):
+                job.raise_if_cancelled()
+                parts.append(
+                    await self._cancellable(
+                        job,
+                        normalize_clip(
+                            clip,
+                            job.workspace / f"part-{index:04d}.mp4",
+                            width=out_width,
+                            height=out_height,
+                            fps=out_fps,
+                            audio=keep_audio,
+                        ),
+                    )
+                )
+            await self._cancellable(job, concat_segments(parts, output))
+            expected = source.duration_seconds + extension_seconds
+            measured = await verify_duration(
+                output,
+                expected_seconds=expected,
+                # Each re-timed part can drift a little; scale with length
+                # instead of failing honest 60s extensions on frame rounding.
+                tolerance_seconds=max(1.5, 0.03 * expected),
+            )
+            info = await probe_media(output)
+        except FfmpegError as exc:
+            raise AdapterError(
+                "This generation could not be completed. Please try again.",
+                internal_detail=f"extension assembly failed: {exc}",
+            ) from exc
+
+        await on_progress("uploading", 95, "Almost ready…")
+        return AdapterResult(
+            path=output,
+            content_type="video/mp4",
+            kind="video",
+            duration_seconds=measured,
+            width=info.width,
+            height=info.height,
+        )
+
+    async def _cancellable(self, job: AdapterJob, operation: Coroutine[Any, Any, Path]) -> Path:
+        """Awaits a media operation, abandoning it the moment the job dies.
+
+        The ffmpeg helper kills its child when its task is cancelled, so
+        racing the operation against the runner's cancel event means a
+        cancelled job stops a long re-encode within milliseconds instead of
+        at its end. Without an event (tests, tooling) this is a plain await.
+        """
+        event = job.cancellation_event
+        if event is None:
+            return await operation
+        op = asyncio.ensure_future(operation)
+        watcher = asyncio.ensure_future(event.wait())
+        try:
+            done, _ = await asyncio.wait({op, watcher}, return_when=asyncio.FIRST_COMPLETED)
+            if op in done:
+                return op.result()
+            op.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await op
+            job.raise_if_cancelled()
+            raise JobCancelled(f"job {job.job_id} cancelled")
+        finally:
+            watcher.cancel()
+
     # ── The command (pure — this is what unit tests pin) ─────────────────
 
     def _transformer_file(self) -> str:
@@ -285,16 +554,22 @@ class LtxAdapter:
         output: Path,
         *,
         conditioning_image: Path | None = None,
+        dimensions: tuple[int, int] | None = None,
+        seed: int | None = None,
     ) -> list[str]:
         root = settings.ltx_models_root
-        width, height = _DIMENSIONS.get(
+        # Explicit dimensions (extension: the source's aspect decides) beat
+        # the requested aspect ratio's lookup.
+        width, height = dimensions or _DIMENSIONS.get(
             str(job.parameters.get("aspect_ratio") or ""), _DEFAULT_DIMENSIONS
         )
         frames = max(1, round(seconds * settings.ltx_frame_rate))
-        # The pipeline's default seed is fixed, which would hand two users with
-        # the same prompt the same video. CRC of the job id: deterministic per
-        # job (reruns of a retried job reproduce), distinct across jobs.
-        seed = zlib.crc32(job.job_id.encode())
+        if seed is None:
+            # The pipeline's default seed is fixed, which would hand two users
+            # with the same prompt the same video. CRC of the job id:
+            # deterministic per job (a retried job reproduces), distinct
+            # across jobs.
+            seed = zlib.crc32(job.job_id.encode())
 
         cmd = [
             *self._launcher(),
@@ -324,7 +599,13 @@ class LtxAdapter:
     # ── Supervision ──────────────────────────────────────────────────────
 
     async def _execute(
-        self, cmd: list[str], job: AdapterJob, on_progress: ProgressCallback
+        self,
+        cmd: list[str],
+        job: AdapterJob,
+        on_progress: ProgressCallback,
+        *,
+        band: tuple[int, int] = (_GENERATE_FROM, _GENERATE_TO),
+        section: tuple[int, int] | None = None,
     ) -> None:
         """Runs the pipeline, streaming its output for progress and diagnostics.
 
@@ -336,6 +617,11 @@ class LtxAdapter:
           * The child is killed on *every* non-completion path (the `finally`),
             because an orphaned render holds VRAM, and the runner is about to
             delete the workspace the child is writing into.
+
+        `band` compresses the markers' 15–85 sweep into a slice of it, so N
+        chained segments produce one monotonic ramp instead of N restarts.
+        `section` swaps the stage messages for "Generating section i of N…" —
+        the machinery is only named when there are several (harness rule).
         """
         try:
             process = await asyncio.create_subprocess_exec(
@@ -370,8 +656,14 @@ class LtxAdapter:
                     tail.append(text)
                 matched = match_marker(text, marker_from)
                 if matched is not None:
-                    _, progress, message = _MARKERS[matched]
+                    _, nominal, message = _MARKERS[matched]
                     marker_from = matched + 1
+                    low, high = band
+                    progress = low + (nominal - _GENERATE_FROM) * (high - low) // (
+                        _GENERATE_TO - _GENERATE_FROM
+                    )
+                    if section is not None:
+                        message = f"Generating section {section[0]} of {section[1]}…"
                     await on_progress("generating", progress, message)
 
             returncode = await process.wait()

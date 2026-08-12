@@ -28,9 +28,15 @@ from worker.adapters.base import (
     JobCancelled,
     JobTimedOut,
 )
-from worker.adapters.ltx import _MARKERS, LtxAdapter, match_marker
+from worker.adapters.ltx import (
+    _MARKERS,
+    LtxAdapter,
+    grid_for_source,
+    match_marker,
+    output_dimensions,
+)
 from worker.core.config import settings
-from worker.media import ffmpeg, tools_available
+from worker.media import ffmpeg, plan_segments, probe_media, tools_available
 
 needs_ffmpeg = pytest.mark.skipif(
     not tools_available(), reason="ffmpeg/ffprobe not installed"
@@ -244,11 +250,13 @@ def make_i2v_job(workspace: Path, image_path: Path | None, **overrides) -> Adapt
     )
 
 
-def test_the_adapter_declares_i2v_support() -> None:
+def test_the_adapter_declares_its_workflow_support() -> None:
     adapter = LtxAdapter()
     assert adapter.supports("text-to-video")
     assert adapter.supports("image-to-video")
+    assert adapter.supports("extend-video")
     assert not adapter.supports("music")
+    assert not adapter.supports("video-to-video")
 
 
 def test_the_command_pins_the_still_as_frame_zero_at_full_strength(
@@ -345,6 +353,273 @@ async def test_the_full_i2v_run_conditions_on_the_staged_still(
     assert result.path.parent == workspace
     statuses = [status for status, _, _ in reported]
     assert statuses[0] == "preparing" and statuses[-1] == "uploading"
+
+
+# ── Video extension ──────────────────────────────────────────────────────
+
+
+async def make_clip(
+    path: Path, seconds: float, *, audio: bool = False, size: str = "160x120", rate: int = 24
+) -> Path:
+    args = ["-f", "lavfi", "-i", f"testsrc2=size={size}:rate={rate}"]
+    if audio:
+        args += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100"]
+    args += ["-t", f"{seconds:.3f}", "-c:v", "libx264", "-preset", "ultrafast",
+             "-pix_fmt", "yuv420p"]
+    if audio:
+        args += ["-c:a", "aac"]
+    args += [str(path)]
+    await ffmpeg(args)
+    return path
+
+
+def make_extension_job(workspace: Path, source: Path | None, **overrides) -> AdapterJob:
+    defaults = dict(
+        workflow_id="extend-video",
+        parameters={"duration": "2s", "aspect_ratio": "16:9", "quality": "High"},
+        inputs=[
+            AdapterInput(
+                role="source_video",
+                kind="video",
+                content_type="video/mp4",
+                download_url="https://storage.test/signed",
+                path=source,
+            )
+        ],
+    )
+    return make_job(workspace, **{**defaults, **overrides})
+
+
+def extension_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixture: Path, *, sleep: float = 0.0
+) -> Path:
+    """A render stub that records what it was conditioned on.
+
+    The invocation log is how chaining is proven: each line is one render's
+    `--image` argument, so the test can assert that segment 2 was conditioned
+    on segment 1's extracted final frame rather than on the source's.
+    """
+    log = tmp_path / "invocations.log"
+    script = tmp_path / "render.py"
+    script.write_text(
+        "import pathlib, shutil, sys, time\n"
+        "args = sys.argv[1:]\n"
+        "img = args[args.index('--image') + 1]\n"
+        "out = args[args.index('--output-path') + 1]\n"
+        f"with pathlib.Path({str(log)!r}).open('a') as f:\n"
+        "    f.write(img + '\\n')\n"
+        "print('INFO:...:Running denoising loop (8 steps)', flush=True)\n"
+        + (f"time.sleep({sleep})\n" if sleep else "")
+        + f"shutil.copyfile({str(fixture)!r}, out)\n"
+        "print(f'INFO:...:Video saved to {out}', flush=True)\n"
+    )
+    stub_launcher(monkeypatch, script)
+    return log
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ((1920, 1080), (896, 512)),
+        ((1080, 1920), (512, 896)),
+        ((720, 720), (640, 640)),
+        ((160, 120), (768, 576)),  # 4:3 has an exact in-budget grid
+        ((None, None), (896, 512)),
+    ],
+)
+def test_the_generation_grid_follows_the_source_aspect(source, expected) -> None:
+    """The I2V benchmark's hard lesson: a grid that fights the conditioning
+    image's aspect keeps the style and replaces the subject. For an extension
+    that means a different video after the seam."""
+    assert grid_for_source(*source) == expected
+
+
+def test_every_reachable_grid_is_legal_for_the_model() -> None:
+    for width, height in [(w, h) for w in (100, 640, 1280, 3840) for h in (90, 480, 2160)]:
+        gw, gh = grid_for_source(width, height)
+        assert gw % 64 == 0 and gh % 64 == 0
+        assert gw * gh <= 896 * 512, "beyond the measured VRAM budget"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ((3840, 2160), (1920, 1080)),  # 4K capped to full HD
+        ((1080, 1920), (1080, 1920)),  # portrait full HD is already legal
+        ((161, 121), (160, 120)),      # odd sizes rounded even for yuv420p
+        ((None, None), (896, 512)),
+    ],
+)
+def test_output_resolution_is_the_sources_capped_and_even(source, expected) -> None:
+    """A user's 1080p clip must not come back at the generation grid's 512p —
+    the original footage sets the delivery resolution."""
+    assert output_dimensions(*source) == expected
+
+
+@pytest.mark.parametrize(
+    ("duration", "passes"), [("5s", 1), ("10s", 1), ("15s", 1), ("30s", 1), ("60s", 2)]
+)
+def test_the_public_durations_map_to_the_measured_pass_ceiling(duration, passes) -> None:
+    """The client contract (5/10/15/30/60) against the GPU fact (30s max per
+    pass): 60 seconds is two chained renders, everything else is one."""
+    seconds = float(duration.rstrip("s"))
+    assert len(plan_segments(seconds, max_segment_seconds=30)) == passes
+
+
+def test_the_extension_command_pins_dimensions_and_seed(workspace: Path) -> None:
+    still = workspace / "condition.png"
+    cmd = LtxAdapter()._command(
+        make_extension_job(workspace, workspace / "src.mp4"),
+        2.0,
+        workspace / "part.mp4",
+        conditioning_image=still,
+        dimensions=(768, 576),
+        seed=7,
+    )
+    assert cmd[cmd.index("--width") + 1] == "768"
+    assert cmd[cmd.index("--height") + 1] == "576"
+    assert cmd[cmd.index("--seed") + 1] == "7"
+    at = cmd.index("--image")
+    assert cmd[at : at + 4] == ["--image", str(still), "0", "1.0"]
+
+
+async def test_an_unstaged_source_video_is_an_internal_error(
+    workspace: Path, fake_models: Path
+) -> None:
+    with pytest.raises(AdapterError) as raised:
+        await collect(make_extension_job(workspace, source=None))
+
+    assert raised.value.retriable is False
+    assert "not staged" in raised.value.internal_detail
+
+
+@needs_ffmpeg
+async def test_a_corrupt_source_fails_without_burning_retries(
+    workspace: Path, fake_models: Path
+) -> None:
+    junk = workspace / "source.mp4"
+    junk.write_bytes(b"not a video")
+
+    with pytest.raises(AdapterError) as raised:
+        await collect(make_extension_job(workspace, junk))
+
+    assert raised.value.retriable is False
+    assert "video" in raised.value.user_message.lower()
+
+
+@needs_ffmpeg
+async def test_a_single_pass_extension_stitches_source_plus_continuation(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The core promise: 2s source + 2s extension ≈ 4s output, delivered at
+    the SOURCE's resolution with the source's audio preserved."""
+    source = await make_clip(workspace / "source.mp4", 2.0, audio=True)
+    fixture = await make_clip(tmp_path / "render.mp4", 2.0)
+    log = extension_stub(tmp_path, monkeypatch, fixture)
+
+    result, reported = await collect(make_extension_job(workspace, source))
+
+    assert result.duration_seconds == pytest.approx(4.0, abs=1.0)
+    assert (result.width, result.height) == (160, 120), "delivery at source resolution"
+    info = await probe_media(result.path)
+    assert info.has_audio is True, "the original's audio must not be destroyed"
+
+    conditioned_on = log.read_text().splitlines()
+    assert conditioned_on == [str(workspace / "condition-0000.png")]
+    # A single pass never mentions sections (harness rule).
+    assert all("section" not in message.lower() for _, _, message in reported)
+
+    statuses = [status for status, _, _ in reported]
+    assert statuses == sorted(
+        statuses, key=["preparing", "generating", "post_processing", "uploading"].index
+    )
+
+
+@needs_ffmpeg
+async def test_a_long_extension_chains_segments_off_each_others_final_frames(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 60s architecture in miniature: a request beyond one pass becomes
+    several renders, each conditioned on the PREVIOUS segment's last frame,
+    assembled into one file of the planned total length."""
+    source = await make_clip(workspace / "source.mp4", 2.0)  # silent on purpose
+    fixture = await make_clip(tmp_path / "render.mp4", 2.0)
+    log = extension_stub(tmp_path, monkeypatch, fixture)
+
+    job = make_extension_job(
+        workspace,
+        source,
+        parameters={"duration": "4s", "aspect_ratio": "16:9", "quality": "High"},
+        execution={"runtime": "ltx", "max_segment_seconds": 2},
+    )
+    result, reported = await collect(job)
+
+    conditioned_on = log.read_text().splitlines()
+    assert conditioned_on == [
+        str(workspace / "condition-0000.png"),  # the source's final frame
+        str(workspace / "condition-0001.png"),  # segment 1's final frame
+    ]
+    assert result.duration_seconds == pytest.approx(6.0, abs=1.5)
+
+    info = await probe_media(result.path)
+    assert info.has_audio is False, "a silent source stays silent — no invented audio"
+
+    messages = [message for status, _, message in reported if status == "generating"]
+    assert "Generating section 1 of 2…" in messages
+    assert "Generating section 2 of 2…" in messages
+    progress = [value for _, value, _ in reported]
+    assert progress == sorted(progress), "chained segments must not restart the bar"
+
+
+@needs_ffmpeg
+async def test_a_wrong_length_continuation_fails_verification(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A render that quietly produced the wrong length must fail the job, not
+    ship as "the extension feels short"."""
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    wrong = await make_clip(tmp_path / "render.mp4", 5.0)  # asked for 2s
+    extension_stub(tmp_path, monkeypatch, wrong)
+
+    with pytest.raises(AdapterError) as raised:
+        await collect(make_extension_job(workspace, source))
+
+    assert "differs from planned" in raised.value.internal_detail
+
+
+@needs_ffmpeg
+async def test_cancellation_stops_the_chain_before_the_next_segment(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancelled two-segment job must not start segment two — every further
+    render would be paid GPU time on a job nobody wants."""
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    fixture = await make_clip(tmp_path / "render.mp4", 2.0)
+    log = extension_stub(tmp_path, monkeypatch, fixture, sleep=15.0)
+
+    cancelled = asyncio.Event()
+
+    async def cancel_on_first_render(status: str, progress: int, message: str) -> None:
+        if status == "generating":
+            cancelled.set()
+
+    job = make_extension_job(
+        workspace,
+        source,
+        parameters={"duration": "4s", "aspect_ratio": "16:9", "quality": "High"},
+        execution={"runtime": "ltx", "max_segment_seconds": 2},
+        _cancelled=cancelled,
+    )
+
+    began = time.monotonic()
+    with pytest.raises(JobCancelled):
+        await LtxAdapter().run(job, cancel_on_first_render)
+    assert time.monotonic() - began < 10, "cancellation must not wait out the render"
+    assert len(log.read_text().splitlines()) == 1, "segment two must never start"
 
 
 # ── Progress parsing (pure) ──────────────────────────────────────────────

@@ -20,7 +20,9 @@ import pytest
 from worker.media import (
     FfmpegError,
     concat_segments,
+    extract_final_frame,
     ffmpeg,
+    normalize_clip,
     plan_segments,
     probe_media,
     tools_available,
@@ -189,3 +191,104 @@ def test_concatenating_nothing_is_a_programming_error() -> None:
 
     with pytest.raises(ValueError):
         asyncio.run(concat_segments([], Path("out.mp4")))
+
+
+# ── Extension primitives: frame extraction and normalization ─────────────
+
+
+@needs_ffmpeg
+async def test_probe_reports_the_frame_rate(tmp_path: Path) -> None:
+    """Normalization retimes clips to the source's rate — a guessed rate
+    means judder at the seam."""
+    clip = await _make_clip(tmp_path / "clip.mp4", 2.0)
+    info = await probe_media(clip)
+    assert info.fps == pytest.approx(24.0, abs=0.1)
+
+
+@needs_ffmpeg
+async def test_the_final_frame_of_a_clip_can_be_extracted(tmp_path: Path) -> None:
+    """The continuation's conditioning image. It must be a genuinely decodable
+    picture with the source's dimensions — a corrupt or empty frame here
+    conditions the whole extension on garbage."""
+    clip = await _make_clip(tmp_path / "clip.mp4", 2.0)
+    frame = await extract_final_frame(clip, tmp_path / "last.png")
+
+    info = await probe_media(frame)
+    assert (info.width, info.height) == (160, 120)
+    assert frame.stat().st_size > 0
+
+
+@needs_ffmpeg
+async def test_final_frame_extraction_fails_clearly_on_junk(tmp_path: Path) -> None:
+    junk = tmp_path / "junk.mp4"
+    junk.write_bytes(b"not a video at all")
+
+    with pytest.raises(FfmpegError):
+        await extract_final_frame(junk, tmp_path / "last.png")
+    assert not (tmp_path / "last.png").exists(), "a failed extraction must not leave artifacts"
+
+
+@needs_ffmpeg
+async def test_normalization_makes_mismatched_clips_concatenable(tmp_path: Path) -> None:
+    """The whole reason normalize_clip exists: a user upload and a model
+    render never share parameters, and the concat demuxer breaks on mixed
+    input. Normalized to one target, assembly is deterministic."""
+    small = await _make_clip(tmp_path / "small.mp4", 1.0)  # 160x120@24
+    big = tmp_path / "big.mp4"
+    await ffmpeg(
+        [
+            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=12",
+            "-t", "1.0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            str(big),
+        ]
+    )
+
+    parts = []
+    for index, clip in enumerate((small, big)):
+        parts.append(
+            await normalize_clip(
+                clip, tmp_path / f"norm-{index}.mp4",
+                width=160, height=120, fps=24, audio=False,
+            )
+        )
+    output = await concat_segments(parts, tmp_path / "joined.mp4")
+
+    info = await probe_media(output)
+    assert (info.width, info.height) == (160, 120)
+    assert info.fps == pytest.approx(24.0, abs=0.1)
+    assert info.duration_seconds == pytest.approx(2.0, abs=0.3)
+
+
+@needs_ffmpeg
+async def test_normalization_synthesizes_silence_when_audio_is_required(tmp_path: Path) -> None:
+    """Mixed audio presence breaks the concat demuxer just like mixed video
+    parameters: every part of an assembly must agree about having sound."""
+    silent = await _make_clip(tmp_path / "silent.mp4", 1.0)
+    normalized = await normalize_clip(
+        silent, tmp_path / "with-audio.mp4", width=160, height=120, fps=24, audio=True
+    )
+
+    info = await probe_media(normalized)
+    assert info.has_audio is True
+    assert info.duration_seconds == pytest.approx(1.0, abs=0.3)
+
+
+@needs_ffmpeg
+async def test_normalization_strips_audio_when_told_to(tmp_path: Path) -> None:
+    noisy = tmp_path / "noisy.mp4"
+    await ffmpeg(
+        [
+            "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=24",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+            "-t", "1.0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            str(noisy),
+        ]
+    )
+    normalized = await normalize_clip(
+        noisy, tmp_path / "muted.mp4", width=160, height=120, fps=24, audio=False
+    )
+    info = await probe_media(normalized)
+    assert info.has_audio is False

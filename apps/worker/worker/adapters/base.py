@@ -154,6 +154,18 @@ class AdapterJob:
             return None
         return self._deadline_monotonic - time.monotonic()
 
+    @property
+    def cancellation_event(self) -> asyncio.Event | None:
+        """The runner's cancel signal, for racing long operations against.
+
+        `raise_if_cancelled()` covers work that checkpoints naturally; an
+        adapter awaiting one long external operation (a big ffmpeg re-encode)
+        can instead wait on this event concurrently and abandon the operation
+        the moment the job dies. None when no runner attached one (tests,
+        tooling) — cancellation then simply cannot happen.
+        """
+        return self._cancelled
+
     # ── Convenience for adapters ─────────────────────────────────────────
 
     def execution_int(self, key: str, default: int) -> int:

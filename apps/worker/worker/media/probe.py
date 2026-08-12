@@ -27,6 +27,10 @@ class MediaInfo:
     has_video: bool
     has_audio: bool
 
+    fps: float | None = None
+    """Average video frame rate. Needed when another clip must be normalized
+    to match this one — retiming to a guessed rate produces judder."""
+
     @property
     def aspect_ratio(self) -> float | None:
         if not self.width or not self.height:
@@ -56,7 +60,27 @@ async def probe_media(path: Path) -> MediaInfo:
         height=_int_or_none(video.get("height")) if video else None,
         has_video=video is not None,
         has_audio=audio is not None,
+        fps=_fps_of(video) if video else None,
     )
+
+
+def _fps_of(video: dict[str, Any]) -> float | None:
+    """Parses ffprobe's fractional rate ("30000/1001") into a float.
+
+    `avg_frame_rate` reflects what the stream actually contains;
+    `r_frame_rate` is the container's declared tick rate and lies for
+    variable-rate sources, so it is only the fallback.
+    """
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        raw = str(video.get(key) or "")
+        numerator, _, denominator = raw.partition("/")
+        try:
+            value = float(numerator) / float(denominator or 1)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if value > 0:
+            return value
+    return None
 
 
 def _duration_of(

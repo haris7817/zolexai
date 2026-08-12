@@ -10,6 +10,7 @@ Nothing in this package knows what a job is.
 """
 
 from worker.media.ffmpeg import FfmpegError, ffmpeg, ffprobe_json, tools_available
+from worker.media.frames import extract_final_frame, normalize_clip
 from worker.media.probe import MediaInfo, probe_media
 from worker.media.segments import (
     Segment,
@@ -23,8 +24,10 @@ __all__ = [
     "MediaInfo",
     "Segment",
     "concat_segments",
+    "extract_final_frame",
     "ffmpeg",
     "ffprobe_json",
+    "normalize_clip",
     "plan_segments",
     "probe_media",
     "tools_available",

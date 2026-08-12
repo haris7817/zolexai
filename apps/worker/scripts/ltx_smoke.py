@@ -17,10 +17,13 @@ Usage, from the worker checkout on the GPU node:
     python scripts/ltx_smoke.py a koi pond at dawn   # custom prompt
     IMAGE=/path/to/still.png python scripts/ltx_smoke.py gentle camera push in
                                                      # image-to-video
+    VIDEO=/path/to/clip.mp4 DURATION=5s python scripts/ltx_smoke.py the scene continues
+                                                     # extend-video
 
 Environment: LTX_REPO_DIR if the LTX checkout is not /workspace/ltx2-benchmark;
 DURATION (e.g. "5s"), ASPECT_RATIO (e.g. "9:16") to vary the request; IMAGE to
-condition on a still (runs the image-to-video path).
+condition on a still (image-to-video); VIDEO to extend a clip (DURATION is then
+the EXTENSION length, and the output is source + continuation stitched).
 """
 
 from __future__ import annotations
@@ -41,12 +44,19 @@ async def main() -> int:
         "A slow cinematic dolly shot through a neon-lit city at dusk, rain reflections"
     )
     image = os.getenv("IMAGE")
+    video = os.getenv("VIDEO")
+    if image and video:
+        print("Set IMAGE or VIDEO, not both.")
+        return 1
+
     inputs = []
+    workflow_id = "text-to-video"
     if image:
         still = Path(image).expanduser().resolve()
         if not still.is_file():
             print(f"IMAGE not found: {still}")
             return 1
+        workflow_id = "image-to-video"
         inputs = [
             AdapterInput(
                 role="source_image",
@@ -56,12 +66,27 @@ async def main() -> int:
                 path=still,
             )
         ]
+    elif video:
+        clip = Path(video).expanduser().resolve()
+        if not clip.is_file():
+            print(f"VIDEO not found: {clip}")
+            return 1
+        workflow_id = "extend-video"
+        inputs = [
+            AdapterInput(
+                role="source_video",
+                kind="video",
+                content_type="video/mp4",
+                download_url="file://smoke-test",
+                path=clip,
+            )
+        ]
 
     workspace = Path(tempfile.mkdtemp(prefix="ltx-smoke-"))
     job = AdapterJob(
         # Varies per run so the seed derived from it varies too.
         job_id=f"smoke-{int(time.time())}",
-        workflow_id="image-to-video" if image else "text-to-video",
+        workflow_id=workflow_id,
         workflow_version="1",
         prompt=prompt,
         parameters={
@@ -77,8 +102,8 @@ async def main() -> int:
 
     print(f"mode:      {job.workflow_id}")
     print(f"prompt:    {prompt}")
-    if image:
-        print(f"image:     {inputs[0].path}")
+    if inputs:
+        print(f"input:     {inputs[0].path}")
     print(f"request:   {job.parameters['duration']} @ {job.parameters['aspect_ratio']}")
     print(f"workspace: {workspace}")
     print("-" * 60)
