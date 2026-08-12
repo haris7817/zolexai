@@ -176,6 +176,37 @@ class WorkerSettings(BaseSettings):
     real value comes from benchmarking the selected model.
     """
 
+    # ── LTX runtime (M2, GPU nodes only) ─────────────────────────────────
+
+    ltx_repo_dir: Path = Path("/workspace/ltx2-benchmark")
+    """
+    Where the LTX repository and its `uv` environment live on a GPU node. The
+    adapter shells out to `uv run` with this as the working directory, so the
+    model's Python environment stays completely separate from the worker's —
+    the worker itself never imports torch.
+    """
+
+    ltx_model_dir: Path | None = None
+    """Model weights root. Defaults to `<ltx_repo_dir>/models/ltx-2.5`."""
+
+    ltx_quantization: str = "nvfp4-prequant"
+    """
+    NVFP4 is the only mode that fits the client's RTX 5090: the BF16
+    transformer alone is ~40 GB against 32 GB of VRAM. Verified by benchmark
+    on 2026-08-12 (docs/internal/ltx-2.5-licensing-review.md is the licensing
+    side; the VRAM ceiling is an engineering fact independent of it).
+    """
+
+    ltx_max_seconds: int = 30
+    """
+    Longest single-pass generation the GPU survived in benchmarking. 30s
+    completed (with VRAM pressure during audio decode); 60s hard-OOMed at
+    29.6/31.4 GiB. Long-form beyond this is the segmentation layer's job.
+    """
+
+    ltx_frame_rate: int = 24
+    """LTX-2.5's native rate; num_frames = seconds x this."""
+
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
 
@@ -197,6 +228,10 @@ class WorkerSettings(BaseSettings):
     @property
     def workspace_root(self) -> Path:
         return self.workspace_dir or Path(tempfile.gettempdir()) / "zolexai-worker"
+
+    @property
+    def ltx_models_root(self) -> Path:
+        return self.ltx_model_dir or self.ltx_repo_dir / "models" / "ltx-2.5"
 
 
 @lru_cache(maxsize=1)
