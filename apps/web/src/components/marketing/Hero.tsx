@@ -1,8 +1,16 @@
+import Image from "next/image";
 import { brand } from "@/config/brand";
 import { ButtonLink } from "@/components/ui/Button";
 
 /**
  * Landing hero + product mockup.
+ *
+ * The first fold follows the client's latest mobile reference (CR-002): the
+ * real ZolexAI lockup sits prominently at the top on the black ground, then
+ * the "CREATE THE IMPOSSIBLE." headline, short supporting copy and a strong
+ * Start Creating CTA. On mobile the badge pill steps aside so the fold is
+ * exactly logo → headline → copy → CTA; from tablet up it returns between the
+ * logo and the headline.
  *
  * Responsive work the original design did not have: the 72px headline is now a
  * clamp, and the three-pane mockup drops its side rails below laptop so the
@@ -10,14 +18,26 @@ import { ButtonLink } from "@/components/ui/Button";
  */
 export function Hero() {
   return (
-    <section className="relative px-5 pt-12 pb-16 text-center tablet:px-8 laptop:px-12 laptop:pt-[88px] laptop:pb-24">
+    <section className="relative px-5 pt-10 pb-16 text-center tablet:px-8 laptop:px-12 laptop:pt-14 laptop:pb-24">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute top-[-180px] left-1/2 h-[600px] w-[900px] max-w-[140vw] -translate-x-1/2 bg-[radial-gradient(ellipse_at_center,rgba(190,242,8,0.16)_0%,rgba(190,242,8,0)_65%)]"
       />
 
       <div className="relative mx-auto max-w-[820px]">
-        <div className="border-zx-border-active bg-zx-primary/10 text-zx-primary-light mb-7 inline-flex items-center gap-2 rounded-full border px-4 py-[7px] text-[12px] font-semibold tablet:text-[13px]">
+        {/* The client-provided lockup (monogram, wordmark, tagline) on
+            transparency. `priority` because this is the page's LCP element. */}
+        <Image
+          src="/brand/logo-full.png"
+          alt={`${brand.name} — Create Without Limits`}
+          width={900}
+          height={838}
+          priority
+          unoptimized
+          className="mx-auto mb-6 h-[clamp(150px,34vw,216px)] w-auto drop-shadow-[0_0_44px_rgba(190,242,8,0.28)] tablet:mb-7"
+        />
+
+        <div className="border-zx-border-active bg-zx-primary/10 text-zx-primary-light mb-7 hidden items-center gap-2 rounded-full border px-4 py-[7px] text-[12px] font-semibold tablet:inline-flex tablet:text-[13px]">
           <span
             aria-hidden="true"
             className="bg-zx-accent inline-block h-[6px] w-[6px] rounded-full"
