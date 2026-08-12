@@ -56,6 +56,14 @@ Written here, in [`decisions/`](./decisions):
 | [`PRE-M1-HANDOFF.md`](./PRE-M1-HANDOFF.md) | Client UI/UX demo delivery (design approved) |
 | [`M1-REPORT.md`](./M1-REPORT.md) | Platform foundation delivery |
 
+## Operations
+
+Not customer-facing — see [`internal/`](./internal):
+
+| File | Covers |
+|---|---|
+| [`internal/production-runbook.md`](./internal/production-runbook.md) | Production server, deploy and rollback procedure, go-live checks |
+
 ## Phase status
 
 | Phase | State |
