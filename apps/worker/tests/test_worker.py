@@ -21,6 +21,7 @@ from worker.adapters.base import (
     GenerationAdapter,
     JobCancelled,
     JobTimedOut,
+    parse_duration_seconds,
 )
 from worker.adapters.harness import HarnessAdapter
 from worker.adapters.mock import STAGES, MockAdapter
@@ -219,6 +220,26 @@ async def test_the_requested_duration_is_carried_onto_the_asset(workspace: Path)
         make_job(workspace, parameters={"duration": "30s", "aspect_ratio": "16:9"}), noop
     )
     assert result.duration_seconds == 30.0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("10s", 10.0),
+        ("3m", 180.0),  # music durations are chosen in minutes (CR-009)
+        ("1m", 60.0),
+        ("10", 10.0),
+        (None, None),  # automatic-duration workflows send no duration at all
+        ("", None),
+        ("abc", None),
+        ("0s", None),
+        ("-5s", None),
+    ],
+)
+def test_duration_strings_parse_to_seconds(value, expected) -> None:
+    """One parser for every adapter — "3m" quietly read as 3 seconds would ship
+    a three-second song to someone who asked for three minutes."""
+    assert parse_duration_seconds(value) == expected
 
 
 # ── Cancellation and the time budget ─────────────────────────────────────

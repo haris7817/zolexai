@@ -23,6 +23,25 @@ WorkflowCategory = Literal["video", "audio"]
 OutputType = Literal["video", "audio", "image"]
 AssetKindLiteral = Literal["video", "image", "audio"]
 
+DurationMode = Literal["fixed", "source", "minutes"]
+"""How a workflow's output duration is decided (M2, client requirement §5/8/10).
+
+  `fixed`   — the user picks from `supported_durations` ("5s", "10s", …).
+  `source`  — the duration comes from the uploaded source file; the user picks
+              nothing and a request supplying a duration is rejected. Video to
+              Video and Music Video work this way: a 45-second source yields a
+              45-second result.
+  `minutes` — music: the user picks a length in minutes from
+              `supported_durations` ("1m" … "5m"). The list's ceiling is a
+              product decision pending model benchmarking, so raising it later
+              is a YAML edit, not a code change.
+
+One list, three meanings. `supported_durations` stays the single membership
+check for every mode that has choices, so validation did not grow a second
+mechanism — the mode only changes what the strings look like and how the UI
+renders them.
+"""
+
 Slug = Annotated[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=64)]
 RoleName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=48)]
 
@@ -140,7 +159,11 @@ class WorkflowDefinition(BaseModel):
     prompt: PromptSpec = Field(default_factory=PromptSpec)
     inputs: list[InputSpec] = Field(default_factory=list)
 
-    supported_durations: list[str] = Field(min_length=1)
+    duration_mode: DurationMode = "fixed"
+    supported_durations: list[str] = Field(default_factory=list)
+    """Non-empty for `fixed`/`minutes`; must be empty for `source` — enforced in
+    the consistency validator rather than by `min_length`, because the
+    constraint depends on the mode."""
     supported_aspect_ratios: list[str] = Field(default_factory=list)
     supported_quality_levels: list[str] = Field(default_factory=list)
 
@@ -178,6 +201,33 @@ class WorkflowDefinition(BaseModel):
         if not self.prompt.required and not self.inputs:
             raise ValueError("a workflow must require either a prompt or at least one input")
 
+        # ── Duration mode coherence ───────────────────────────────────
+        # Each mode has a shape the UI and the validator rely on; a file that
+        # mixes them would render a broken control or validate the wrong thing,
+        # so it must not load at all.
+        if self.duration_mode == "source":
+            if self.supported_durations:
+                raise ValueError(
+                    "duration_mode 'source' takes its length from the uploaded file; "
+                    "supported_durations must be empty"
+                )
+            # The length has to come from somewhere: a required media input.
+            if not any(s.required and s.kind in ("video", "audio") for s in self.inputs):
+                raise ValueError(
+                    "duration_mode 'source' requires a required video or audio input "
+                    "to derive the duration from"
+                )
+        else:
+            if not self.supported_durations:
+                raise ValueError(f"duration_mode '{self.duration_mode}' needs supported_durations")
+            suffix = "m" if self.duration_mode == "minutes" else "s"
+            bad = [d for d in self.supported_durations if not _is_duration(d, suffix)]
+            if bad:
+                raise ValueError(
+                    f"duration_mode '{self.duration_mode}' entries must look like "
+                    f"'30{suffix}'; got {bad}"
+                )
+
         return self
 
     # ── Lookups used by request validation ───────────────────────────────
@@ -211,6 +261,7 @@ class WorkflowDefinition(BaseModel):
             marketing_description=self.marketing_description,
             prompt=self.prompt,
             inputs=self.inputs,
+            duration_mode=self.duration_mode,
             supported_durations=self.supported_durations,
             supported_aspect_ratios=self.supported_aspect_ratios,
             supported_quality_levels=self.supported_quality_levels,
@@ -218,6 +269,11 @@ class WorkflowDefinition(BaseModel):
             capabilities=self.capabilities,
             ui=self.ui,
         )
+
+
+def _is_duration(value: str, suffix: str) -> bool:
+    body = value.removesuffix(suffix)
+    return value.endswith(suffix) and body.isdigit() and int(body) > 0
 
 
 class WorkflowPublic(BaseModel):
@@ -238,6 +294,7 @@ class WorkflowPublic(BaseModel):
     prompt: PromptSpec
     inputs: list[InputSpec]
 
+    duration_mode: DurationMode
     supported_durations: list[str]
     supported_aspect_ratios: list[str]
     supported_quality_levels: list[str]

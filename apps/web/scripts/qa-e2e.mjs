@@ -143,8 +143,9 @@ try {
     .locator('[role="group"][aria-label="Duration"] button')
     .allInnerTexts();
   check(
-    "Music offers its own durations",
-    JSON.stringify(musicDurations) === JSON.stringify(["30s", "60s", "120s"]),
+    "Music is chosen in minutes (CR-009)",
+    JSON.stringify(musicDurations) ===
+      JSON.stringify(["1 min", "2 min", "3 min", "4 min", "5 min"]),
     musicDurations.join("/"),
   );
 
@@ -154,6 +155,22 @@ try {
   check(
     "…and an OPTIONAL reference image",
     bodyText.includes("REFERENCE IMAGE") && bodyText.includes("optional"),
+  );
+  check(
+    "Video to Video duration is automatic (CR-006)",
+    (await page.locator('[data-testid="auto-duration"]').innerText()).includes(
+      "Same as source video",
+    ) && (await page.locator('[role="group"][aria-label="Duration"]').count()) === 0,
+  );
+
+  await page.goto(`${BASE}/app/create/extend-video`, { waitUntil: "domcontentloaded" });
+  const extendDurations = await page
+    .locator('[role="group"][aria-label="Duration"] button')
+    .allInnerTexts();
+  check(
+    "Extend offers 5/10/15/30/60 (CR-008)",
+    JSON.stringify(extendDurations) === JSON.stringify(["5s", "10s", "15s", "30s", "60s"]),
+    extendDurations.join("/"),
   );
 
   // ── 8. Settings preservation across a workflow switch ──────────────────

@@ -15,7 +15,13 @@ import {
   ToggleField,
 } from "@/components/ui/Controls";
 import type { GenerationFormValues } from "@/features/generation/form";
-import { hasAdvancedSettings, showsAspectRatio, showsQuality } from "@/services/workflows";
+import {
+  autoDurationLabel,
+  durationLabel,
+  hasAdvancedSettings,
+  showsAspectRatio,
+  showsQuality,
+} from "@/services/workflows";
 import { cn } from "@/lib/cn";
 
 /**
@@ -155,30 +161,44 @@ export function GenerationSettingsPanel({
           </>
         ) : null}
 
-        {/* ── Duration — the list changes per workflow ─────────────── */}
+        {/* ── Duration — mode and options both come from the workflow ──
+            `fixed` and `minutes` render choice chips (the strings differ,
+            the control does not). `source` renders a statement instead of a
+            control: the length comes from the uploaded file, and offering
+            chips would promise a choice the backend is required to refuse. */}
         <SectionLabel>Duration</SectionLabel>
-        <Controller
-          control={form.control}
-          name="duration"
-          render={({ field }) => (
-            <div
-              role="group"
-              aria-label="Duration"
-              className="mb-6 flex flex-wrap gap-[7px]"
-            >
-              {workflow.supported_durations.map((duration) => (
-                <OptionChip
-                  key={duration}
-                  selected={duration === field.value}
-                  onClick={() => field.onChange(duration)}
-                  className="px-4 py-[9px] text-[12px]"
-                >
-                  {duration}
-                </OptionChip>
-              ))}
-            </div>
-          )}
-        />
+        {workflow.duration_mode === "source" ? (
+          <p
+            data-testid="auto-duration"
+            className="border-zx-border bg-zx-surface text-zx-text-secondary rounded-zx-md mb-6 flex items-center gap-2 border px-[13px] py-[11px] text-[12.5px] font-semibold"
+          >
+            <Icon name="clock" size={14} />
+            {autoDurationLabel(workflow)}
+          </p>
+        ) : (
+          <Controller
+            control={form.control}
+            name="duration"
+            render={({ field }) => (
+              <div
+                role="group"
+                aria-label="Duration"
+                className="mb-6 flex flex-wrap gap-[7px]"
+              >
+                {workflow.supported_durations.map((duration) => (
+                  <OptionChip
+                    key={duration}
+                    selected={duration === field.value}
+                    onClick={() => field.onChange(duration)}
+                    className="px-4 py-[9px] text-[12px]"
+                  >
+                    {durationLabel(duration)}
+                  </OptionChip>
+                ))}
+              </div>
+            )}
+          />
+        )}
 
         {/* ── Quality — absent when the workflow exposes none ──────── */}
         {showsQuality(workflow) ? (

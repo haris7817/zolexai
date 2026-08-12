@@ -1,27 +1,40 @@
 # Workflow definitions
 
-Public workflow metadata, version controlled per architecture doc §12.
+The single source of truth for what ZolexAI offers. The API validates these at
+startup (a bad file aborts boot), serves the public parts at
+`GET /api/v1/workflows`, and hands the private parts to the worker with each
+claimed job. The frontend builds every tool surface from the API response; the
+landing page reads these files directly at build time.
 
 ## The one rule
 
-These files contain **PUBLIC metadata only** — what the customer-facing UI is
-allowed to know: name, category, output type, inputs, supported durations,
-aspect ratios, quality levels, settings and capabilities.
+Everything in a file is **public** — served verbatim to any browser — **except
+the `execution:` block**, which is private and stripped from every API response
+by an explicit allowlist projection (`WorkflowDefinition.to_public()`).
 
-They must **never** contain an `execution:` block, or any provider, model,
-runner, workflow-file, VRAM or timeout value. That is private execution
-metadata; it stays server-side and is served to no one.
+Provider, model, runner, hardware and tuning details belong under `execution:`
+and nowhere else. No provider or model name may appear in any public field.
 
-> Non-negotiable rule #1 — do not expose internal AI/provider names in the
-> customer UI. Guarded by test T-API-01 and risk R-10.
+> Guarded by tests: `test_execution_block_never_reaches_a_client` and
+> `test_no_provider_or_infrastructure_names_anywhere`, plus the
+> `qa:parity` script, which diffs these files against the live API response
+> and fails if anything private escapes.
 
-## Current status (PRE-M1)
+## Duration modes
 
-These mirror `apps/web/src/features/workflows/registry.ts`, which is what the
-demo actually reads. At **M1.14** the API becomes the owner: it loads and
-validates these at startup, and **M1.15** exposes them via
-`GET /api/v1/workflows`, at which point the frontend registry is deleted and
-replaced by the API response (M1.16).
+`duration_mode` decides how a workflow's output length is chosen:
 
-Scope is frozen at six workflows (milestones §8.1). Adding a seventh is a
-change request, not an edit to this folder.
+| Mode | Meaning | `supported_durations` |
+|---|---|---|
+| `fixed` | User picks one | `["5s", "10s", …]` |
+| `source` | Matches the uploaded source file automatically | must be `[]` |
+| `minutes` | User picks a song length in minutes | `["1m", …, "5m"]` |
+
+The API rejects a supplied duration on a `source` workflow and requires one on
+the others. Ceilings (e.g. music's `5m`) are provisional until the M2 model
+benchmark; raising one is an edit to the list, not a code change.
+
+## Scope
+
+Frozen at six workflows (milestones §8.1). Adding a seventh is a change
+request, not an edit to this folder.

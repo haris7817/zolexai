@@ -56,6 +56,19 @@ export type WorkflowIcon = z.infer<typeof workflowIconSchema>;
 export const outputTypeSchema = z.enum(["video", "audio", "image"]);
 export type OutputType = z.infer<typeof outputTypeSchema>;
 
+/**
+ * How a workflow's output duration is decided (M2 client requirements):
+ * `fixed` — user picks from `supported_durations` ("5s"…); `source` — matches
+ * the uploaded file automatically, the list is empty and no duration is sent;
+ * `minutes` — user picks a song length ("1m"…"5m").
+ *
+ * Deliberately NOT `.default()`ed: the API always serves it, and a silent
+ * fallback here would mask exactly the kind of drift this contract exists to
+ * catch.
+ */
+export const durationModeSchema = z.enum(["fixed", "source", "minutes"]);
+export type DurationMode = z.infer<typeof durationModeSchema>;
+
 export const assetKindSchema = z.enum(["video", "image", "audio"]);
 export type AssetKind = z.infer<typeof assetKindSchema>;
 
@@ -90,6 +103,7 @@ export const workflowSchema = z.object({
 
   inputs: z.array(workflowInputSchema),
 
+  duration_mode: durationModeSchema,
   supported_durations: z.array(z.string()),
   supported_aspect_ratios: z.array(z.string()),
   supported_quality_levels: z.array(z.string()),

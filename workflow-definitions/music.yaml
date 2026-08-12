@@ -15,7 +15,13 @@ prompt:
 
 inputs: []
 
-supported_durations: ["30s", "60s", "120s"]
+# The user picks a song length in minutes (CR-009) — music-appropriate, not
+# video-style second presets. The 5-minute ceiling is PROVISIONAL: the safe
+# maximum comes from benchmarking the selected music model in M2, and raising
+# it is an edit to this list only. Long songs may be generated in continued
+# sections and assembled — hidden from the customer.
+duration_mode: minutes
+supported_durations: ["1m", "2m", "3m", "4m", "5m"]
 # Audio has no frame. The API rejects an aspect ratio on this workflow and the
 # settings panel hides the section entirely.
 supported_aspect_ratios: []

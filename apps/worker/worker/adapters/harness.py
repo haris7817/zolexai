@@ -34,6 +34,7 @@ from worker.adapters.base import (
     AdapterJob,
     AdapterResult,
     ProgressCallback,
+    parse_duration_seconds,
 )
 from worker.core.config import settings
 from worker.core.logging import get_logger
@@ -159,7 +160,7 @@ class HarnessAdapter:
             if info.duration_seconds:
                 return info.duration_seconds
 
-        requested = _requested_seconds(job.parameters.get("duration"))
+        requested = parse_duration_seconds(job.parameters.get("duration"))
         if requested is None:
             raise AdapterError(
                 "This generation could not be started.",
@@ -230,18 +231,3 @@ def _generating_message(index: int, total: int) -> str:
     if total <= 1:
         return "This usually takes a couple of minutes."
     return f"Generating section {index + 1} of {total}…"
-
-
-def _requested_seconds(value: object) -> float | None:
-    """Turns "10s" into 10.0.
-
-    Durations are opaque display strings in the workflow YAML, so the worker is
-    the first place they become numbers. Batch 2 makes the unit explicit in the
-    contract; until then this parses what M1 defined.
-    """
-    text = str(value or "").strip().lower().removesuffix("s")
-    try:
-        parsed = float(text)
-    except ValueError:
-        return None
-    return parsed if parsed > 0 else None

@@ -16,15 +16,17 @@ RoleName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=48)]
 class GenerationParameters(BaseModel):
     """The creative settings. Which of these apply is decided by the workflow.
 
-    `duration` is required; the rest are optional because a workflow may not
-    expose them — Music has no aspect ratio and no quality level, and sending
-    either is rejected rather than ignored, so a client bug surfaces instead of
-    silently producing something the user did not ask for.
+    Every field is optional at the schema level because whether it applies is
+    decided by the workflow, not by the shape: an automatic-duration workflow
+    takes its length from the uploaded file and REJECTS a supplied duration,
+    while a fixed-duration workflow requires one. Sending a parameter a
+    workflow does not use is rejected rather than ignored, so a client bug
+    surfaces instead of silently producing something the user did not ask for.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    duration: str = Field(max_length=16)
+    duration: str | None = Field(default=None, max_length=16)
     aspect_ratio: str | None = Field(default=None, max_length=16)
     quality: str | None = Field(default=None, max_length=32)
 

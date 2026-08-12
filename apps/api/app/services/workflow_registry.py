@@ -130,7 +130,27 @@ class WorkflowRegistry:
                 }
             )
 
-        if duration not in definition.supported_durations:
+        # Duration is judged by the workflow's mode. `source` sets the length
+        # from the uploaded file, so a supplied duration is a client bug — the
+        # user was never offered the choice, and honouring a stray value would
+        # quietly contradict what the UI promised ("Same as source").
+        if definition.duration_mode == "source":
+            if duration is not None:
+                problems.append(
+                    {
+                        "field": "duration",
+                        "reason": "This tool sets the duration from your file automatically.",
+                    }
+                )
+        elif duration is None:
+            problems.append(
+                {
+                    "field": "duration",
+                    "reason": "A duration is required.",
+                    "allowed": definition.supported_durations,
+                }
+            )
+        elif duration not in definition.supported_durations:
             problems.append(
                 {
                     "field": "duration",

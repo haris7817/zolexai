@@ -29,6 +29,7 @@ const MIRRORED = [
   "description",
   "short_description",
   "marketing_description",
+  "duration_mode",
   "supported_durations",
   "supported_aspect_ratios",
   "supported_quality_levels",

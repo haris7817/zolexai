@@ -13,6 +13,7 @@ import { useGenerationStream } from "@/features/generation/useGenerationStream";
 import { useWorkflow } from "@/features/workflows/queries";
 import { primaryOutput } from "@/services/generations";
 import { fetchDownloadUrl } from "@/services/assets";
+import { durationLabel } from "@/services/workflows";
 import { useState } from "react";
 
 /**
@@ -178,7 +179,16 @@ export function GenerationDetail({ generationId }: { generationId: string }) {
             <dl className="m-0 flex flex-col gap-4">
               <Detail label="Prompt" value={job.prompt || "—"} />
               <Detail label="Workflow" value={job.workflow_name} />
-              <Detail label="Duration" value={String(job.parameters?.duration ?? "—")} />
+              {/* No duration parameter means the workflow set it from the
+                  uploaded file — say so rather than showing a dash. */}
+              <Detail
+                label="Duration"
+                value={
+                  job.parameters?.duration
+                    ? durationLabel(String(job.parameters.duration))
+                    : "Matched to your file"
+                }
+              />
               {job.parameters?.aspect_ratio ? (
                 <Detail label="Aspect ratio" value={String(job.parameters.aspect_ratio)} />
               ) : null}

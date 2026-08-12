@@ -3,6 +3,7 @@ import { isRunning, type GenerationJob } from "@zolexai/workflow-contracts";
 import { StatusPill, type StatusTone } from "@/components/ui/Feedback";
 import { Icon } from "@/components/ui/Icon";
 import { primaryOutput } from "@/services/generations";
+import { durationLabel } from "@/services/workflows";
 
 /**
  * A single generation in a grid — shared by the Creator Dashboard's "Recent
@@ -40,7 +41,8 @@ export function relativeTime(iso: string): string {
 
 export function GenerationCard({ generation }: { generation: GenerationJob }) {
   const output = primaryOutput(generation);
-  const duration = String(generation.parameters?.duration ?? "");
+  // Absent for automatic-duration workflows — the badge simply doesn't render.
+  const duration = durationLabel(String(generation.parameters?.duration ?? ""));
   const running = isRunning(generation.status);
 
   return (

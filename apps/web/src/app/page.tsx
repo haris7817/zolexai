@@ -59,8 +59,10 @@ export default async function LandingPage() {
         className="bg-zx-bg-alt border-zx-border border-y px-5 py-16 tablet:px-8 laptop:px-12 laptop:py-20"
       >
         <div className="mx-auto max-w-[1080px]">
+          {/* CR-001 — the client's exact copy. Uppercase display style to
+              match the section headings elsewhere on the page. */}
           <h2 className="m-0 mb-12 text-center text-[30px] font-extrabold tracking-[-0.03em] laptop:mb-14 laptop:text-[42px]">
-            From idea to output in three steps
+            IMAGINE IT. GENERATE IT. GO VIRAL.
           </h2>
           <div className="grid grid-cols-1 gap-6 tablet:grid-cols-3">
             {[

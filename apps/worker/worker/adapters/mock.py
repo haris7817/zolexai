@@ -23,7 +23,12 @@ import struct
 import zlib
 from dataclasses import dataclass
 
-from worker.adapters.base import AdapterJob, AdapterResult, ProgressCallback
+from worker.adapters.base import (
+    AdapterJob,
+    AdapterResult,
+    ProgressCallback,
+    parse_duration_seconds,
+)
 
 
 @dataclass(frozen=True)
@@ -82,17 +87,8 @@ class MockAdapter:
             kind="image",
             width=width,
             height=height,
-            duration_seconds=_duration_seconds(job.parameters.get("duration")),
+            duration_seconds=parse_duration_seconds(job.parameters.get("duration")),
         )
-
-
-def _duration_seconds(value: object) -> float | None:
-    """Turns "10s" into 10.0 so the asset carries the requested length."""
-    text = str(value or "").strip().lower().removesuffix("s")
-    try:
-        return float(text)
-    except ValueError:
-        return None
 
 
 # ── Placeholder image ────────────────────────────────────────────────────

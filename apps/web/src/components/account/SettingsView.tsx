@@ -13,6 +13,7 @@ import {
   ToggleField,
   OptionChip,
 } from "@/components/ui/Controls";
+import { autoDurationLabel, durationLabel } from "@/services/workflows";
 import { cn } from "@/lib/cn";
 
 /**
@@ -318,18 +319,24 @@ function GenerationSection() {
       {/* Options come from the registry, so this section is correct for whichever
           tool is selected — the same mechanism the workspace panel uses. */}
       <SectionLabel>Default duration</SectionLabel>
-      <div className="mb-6 flex flex-wrap gap-2">
-        {workflow.supported_durations.map((duration, index) => (
-          <OptionChip
-            key={duration}
-            selected={index === 0}
-            onClick={noop}
-            className="px-4 py-[9px] text-[12px]"
-          >
-            {duration}
-          </OptionChip>
-        ))}
-      </div>
+      {workflow.duration_mode === "source" ? (
+        <p className="text-zx-text-secondary mb-6 text-[12.5px] font-semibold">
+          {autoDurationLabel(workflow)} — nothing to configure.
+        </p>
+      ) : (
+        <div className="mb-6 flex flex-wrap gap-2">
+          {workflow.supported_durations.map((duration, index) => (
+            <OptionChip
+              key={duration}
+              selected={index === 0}
+              onClick={noop}
+              className="px-4 py-[9px] text-[12px]"
+            >
+              {durationLabel(duration)}
+            </OptionChip>
+          ))}
+        </div>
+      )}
 
       {workflow.supported_aspect_ratios.length > 0 ? (
         <>

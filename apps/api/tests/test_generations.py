@@ -46,7 +46,9 @@ async def test_rejects_aspect_ratio_on_audio_workflow(client: AsyncClient) -> No
         json={
             "workflow_id": "music",
             "prompt": "synthwave, 120bpm",
-            "parameters": {"duration": "60s", "aspect_ratio": "16:9"},
+            # Music durations are in minutes since M2; a valid one keeps this
+            # test pointed at its actual subject — the aspect ratio.
+            "parameters": {"duration": "1m", "aspect_ratio": "16:9"},
         },
     )
     assert response.status_code == 422

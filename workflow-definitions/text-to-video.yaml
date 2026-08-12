@@ -24,6 +24,7 @@ prompt:
 # No uploaded assets — the prompt is the only input.
 inputs: []
 
+duration_mode: fixed
 supported_durations: ["5s", "10s", "15s", "30s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1", "4:5"]
 supported_quality_levels: [Standard, High, Ultra]

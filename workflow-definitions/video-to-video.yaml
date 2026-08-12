@@ -37,7 +37,12 @@ inputs:
     accept: ["image/jpeg", "image/png", "image/webp"]
     max_size_mb: 25
 
-supported_durations: ["5s", "10s", "15s"]
+# Duration is automatic (CR-006): the result matches the uploaded source video,
+# so the user picks nothing and the API rejects a supplied duration. A source
+# longer than one model pass is segmented and stitched by the worker — invisible
+# to the customer.
+duration_mode: source
+supported_durations: []
 supported_aspect_ratios: ["16:9", "9:16"]
 supported_quality_levels: [Standard, High, Ultra]
 

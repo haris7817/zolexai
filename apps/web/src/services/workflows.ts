@@ -52,6 +52,27 @@ export function showsAspectRatio(workflow: Workflow): boolean {
   return workflow.supported_aspect_ratios.length > 0;
 }
 
+/**
+ * Chip label for a duration value. Second presets render as served ("5s");
+ * minute values get the word, because "3m" reads as metres to half the world.
+ */
+export function durationLabel(value: string): string {
+  const minutes = /^(\d+)m$/.exec(value);
+  return minutes ? `${minutes[1]} min` : value;
+}
+
+/**
+ * Customer copy for an automatic-duration workflow — worded from the source
+ * input's kind, so Music Video says "audio" and Video to Video says "video"
+ * without either being special-cased anywhere.
+ */
+export function autoDurationLabel(workflow: Workflow): string {
+  const source = workflow.inputs.find(
+    (input) => input.required && (input.kind === "video" || input.kind === "audio"),
+  );
+  return source?.kind === "audio" ? "Matches your audio" : "Same as source video";
+}
+
 /** Accepted MIME types for a role, as an `<input accept>` value. */
 export function acceptAttribute(workflow: Workflow, role: string): string {
   const input = workflow.inputs.find((candidate) => candidate.role === role);

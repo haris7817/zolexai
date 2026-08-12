@@ -22,7 +22,11 @@ inputs:
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
 
-supported_durations: ["5s", "10s", "30s", "60s"]
+# The five extension outcomes the client asked for, exactly (CR-008). Longer
+# ones may be produced by chained generation behind the scenes — that is the
+# backend's business, and the option list must not shrink because of it.
+duration_mode: fixed
+supported_durations: ["5s", "10s", "15s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16"]
 supported_quality_levels: [Standard, High, Ultra]
 

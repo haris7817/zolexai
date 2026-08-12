@@ -45,6 +45,30 @@ from typing import Any, Protocol, runtime_checkable
 ProgressCallback = Callable[[str, int, str], Awaitable[None]]
 
 
+def parse_duration_seconds(value: object) -> float | None:
+    """Turns a requested duration string into seconds: "10s" → 10.0, "3m" → 180.0.
+
+    Durations travel as opaque display strings ("5s", "3m" — music is chosen in
+    minutes), and the worker is the first place they must become numbers. Kept
+    here because every adapter needs the same reading; None means the request
+    carried no usable duration, which is normal for automatic-duration
+    workflows where the source file decides.
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    multiplier = 1.0
+    if text.endswith("m"):
+        multiplier, text = 60.0, text[:-1]
+    elif text.endswith("s"):
+        text = text[:-1]
+    try:
+        seconds = float(text) * multiplier
+    except ValueError:
+        return None
+    return seconds if seconds > 0 else None
+
+
 class JobCancelled(Exception):
     """The job should stop: the user cancelled it, or the lease was lost.
 

@@ -32,7 +32,8 @@ import type { CreateGenerationInput } from "@/services/generations";
 
 export interface GenerationFormValues {
   prompt: string;
-  duration: string;
+  /** null when the workflow's duration is automatic (`duration_mode: source`). */
+  duration: string | null;
   /** null when the workflow exposes no aspect ratios (audio output). */
   aspectRatio: string | null;
   /** null when the workflow exposes no quality levels. */
@@ -97,11 +98,13 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
         }
       }),
 
-    duration: z
-      .string()
-      .refine((value) => workflow.supported_durations.includes(value), {
-        message: "Choose a duration.",
-      }),
+    // Source-mode workflows take their length from the uploaded file, so the
+    // form must hold null there — the same null-when-absent shape aspect ratio
+    // and quality already use.
+    duration: choiceOrNull(
+      workflow.duration_mode === "source" ? [] : workflow.supported_durations,
+      "Choose a duration.",
+    ),
 
     aspectRatio: choiceOrNull(workflow.supported_aspect_ratios, "Choose an aspect ratio."),
 
@@ -138,7 +141,8 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
 export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
   return {
     prompt: "",
-    duration: workflow.supported_durations[0] ?? "",
+    duration:
+      workflow.duration_mode === "source" ? null : (workflow.supported_durations[0] ?? null),
     aspectRatio: workflow.supported_aspect_ratios[0] ?? null,
     quality: workflow.settings.quality ? (workflow.supported_quality_levels[0] ?? null) : null,
     motionStrength: 60,
@@ -176,9 +180,10 @@ export function preserveValues(
     motionStrength: previous.motionStrength,
     promptAdherence: previous.promptAdherence,
     seedLocked: previous.seedLocked,
-    duration: workflow.supported_durations.includes(previous.duration)
-      ? previous.duration
-      : defaults.duration,
+    duration:
+      previous.duration !== null && workflow.supported_durations.includes(previous.duration)
+        ? previous.duration
+        : defaults.duration,
     aspectRatio:
       previous.aspectRatio && workflow.supported_aspect_ratios.includes(previous.aspectRatio)
         ? previous.aspectRatio
@@ -206,9 +211,11 @@ export function toCreateInput(
     workflow_id: workflow.id,
     prompt: values.prompt.trim(),
     parameters: {
-      duration: values.duration,
       // Omitted rather than sent as null when the workflow has no such control:
       // the API rejects a parameter a workflow does not use, and rightly so.
+      // Source-mode duration is the clearest case — the length comes from the
+      // uploaded file, and sending one would be rejected as a contradiction.
+      ...(values.duration !== null ? { duration: values.duration } : {}),
       ...(workflow.supported_aspect_ratios.length ? { aspect_ratio: values.aspectRatio } : {}),
       ...(workflow.settings.quality && workflow.supported_quality_levels.length
         ? { quality: values.quality }
@@ -235,9 +242,7 @@ export function valuesFromJob(
   return {
     ...defaults,
     prompt,
-    duration:
-      pick(parameters.duration, workflow.supported_durations, defaults.duration) ??
-      defaults.duration,
+    duration: pick(parameters.duration, workflow.supported_durations, defaults.duration),
     aspectRatio: pick(
       parameters.aspect_ratio,
       workflow.supported_aspect_ratios,

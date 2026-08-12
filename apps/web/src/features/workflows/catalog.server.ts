@@ -60,6 +60,7 @@ interface RawWorkflow {
   marketing_description?: string;
   prompt?: { required?: boolean; placeholder?: string; max_length?: number };
   inputs?: RawInput[];
+  duration_mode?: string;
   supported_durations: string[];
   supported_aspect_ratios?: string[];
   supported_quality_levels?: string[];
@@ -105,6 +106,7 @@ function toPublicWorkflow(raw: RawWorkflow): Workflow {
       accept: input.accept ?? [],
       max_size_mb: input.max_size_mb ?? 512,
     })),
+    duration_mode: raw.duration_mode ?? "fixed",
     supported_durations: raw.supported_durations,
     supported_aspect_ratios: raw.supported_aspect_ratios ?? [],
     supported_quality_levels: raw.supported_quality_levels ?? [],

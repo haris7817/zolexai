@@ -22,7 +22,11 @@ inputs:
     accept: ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg"]
     max_size_mb: 64
 
-supported_durations: ["15s", "30s", "60s"]
+# Duration is automatic (CR-007): the final video matches the full uploaded
+# track — a 30-second song yields a 30-second video, a 4-minute song a 4-minute
+# video. Long tracks are produced in sections and assembled by the worker.
+duration_mode: source
+supported_durations: []
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
 supported_quality_levels: [Standard, High]
 

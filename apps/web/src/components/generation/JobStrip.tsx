@@ -3,6 +3,7 @@
 import { isRunning, type GenerationJob } from "@zolexai/workflow-contracts";
 import { StatusDot, type StatusTone } from "@/components/ui/Feedback";
 import { useRecentGenerations } from "@/features/generation/queries";
+import { durationLabel } from "@/services/workflows";
 import { cn } from "@/lib/cn";
 
 /**
@@ -60,7 +61,7 @@ function JobCard({
 }) {
   const running = isRunning(job.status);
   const thumb = job.outputs.find((output) => output.is_primary)?.url ?? null;
-  const duration = String(job.parameters?.duration ?? "");
+  const duration = durationLabel(String(job.parameters?.duration ?? ""));
 
   return (
     // The source design put role="listitem" and aria-pressed on the same

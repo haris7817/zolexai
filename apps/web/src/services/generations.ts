@@ -14,7 +14,8 @@ export interface CreateGenerationInput {
   workflow_id: string;
   prompt: string;
   parameters: {
-    duration: string;
+    /** Omitted for automatic-duration workflows — the file sets the length. */
+    duration?: string;
     aspect_ratio?: string | null;
     quality?: string | null;
     motion_strength?: number;
