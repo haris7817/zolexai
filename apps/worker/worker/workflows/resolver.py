@@ -9,13 +9,21 @@ and a worker can never disagree with the API about what a workflow is
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Any
 
 from worker.adapters.base import AdapterInput, AdapterJob, GenerationAdapter
 from worker.adapters.registry import get_adapter
 
 
-def build_adapter_job(claim: dict[str, Any]) -> AdapterJob:
+def build_adapter_job(
+    claim: dict[str, Any],
+    *,
+    workspace: Path | None = None,
+    cancelled: asyncio.Event | None = None,
+    deadline_monotonic: float | None = None,
+) -> AdapterJob:
     return AdapterJob(
         job_id=str(claim["job_id"]),
         workflow_id=str(claim["workflow_id"]),
@@ -33,6 +41,9 @@ def build_adapter_job(claim: dict[str, Any]) -> AdapterJob:
         ],
         execution=dict(claim.get("execution") or {}),
         output_content_type=str(claim.get("output_content_type", "application/octet-stream")),
+        workspace=workspace or Path(),
+        _cancelled=cancelled,
+        _deadline_monotonic=deadline_monotonic,
     )
 
 

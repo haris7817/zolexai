@@ -33,9 +33,17 @@ async def register(client: AsyncClient, headers: dict, name: str = "test-worker"
     return response.json()["worker_id"]
 
 
-async def claim(client: AsyncClient, headers: dict, worker_id: str) -> dict | None:
+async def claim(
+    client: AsyncClient,
+    headers: dict,
+    worker_id: str,
+    runtimes: list[str] | None = None,
+) -> dict | None:
+    payload: dict = {"worker_id": worker_id}
+    if runtimes is not None:
+        payload["runtimes"] = runtimes
     response = await client.post(
-        "/api/v1/internal/jobs/claim", headers=headers, json={"worker_id": worker_id}
+        "/api/v1/internal/jobs/claim", headers=headers, json=payload
     )
     assert response.status_code == 200, response.text
     return response.json()["job"]
@@ -422,3 +430,100 @@ async def test_an_expired_lease_is_requeued(
 
     # And another worker can now pick it up.
     assert await claim(client, worker_headers, worker_id) is not None
+
+
+# ── Runtime routing (M2) ─────────────────────────────────────────────────
+#
+# Which adapter runs a workflow is declared in its private `execution.runtime`.
+# Nothing used to check that the claiming worker could actually run it, which
+# was harmless while every definition said `mock`. The moment one says something
+# else, a mock node claims that job, finds no adapter, and fails it with
+# `retriable=False` — permanently dead, and the customer is simply told the tool
+# is unavailable.
+
+
+async def test_a_worker_never_claims_work_it_cannot_run(
+    client: AsyncClient, worker_headers: dict, text_to_video_request: dict
+) -> None:
+    """The regression guard for a mixed fleet.
+
+    Every shipped workflow is routed to `mock`, so a node that serves only a
+    GPU runtime must come away empty rather than taking the job and killing it.
+    """
+    await client.post("/api/v1/generations", json=text_to_video_request)
+    worker_id = await register(client, worker_headers)
+
+    assert await claim(client, worker_headers, worker_id, runtimes=["ltx"]) is None
+
+    # And the job is still queued for a node that can run it.
+    assert await claim(client, worker_headers, worker_id, runtimes=["mock"]) is not None
+
+
+async def test_declaring_several_runtimes_widens_what_a_node_may_claim(
+    client: AsyncClient, worker_headers: dict, text_to_video_request: dict
+) -> None:
+    await client.post("/api/v1/generations", json=text_to_video_request)
+    worker_id = await register(client, worker_headers)
+
+    assert await claim(client, worker_headers, worker_id, runtimes=["ltx", "mock"]) is not None
+
+
+async def test_a_worker_that_declares_nothing_keeps_the_old_behaviour(
+    client: AsyncClient, worker_headers: dict, text_to_video_request: dict
+) -> None:
+    """A pre-M2 worker cannot assert its runtimes. Starving it during a rolling
+    upgrade would turn a deploy into an outage."""
+    await client.post("/api/v1/generations", json=text_to_video_request)
+    worker_id = await register(client, worker_headers)
+
+    assert await claim(client, worker_headers, worker_id) is not None
+
+
+async def test_capability_is_re_asserted_on_every_claim_not_trusted_from_registration(
+    client: AsyncClient, worker_headers: dict, text_to_video_request: dict
+) -> None:
+    """A node restarted with a different runtime must not inherit what its
+    previous incarnation recorded."""
+    await client.post("/api/v1/generations", json=text_to_video_request)
+
+    response = await client.post(
+        "/api/v1/internal/workers/register",
+        headers=worker_headers,
+        json={
+            "name": "was-a-mock-node",
+            "runtime": "mock",
+            "runtimes": ["mock"],
+            "workflows": WORKFLOWS,
+            "max_concurrency": 1,
+        },
+    )
+    worker_id = response.json()["worker_id"]
+
+    # Same row, now running a GPU build: the stale "mock" capability must not
+    # let it claim mock-routed work.
+    assert await claim(client, worker_headers, worker_id, runtimes=["ltx"]) is None
+
+
+async def test_registration_records_runtimes_for_operators(
+    client: AsyncClient, worker_headers: dict, db: AsyncSession
+) -> None:
+    """"Which nodes can run this workflow?" is the first question asked when a
+    queue stops draining, and it should be answerable from the fleet table."""
+    await client.post(
+        "/api/v1/internal/workers/register",
+        headers=worker_headers,
+        json={
+            "name": "gpu-node-1",
+            "runtime": "ltx",
+            "runtimes": ["ltx", "harness"],
+            "workflows": WORKFLOWS,
+            "max_concurrency": 1,
+        },
+    )
+
+    recorded = (
+        await db.execute(
+            sql_text("SELECT capabilities FROM worker_nodes WHERE name = 'gpu-node-1'")
+        )
+    ).scalar_one()
+    assert recorded["runtimes"] == ["ltx", "harness"]

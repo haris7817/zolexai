@@ -13,10 +13,14 @@ expensive to discover than a failed job.
 from __future__ import annotations
 
 from worker.adapters.base import AdapterError, GenerationAdapter
+from worker.adapters.harness import HarnessAdapter
 from worker.adapters.mock import MockAdapter
 
 _ADAPTERS: dict[str, GenerationAdapter] = {
     "mock": MockAdapter(),
+    # Real media through ffmpeg, no model. Registered so it can be selected for
+    # local testing; no shipped workflow points at it. See adapters/harness.py.
+    "harness": HarnessAdapter(),
     # M2: "ltx": LtxAdapter(), etc. Registered here and nowhere else.
 }
 

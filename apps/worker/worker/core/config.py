@@ -12,6 +12,7 @@ key.
 
 from __future__ import annotations
 
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -55,7 +56,22 @@ class WorkerSettings(BaseSettings):
     node's identity across restarts."""
 
     runtime: str = "mock"
-    """Which adapter to run. M2 adds a real one; nothing else changes."""
+    """This node's primary runtime, reported at registration."""
+
+    runtimes: str = ""
+    """
+    Comma-separated runtimes this node can actually execute; empty means "just
+    `runtime`".
+
+    This is what stops a node claiming work it cannot do. Routing is per
+    *workflow* — the YAML's `execution.runtime` decides who should run a job —
+    but until M2 nothing checked that the claiming worker agreed. A mock node
+    would happily claim a GPU-routed job, find no adapter, and fail it with
+    `retriable=False`, which is a permanently dead job from the user's side.
+
+    The API intersects this list with each workflow's runtime at claim time, so
+    a mixed fleet is safe: mock nodes see only mock-routed workflows.
+    """
 
     worker_version: str = "0.1.0"
 
@@ -71,15 +87,94 @@ class WorkerSettings(BaseSettings):
     """
 
     max_concurrency: int = 2
+    """
+    Jobs at once. Two is right for the mock runtime; a node with one GPU should
+    set this to 1, because concurrency here is asyncio tasks sharing a single
+    event loop, not isolated processes.
+    """
+
     idle_poll_seconds: int = 3
     wake_timeout_seconds: int = 10
 
     heartbeat_interval_seconds: int = 20
-    """Also renews leases on in-flight jobs, so a long silent stage cannot have
-    its job reaped out from under it."""
+    """
+    Proof of life for the worker NODE. It does not touch job leases — those are
+    renewed by progress reports, and by the keepalive below when an adapter is
+    working silently. (An earlier version of this docstring claimed otherwise;
+    it was wrong, and a long silent stage really did get its job reaped.)
+    """
+
+    lease_keepalive_seconds: int = 45
+    """
+    How often to re-report the last known progress while an adapter is running.
+
+    A lease is `JOB_LEASE_SECONDS` (120s by default on the API) and only a
+    progress report renews it. A real render is silent for far longer than that
+    between stages, and a lapsed lease means the reaper hands the job to another
+    worker while this one is still burning compute on it — two workers, one
+    output, and a user watching a bar that restarts.
+
+    Comfortably under a third of the lease so two consecutive failures are
+    survivable.
+    """
+
+    job_timeout_seconds: int = 1800
+    """
+    Wall-clock ceiling for one adapter run. A workflow may override it with
+    `execution.timeout_seconds`.
+
+    Without this a hung provider call holds a concurrency slot forever: the job
+    never fails, never completes, and the slot never returns to the pool.
+    """
+
+    shutdown_drain_seconds: int = 300
+    """
+    How long to let in-flight jobs finish on SIGTERM before cancelling them.
+
+    Was 30s, which is fine for a 7-second mock and pointless for a real render —
+    the job got cancelled anyway and waited out its lease. Long enough to matter
+    now, and cancelled jobs still clean up.
+    """
 
     request_timeout_seconds: float = 20.0
-    upload_timeout_seconds: float = 120.0
+    """API calls only. Small on purpose — these are control-plane round trips."""
+
+    download_timeout_seconds: float = 300.0
+    """Media in. Separate from the API timeout: a 500 MB source video is not a
+    control-plane call."""
+
+    upload_timeout_seconds: float = 900.0
+    """Media out. Generous — the result is the whole job's value, and losing it
+    to a timeout wastes everything spent producing it."""
+
+    # ── Workspace ────────────────────────────────────────────────────────
+
+    workspace_dir: Path | None = None
+    """Scratch root. Defaults to the system temp directory."""
+
+    min_free_disk_mb: int = 2048
+    """
+    Refuse a job when the workspace has less room than this.
+
+    Checked before work starts, because failing early is cheap and running out
+    of disk halfway through a render is not — and a full disk tends to take the
+    next job down too.
+    """
+
+    keep_workspace_on_failure: bool = False
+    """Debugging aid: leave a failed job's scratch directory behind."""
+
+    # ── Media tooling ────────────────────────────────────────────────────
+
+    ffmpeg_path: str = "ffmpeg"
+    ffprobe_path: str = "ffprobe"
+
+    max_segment_seconds: int = 10
+    """
+    Default ceiling for one generation pass before the long-form layer splits
+    the work. A workflow overrides it with `execution.max_segment_seconds`; the
+    real value comes from benchmarking the selected model.
+    """
 
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
@@ -90,6 +185,18 @@ class WorkerSettings(BaseSettings):
     @property
     def api_v1(self) -> str:
         return f"{self.api_base_url.rstrip('/')}/api/v1"
+
+    @property
+    def runtime_list(self) -> list[str]:
+        """Runtimes this node serves, always including its primary one."""
+        declared = [item.strip() for item in self.runtimes.split(",") if item.strip()]
+        if self.runtime and self.runtime not in declared:
+            declared.insert(0, self.runtime)
+        return declared
+
+    @property
+    def workspace_root(self) -> Path:
+        return self.workspace_dir or Path(tempfile.gettempdir()) / "zolexai-worker"
 
 
 @lru_cache(maxsize=1)

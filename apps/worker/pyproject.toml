@@ -41,3 +41,17 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+ignore = [
+    # Wants trio.Path/anyio.Path instead of pathlib in async functions. This
+    # worker is plain asyncio, so the suggested replacements do not exist here,
+    # and every flagged call is a stat/unlink/mkdir on a local file — tens of
+    # microseconds. The blocking calls that genuinely matter (ffmpeg, and
+    # whatever M2 uses for inference) go through create_subprocess_exec.
+    "ASYNC240",
+    # Flags `timeout` parameters on async functions, preferring the caller to
+    # wrap in asyncio.timeout. Here the timeout is part of the operation being
+    # described — how long an encode may take — and pushing it to every call
+    # site would spread one decision across many.
+    "ASYNC109",
+]

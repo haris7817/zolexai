@@ -70,6 +70,7 @@ class WorkerService:
                     extra={
                         "worker_name": settings.worker_name,
                         "runtime": settings.runtime,
+                        "runtimes": settings.runtime_list,
                         "workflows": response.get("accepted_workflows", []),
                         "max_concurrency": settings.max_concurrency,
                     },
@@ -181,18 +182,32 @@ class WorkerService:
         """Stops claiming, then lets in-flight jobs finish.
 
         Draining rather than killing: a job abandoned mid-flight would sit until
-        its lease expired before another worker could retry it. Waiting a few
-        seconds here removes that delay for the user watching it.
+        its lease expired before another worker could retry it. Waiting here
+        removes that delay for the user watching it.
+
+        The window is `shutdown_drain_seconds` — minutes, not the 30 seconds M1
+        used. Thirty was sized for a six-second mock; against a real render it
+        guaranteed the cancellation it was meant to avoid.
         """
         if self._stopping.is_set():
             return
         self._stopping.set()
-        logger.info("worker_draining", extra={"active_jobs": len(self._active)})
+        logger.info(
+            "worker_draining",
+            extra={
+                "active_jobs": len(self._active),
+                "drain_seconds": settings.shutdown_drain_seconds,
+            },
+        )
 
         if self._active:
-            done, pending = await asyncio.wait(self._active, timeout=30)
+            _, pending = await asyncio.wait(
+                self._active, timeout=settings.shutdown_drain_seconds
+            )
             for task in pending:
                 task.cancel()
+            if pending:
+                logger.warning("jobs_cancelled_on_shutdown", extra={"count": len(pending)})
 
         if self.redis is not None:
             with contextlib.suppress(Exception):

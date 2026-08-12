@@ -64,14 +64,20 @@ class MockAdapter:
 
     async def run(self, job: AdapterJob, on_progress: ProgressCallback) -> AdapterResult:
         for stage in STAGES:
+            # Honours cancellation between stages like a real adapter, so the
+            # mock keeps exercising the same control flow the GPU worker will.
+            job.raise_if_cancelled()
             await on_progress(stage.status, stage.progress, stage.message)
             await asyncio.sleep(stage.seconds)
 
         width, height = _DIMENSIONS.get(str(job.parameters.get("aspect_ratio") or ""), (960, 540))
         content = _placeholder_png(width, height, seed=f"{job.workflow_id}:{job.job_id}")
 
+        destination = job.workspace / "output.png"
+        destination.write_bytes(content)
+
         return AdapterResult(
-            content=content,
+            path=destination,
             content_type="image/png",
             kind="image",
             width=width,

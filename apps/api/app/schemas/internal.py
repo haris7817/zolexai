@@ -27,6 +27,13 @@ class WorkerRegisterRequest(BaseModel):
     """Stable per deployment slot, so a restart re-registers rather than
     creating a new node."""
     runtime: str = Field(default="mock", max_length=40)
+    runtimes: list[str] = Field(default_factory=list, max_length=16)
+    """
+    Every runtime this node can actually execute.
+
+    Empty means "trust `runtime` alone", which is also what a pre-M2 worker
+    sends — so an old node keeps working while a fleet is mid-upgrade.
+    """
     version: str = Field(default="", max_length=40)
     workflows: list[str] = Field(default_factory=list)
     """Workflow ids this node can execute. Unknown ids are rejected at
@@ -62,6 +69,15 @@ class JobClaimRequest(BaseModel):
     worker_id: uuid.UUID
     workflows: list[str] = Field(default_factory=list)
     """Narrows the claim. Empty means "anything I registered for"."""
+
+    runtimes: list[str] = Field(default_factory=list, max_length=16)
+    """
+    Runtimes this node can execute, re-asserted on every claim.
+
+    Sent per claim rather than trusted from registration because capability is a
+    property of the running process: a node restarted with a different runtime
+    must not inherit what its previous incarnation recorded.
+    """
 
 
 class ClaimedInput(BaseModel):

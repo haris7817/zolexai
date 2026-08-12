@@ -93,7 +93,14 @@ async def register_worker(
         name=payload.name,
         runtime=payload.runtime,
         version=payload.version,
-        capabilities={"workflows": requested, "max_concurrency": payload.max_concurrency},
+        capabilities={
+            "workflows": requested,
+            # Recorded for operators — "which nodes can run this workflow?" is
+            # the first question when a queue stops draining. Enforcement is at
+            # claim time, where the worker re-asserts it, not from this row.
+            "runtimes": payload.runtimes or [payload.runtime],
+            "max_concurrency": payload.max_concurrency,
+        },
         max_concurrency=payload.max_concurrency,
     )
     await session.commit()
@@ -160,6 +167,16 @@ async def claim_job(
 
     registered: list[str] = list(worker.capabilities.get("workflows") or registry.ids())
     wanted = [w for w in (payload.workflows or registered) if w in registered]
+
+    # A node may only claim work whose workflow is routed to a runtime it can
+    # actually execute. Without this, a mock worker claims a job destined for a
+    # real provider, finds no adapter, and fails it permanently — the user just
+    # sees the tool break. Empty means a pre-M2 worker that cannot assert its
+    # runtimes; it keeps the old behaviour rather than being starved.
+    if payload.runtimes:
+        servable = set(registry.ids_for_runtimes(payload.runtimes))
+        wanted = [w for w in wanted if w in servable]
+
     if not wanted:
         return JobClaimResponse(job=None)
 

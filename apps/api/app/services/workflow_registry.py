@@ -15,6 +15,7 @@ and carries no per-instance state.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,25 @@ class WorkflowRegistry:
 
     def ids(self) -> list[str]:
         return list(self._order)
+
+    def ids_for_runtimes(self, runtimes: Sequence[str]) -> list[str]:
+        """Workflows whose private `execution.runtime` a node can actually run.
+
+        Routing has always been per workflow — the YAML decides which runtime
+        should execute a job — but nothing checked that the claiming worker
+        agreed. That was harmless while every definition said `mock`. The moment
+        one says something else, a mock node claims that job, finds no adapter,
+        and fails it with `retriable=False`: a permanently dead job, and the
+        user is simply told the tool is unavailable.
+
+        Intersecting here keeps the check on the side that owns the definitions,
+        so a worker cannot claim work by asserting a capability the workflow
+        never asked for.
+        """
+        wanted = set(runtimes)
+        return [
+            wid for wid in self._order if self._definitions[wid].execution.runtime in wanted
+        ]
 
     def get(self, workflow_id: str) -> WorkflowDefinition:
         """Internal lookup — includes the private execution block."""

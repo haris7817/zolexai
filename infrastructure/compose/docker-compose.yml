@@ -137,17 +137,27 @@ services:
       API_BASE_URL: http://api:8000
       WORKER_API_TOKEN: ${WORKER_API_TOKEN:-dev_worker_token_change_me_0123456789}
       REDIS_URL: redis://redis:6379/0
-      STORAGE_ENDPOINT: http://minio:9000
-      STORAGE_BUCKET: ${STORAGE_BUCKET:-zolexai-dev}
-      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-zolexai_dev}
-      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-zolexai_dev_secret}
+      # Which adapters this node may run. It only claims jobs whose workflow is
+      # routed to one of them, so a mock node and a real one can share a queue.
+      RUNTIME: ${WORKER_RUNTIME:-mock}
+      RUNTIMES: ${WORKER_RUNTIMES:-}
       LOG_FORMAT: console
+      # No STORAGE_* here on purpose. The worker holds no bucket credentials —
+      # it reads and writes only through presigned URLs the API issues per job.
+      # (Those variables used to be set and silently ignored, which read as if
+      # the node had storage access it has never had.)
+    volumes:
+      - worker_workspace:/var/lib/zolexai/workspace
     depends_on:
       api:
         condition: service_healthy
     # Scale freely — workers claim with FOR UPDATE SKIP LOCKED, so N instances
     # never collide:  docker compose --profile apps up -d --scale worker=3
-    # (WORKER_NAME is suffixed per replica by the worker itself.)
+    #
+    # Give each replica its own WORKER_NAME if you want them tracked separately:
+    # registration upserts by name, so replicas sharing one name share a single
+    # worker_nodes row. Job ownership is per-lease and stays correct either way;
+    # only the fleet view is affected.
 
   web:
     profiles: ["apps"]
@@ -169,3 +179,7 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  # Transient per-job scratch, not durable data: the worker deletes each job's
+  # directory when it finishes. It is a named volume so gigabytes of in-flight
+  # media stay off the container's writable layer.
+  worker_workspace:

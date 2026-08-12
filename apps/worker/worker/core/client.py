@@ -65,6 +65,7 @@ class WorkerApiClient:
             {
                 "name": settings.worker_name,
                 "runtime": settings.runtime,
+                "runtimes": settings.runtime_list,
                 "version": settings.worker_version,
                 "workflows": workflows or [],
                 "max_concurrency": settings.max_concurrency,
@@ -86,7 +87,15 @@ class WorkerApiClient:
     async def claim(self, worker_id: str, workflows: list[str] | None = None) -> dict[str, Any]:
         return await self._post(
             "/internal/jobs/claim",
-            {"worker_id": worker_id, "workflows": workflows or []},
+            {
+                "worker_id": worker_id,
+                "workflows": workflows or [],
+                # Sent on every claim, not just at registration: a node's
+                # capability is a property of the running process, and a
+                # restarted worker with a different runtime must not inherit
+                # what the old row said it could do.
+                "runtimes": settings.runtime_list,
+            },
         )
 
     # ── Job reporting ────────────────────────────────────────────────────
