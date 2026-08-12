@@ -23,6 +23,7 @@ from app.services.storage import (
     MAX_SIZE_BYTES,
     sanitize_filename,
     validate_upload,
+    with_extension,
 )
 
 from tests.conftest import ADMIN_DATABASE_URL, TEST_DATABASE_URL
@@ -390,6 +391,93 @@ async def test_migration_produces_the_schema_the_models_describe() -> None:
         index.name for table in Base.metadata.tables.values() for index in table.indexes
     }
     assert expected_indexes <= indexes, f"missing indexes: {expected_indexes - indexes}"
+
+
+# ── Download names and single-asset reads ────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("name", "content_type", "expected"),
+    [
+        ("text-to-video-fad9aa41", "video/mp4", "text-to-video-fad9aa41.mp4"),
+        ("music-0f2c", "audio/mpeg", "music-0f2c.mp3"),
+        ("already.mp4", "video/mp4", "already.mp4"),
+        ("ALREADY.MP4", "video/mp4", "ALREADY.MP4"),
+        ("clip", "application/octet-stream", "clip"),
+    ],
+)
+def test_download_names_carry_the_extension_their_type_implies(
+    name: str, content_type: str, expected: str
+) -> None:
+    """An extensionless download saves a file the OS cannot identify: it does
+    not open on a double-click, and a picker filtering on video/mp4 hides it —
+    which made a downloaded generation impossible to re-upload to Extend."""
+    assert with_extension(name, content_type) == expected
+
+
+async def test_a_generated_asset_downloads_with_a_usable_filename(
+    client: AsyncClient, worker_headers: dict, text_to_video_request: dict
+) -> None:
+    """End to end: the name a worker's output is registered under is the name
+    the browser will save."""
+    await client.post("/api/v1/generations", json=text_to_video_request)
+    worker_id = await register(client, worker_headers)
+    job = await claim(client, worker_headers, worker_id)
+    await client.post(
+        f"/api/v1/internal/jobs/{job['job_id']}/complete",
+        headers=worker_headers,
+        json={
+            "worker_id": worker_id,
+            "lease_token": job["lease_token"],
+            "output_key": job["output_upload_key"],
+            "output_kind": "video",
+            "output_content_type": "video/mp4",
+            "size_bytes": 4096,
+            "width": 896,
+            "height": 512,
+        },
+    )
+
+    public = (await client.get(f"/api/v1/generations/{job['job_id']}")).json()
+    asset_id = public["outputs"][0]["asset_id"]
+
+    listed = (await client.get("/api/v1/media?limit=5")).json()["items"]
+    generated = next(item for item in listed if item["id"] == asset_id)
+    assert generated["name"].endswith(".mp4")
+
+    url = (await client.post(f"/api/v1/assets/{asset_id}/download-url")).json()["url"]
+    assert ".mp4" in url, "the attachment filename must reach the browser"
+
+
+async def test_one_asset_can_be_read_by_id(client: AsyncClient) -> None:
+    """Extend hands over a source by id alone, so its input control has to be
+    able to resolve what it is about to use."""
+    created = (
+        await client.post(
+            "/api/v1/assets/upload-url",
+            json={
+                "filename": "source.mp4",
+                "content_type": "video/mp4",
+                "kind": "video",
+                "size_bytes": 2048,
+            },
+        )
+    ).json()
+
+    response = await client.get(f"/api/v1/assets/{created['asset_id']}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == created["asset_id"]
+    assert body["name"] == "source.mp4"
+    # Storage keys are a backend concern and must never reach a client.
+    assert "storage_key" not in body
+
+
+async def test_reading_someone_elses_asset_is_a_not_found(client: AsyncClient) -> None:
+    """Ownership on this route matters as much as on any other — an asset id is
+    guessable in principle, and must gain an attacker nothing."""
+    response = await client.get(f"/api/v1/assets/{uuid.uuid4()}")
+    assert response.status_code == 404
 
 
 async def test_the_indexes_that_keep_large_tables_fast_exist(db: AsyncSession) -> None:

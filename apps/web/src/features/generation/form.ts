@@ -153,6 +153,27 @@ export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
 }
 
 /**
+ * Seeds the workflow's required media input with an asset the user already has.
+ *
+ * This is what makes "Extend" on a finished result an actual hand-off rather
+ * than a bare link: the source video arrives with the navigation instead of
+ * asking the user to download their own generation and upload it back. The
+ * role comes from the workflow definition, so nothing here names a workflow.
+ *
+ * Returns the values unchanged when there is no asset or the workflow takes no
+ * required input — a `?source=` on Text to Video is meaningless, not an error.
+ */
+export function withSourceAsset(
+  workflow: Workflow,
+  values: GenerationFormValues,
+  assetId: string | null | undefined,
+): GenerationFormValues {
+  const role = workflow.inputs.find((input) => input.required)?.role;
+  if (!assetId || !role) return values;
+  return { ...values, inputs: { ...values.inputs, [role]: assetId } };
+}
+
+/**
  * Carries settings across a workflow switch.
  *
  * The approved behaviour: keep duration / aspect / quality when the incoming

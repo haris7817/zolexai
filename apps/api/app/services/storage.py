@@ -117,6 +117,21 @@ def output_key(user_id: uuid.UUID, job_id: uuid.UUID, content_type: str) -> str:
     return f"users/{user_id}/generated/{job_id}/output{extension}"
 
 
+def with_extension(name: str, content_type: str) -> str:
+    """Ensures a download name ends in the extension its content type implies.
+
+    The name travels as `Content-Disposition: attachment; filename=...`, so
+    without this an extensionless name saves an mp4 as a file the operating
+    system cannot identify: it will not open on a double-click, and a file
+    picker filtering on `video/mp4` hides it, which makes a downloaded
+    generation impossible to re-upload as an Extend source.
+    """
+    extension = _EXTENSION_BY_TYPE.get(content_type)
+    if not extension or name.lower().endswith(extension):
+        return name
+    return f"{name}{extension}"
+
+
 class AssetService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -222,7 +237,11 @@ class AssetService:
         width: int | None = None,
         height: int | None = None,
     ) -> Asset:
-        """Records a worker's output. Already in storage, so it starts READY."""
+        """Records a worker's output. Already in storage, so it starts READY.
+
+        The stored name carries the content type's extension, because it is
+        also the filename the browser saves on download.
+        """
         asset = await self.repo.create(
             user_id=user_id,
             kind=kind,
@@ -230,7 +249,7 @@ class AssetService:
             storage_bucket=settings.storage_bucket,
             storage_key=storage_key,
             content_type=content_type,
-            original_filename=name[:255],
+            original_filename=with_extension(name, content_type)[:255],
             size_bytes=size_bytes,
             status=AssetStatus.READY,
         )
@@ -241,10 +260,13 @@ class AssetService:
         return asset
 
     def download_url(self, asset: Asset, *, as_attachment: bool = False) -> str:
-        return self.storage.presign_download(
-            asset.storage_key,
-            filename=asset.original_filename or None if as_attachment else None,
-        )
+        filename = None
+        if as_attachment:
+            # Applied here as well as at registration so rows created before
+            # this rule still download with a usable extension.
+            stem = asset.original_filename or f"{asset.kind}-{str(asset.id)[:8]}"
+            filename = with_extension(stem, asset.content_type)
+        return self.storage.presign_download(asset.storage_key, filename=filename)
 
     def to_public(self, asset: Asset, *, with_url: bool = True) -> AssetPublic:
         return AssetPublic(

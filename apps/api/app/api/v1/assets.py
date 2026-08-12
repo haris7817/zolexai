@@ -115,6 +115,27 @@ async def confirm_upload(
     return service.to_public(confirmed)
 
 
+@router.get("/assets/{asset_id}", response_model=AssetPublic, summary="One asset")
+async def get_asset(
+    asset_id: uuid.UUID,
+    session: DbSession,
+    user: CurrentUser,
+    response: Response,
+) -> AssetPublic:
+    """One asset the caller owns.
+
+    Needed when a screen holds an asset id but not the asset — handing an
+    existing generation to Extend as its source, for instance, where the
+    input control must show what it is about to use rather than an empty
+    upload box. `require_for_user` keeps ownership enforcement identical to
+    every other asset route.
+    """
+    service = AssetService(session)
+    asset = await service.require_for_user(asset_id, user.id)
+    response.headers["Cache-Control"] = "no-store"
+    return service.to_public(asset)
+
+
 @router.post(
     "/assets/{asset_id}/download-url",
     response_model=DownloadUrlResponse,

@@ -22,6 +22,7 @@ export const queryKeys = {
     all: ["media"] as const,
     list: (filters: Record<string, unknown>) => ["media", "list", filters] as const,
     counts: ["media", "counts"] as const,
+    detail: (id: string) => ["media", "detail", id] as const,
   },
 } as const;
 

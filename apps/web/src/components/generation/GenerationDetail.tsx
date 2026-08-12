@@ -141,8 +141,12 @@ export function GenerationDetail({ generationId }: { generationId: string }) {
                     {downloading ? "Preparing…" : "Download"}
                   </Button>
                 ) : null}
-                {workflow.capabilities.extend ? (
-                  <ButtonLink href="/app/create/extend-video" variant="ghost" size="md">
+                {workflow.capabilities.extend && output ? (
+                  <ButtonLink
+                    href={`/app/create/extend-video?source=${output.asset_id}`}
+                    variant="ghost"
+                    size="md"
+                  >
                     <Icon name="extend" size={15} />
                     Extend
                   </ButtonLink>

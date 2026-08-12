@@ -55,8 +55,16 @@ export function ResultActions({
         </Button>
       ) : null}
 
-      {capabilities.extend ? (
-        <ButtonLink href="/app/create/extend-video" variant="ghost" size="md">
+      {/* The result travels with the link as the extension's source, so the
+          user is not asked to download their own generation and upload it
+          back. Without an output there is nothing to extend from, so the
+          action is not offered. */}
+      {capabilities.extend && output ? (
+        <ButtonLink
+          href={`/app/create/extend-video?source=${output.asset_id}`}
+          variant="ghost"
+          size="md"
+        >
           <ActionIcon name="extend" />
           Extend
         </ButtonLink>

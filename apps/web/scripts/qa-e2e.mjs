@@ -188,6 +188,40 @@ try {
     selected.trim(),
   );
 
+  // ── 8b. Extend hands its source over ───────────────────────────────────
+  //
+  // The bug this pins: Extend used to be a bare link, so it opened an empty
+  // upload box and the user had to download their own generation and upload
+  // it back — which a missing file extension also made impossible.
+  console.log("\n8b. Extend receives the result as its source");
+  const media = await (await fetch(`${API}/api/v1/media?kind=video&source=generated&limit=1`, {
+    headers: { cookie: (await context.cookies()).map((c) => `${c.name}=${c.value}`).join("; ") },
+  })).json();
+  const sourceAsset = media.items?.[0];
+  if (!sourceAsset) {
+    check("a generated video exists to extend", false, "no generated video in the library");
+  } else {
+    check("generated video downloads under a usable filename", sourceAsset.name.includes("."), sourceAsset.name);
+    await page.goto(`${BASE}/app/create/extend-video?source=${sourceAsset.id}`, {
+      waitUntil: "domcontentloaded",
+    });
+    // The filled state shows the asset's name and a Remove control; the empty
+    // state shows a drop prompt instead.
+    const filled = page.getByRole("button", { name: `Remove ${sourceAsset.name}` });
+    check(
+      "the handed-over source is shown as already provided",
+      await filled.isVisible().catch(() => false),
+    );
+    check(
+      "Generate is enabled without a manual upload",
+      await page
+        .getByRole("button", { name: /generate/i })
+        .first()
+        .isEnabled()
+        .catch(() => false),
+    );
+  }
+
   // ── 9. No client-visible internals ─────────────────────────────────────
   console.log("\n9. No internal names reach the browser");
   const pageSource = (await page.content()).toLowerCase();

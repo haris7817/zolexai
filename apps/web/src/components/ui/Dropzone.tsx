@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Asset, WorkflowInput } from "@zolexai/workflow-contracts";
 import { ApiError } from "@/lib/api/client";
 import { queryKeys } from "@/lib/query";
-import { formatBytes, uploadAsset } from "@/services/assets";
+import { fetchAsset, formatBytes, uploadAsset } from "@/services/assets";
 import { Icon } from "./Icon";
 import { cn } from "@/lib/cn";
 
@@ -36,12 +36,28 @@ export function Dropzone({
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [asset, setAsset] = useState<Asset | null>(null);
+  const [uploaded, setUploaded] = useState<Asset | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
 
   const maxBytes = input.max_size_mb * 1024 * 1024;
+
+  /**
+   * A value can arrive without this component having uploaded anything —
+   * Extend hands over an existing generation as its source. Resolve it so the
+   * control shows what it is about to use instead of an empty upload box that
+   * contradicts a form the user cannot see is already valid.
+   */
+  const needsLookup = Boolean(value) && uploaded?.id !== value;
+  const { data: resolved } = useQuery({
+    queryKey: queryKeys.media.detail(value ?? ""),
+    queryFn: ({ signal }) => fetchAsset(value as string, signal),
+    enabled: needsLookup,
+    staleTime: Infinity,
+  });
+
+  const asset = uploaded?.id === value ? uploaded : (resolved ?? null);
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -60,9 +76,9 @@ export function Dropzone({
 
       setUploading(true);
       try {
-        const uploaded = await uploadAsset(file, input.kind);
-        setAsset(uploaded);
-        onChange(uploaded.id);
+        const asset = await uploadAsset(file, input.kind);
+        setUploaded(asset);
+        onChange(asset.id);
         // The new file belongs in the media library immediately.
         await queryClient.invalidateQueries({ queryKey: queryKeys.media.all });
       } catch (cause) {
@@ -80,7 +96,7 @@ export function Dropzone({
   );
 
   const clear = () => {
-    setAsset(null);
+    setUploaded(null);
     setError(null);
     onChange(null);
     if (fileRef.current) fileRef.current.value = "";

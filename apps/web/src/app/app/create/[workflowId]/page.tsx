@@ -34,7 +34,7 @@ export default async function CreatorWorkspacePage({
   searchParams,
 }: {
   params: Promise<{ workflowId: string }>;
-  searchParams: Promise<{ prompt?: string }>;
+  searchParams: Promise<{ prompt?: string; source?: string }>;
 }) {
   const { workflowId } = await params;
   const workflow = await loadWorkflow(workflowId);
@@ -47,13 +47,18 @@ export default async function CreatorWorkspacePage({
   // That hook forces a client-side bailout during prerendering and needs a
   // Suspense boundary around the entire workspace; passing the value down as a
   // prop keeps the workspace a single, fully server-rendered tree.
-  const { prompt } = await searchParams;
+  //
+  // `source` is how Extend hands a finished result to its own tool. It is only
+  // an asset id — ownership is enforced by the API when the input is resolved
+  // and again when the generation is created, so a guessed id gains nothing.
+  const { prompt, source } = await searchParams;
 
   return (
     <CreatorWorkspace
       workflowId={workflowId}
       initialWorkflow={workflow}
       initialPrompt={prompt ?? ""}
+      initialSourceAssetId={source ?? null}
     />
   );
 }

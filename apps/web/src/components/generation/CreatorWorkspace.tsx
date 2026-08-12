@@ -23,6 +23,7 @@ import {
   preserveValues,
   toCreateInput,
   valuesFromJob,
+  withSourceAsset,
   type GenerationFormValues,
 } from "@/features/generation/form";
 import {
@@ -65,12 +66,15 @@ export function CreatorWorkspace({
   workflowId,
   initialWorkflow,
   initialPrompt = "",
+  initialSourceAssetId = null,
 }: {
   workflowId: string;
   /** Server-rendered from the YAML catalogue, so the panel paints complete. */
   initialWorkflow: Workflow;
   /** From `?prompt=` — the dashboard's quick-create box hands it over this way. */
   initialPrompt?: string;
+  /** From `?source=` — Extend hands over the result being continued. */
+  initialSourceAssetId?: string | null;
 }) {
   const workflow = useWorkflow(workflowId) ?? initialWorkflow;
 
@@ -83,7 +87,11 @@ export function CreatorWorkspace({
   const schema = useMemo(() => buildGenerationSchema(workflow), [workflow]);
   const form = useForm<GenerationFormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { ...preserveValues(workflow, undefined), prompt: initialPrompt },
+    defaultValues: withSourceAsset(
+      workflow,
+      { ...preserveValues(workflow, undefined), prompt: initialPrompt },
+      initialSourceAssetId,
+    ),
     mode: "onChange",
   });
 

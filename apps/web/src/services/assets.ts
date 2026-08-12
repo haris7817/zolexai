@@ -37,6 +37,11 @@ export async function fetchMediaCounts(signal?: AbortSignal): Promise<MediaCount
   return apiFetch("/media/counts", mediaCountsSchema, { signal });
 }
 
+/** One asset the user owns — used when a screen has an id but not the asset. */
+export async function fetchAsset(assetId: string, signal?: AbortSignal): Promise<Asset> {
+  return apiFetch(`/assets/${assetId}`, assetSchema, { signal });
+}
+
 export async function fetchDownloadUrl(assetId: string): Promise<string> {
   const data = await apiFetch(`/assets/${assetId}/download-url`, downloadUrlSchema, {
     method: "POST",
