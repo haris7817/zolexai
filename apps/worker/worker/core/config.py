@@ -207,6 +207,82 @@ class WorkerSettings(BaseSettings):
     ltx_frame_rate: int = 24
     """LTX-2.5's native rate; num_frames = seconds x this."""
 
+    # ── Music runtime (M2) ───────────────────────────────────────────────
+    #
+    # No music model is selected yet (docs/milestones.md tracks it as a pending
+    # decision), so unlike LTX there are no weight paths here — only the seam a
+    # selected model plugs into. The worker owns the CLI contract and whatever
+    # model is chosen gets a thin wrapper that satisfies it:
+    #
+    #     <music_launcher> --prompt TEXT --duration-seconds N --seed N
+    #                      --output-path PATH [--lyrics-path PATH]
+    #                      [--structure TEXT] [--continue-from PATH]
+    #
+    # Owning the contract rather than adapting to whichever CLI wins is what
+    # keeps the model choice from reaching any of the code above the adapter.
+
+    music_provider: str = "acestep"
+    """Which provider implementation serves music jobs. See worker/music/."""
+
+    acestep_base_url: str = "http://127.0.0.1:8001"
+    """
+    Where the music service listens.
+
+    Unlike LTX, the model is NOT launched per job — it is a long-lived service
+    holding ~24 GB of weights that answers requests in seconds. The worker
+    treats it like a database: it connects, it never manages its lifecycle.
+    """
+
+    acestep_api_key: str = ""
+    """Sent as `Authorization` when the service is started with one. Empty
+    means the service is unauthenticated, which is correct on loopback."""
+
+    acestep_max_seconds: int = 600
+    """
+    Longest single generation the service will accept.
+
+    Measured, not assumed: the service reports a 600s ceiling and produced a
+    240s song in 5.5s at flat VRAM on the RTX 5090. Since the product's
+    longest song is 5 minutes, this covers the whole range in one pass and the
+    adapter's sectioning path never triggers.
+    """
+
+    acestep_request_timeout: float = 30.0
+    """Per-HTTP-call budget. Small: these are control-plane round trips, and
+    the generation itself is awaited by polling rather than by one long call."""
+
+    acestep_generation_timeout: float = 900.0
+    """
+    Whole-generation budget, from submit to audio.
+
+    Generous relative to the ~6s a four-minute song actually takes, because the
+    cost of being wrong is asymmetric: a job killed early wastes GPU time
+    already spent, while a slow one merely finishes late.
+    """
+
+    acestep_poll_seconds: float = 1.0
+    """How often to ask whether the task is done."""
+
+    music_seconds_per_line: float = 18.0
+    """
+    How much song one line of lyrics needs.
+
+    Measured on the GPU (2026-08-13) and load-bearing: eight lines requested
+    inside a 60-second song produced a track that sang **only the chorus** and
+    silently dropped both verses. The same sheet across 240 seconds sang every
+    line. So the lyric sheet has to be sized to the duration — see
+    `worker/music/lyrics.py:line_budget`.
+    """
+
+    music_crossfade_seconds: float = 1.5
+    """
+    Overlap between generated sections of one song.
+
+    A butt-join between two independently generated sections is audible. The
+    planner adds this back into what it asks for, so a five-minute song is
+    still five minutes after the fades have eaten into it.
+    """
+
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
 

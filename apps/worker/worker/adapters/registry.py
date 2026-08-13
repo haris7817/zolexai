@@ -16,6 +16,7 @@ from worker.adapters.base import AdapterError, GenerationAdapter
 from worker.adapters.harness import HarnessAdapter
 from worker.adapters.ltx import LtxAdapter
 from worker.adapters.mock import MockAdapter
+from worker.adapters.music import MusicAdapter
 
 _ADAPTERS: dict[str, GenerationAdapter] = {
     "mock": MockAdapter(),
@@ -26,6 +27,12 @@ _ADAPTERS: dict[str, GenerationAdapter] = {
     # no shipped workflow says `runtime: ltx`, and only a worker started with
     # RUNTIMES including "ltx" will ever claim such a job. See adapters/ltx.py.
     "ltx": LtxAdapter(),
+    # Music generation through whichever provider MUSIC_PROVIDER selects
+    # (currently ACE-Step 1.5 XL, reached over HTTP). Registered but not yet
+    # routed: no shipped workflow says `runtime: music`. The provider is
+    # resolved lazily on first use, so a node that never runs music pays
+    # nothing for this entry. See adapters/music.py and music/provider.py.
+    "music": MusicAdapter(),
 }
 
 

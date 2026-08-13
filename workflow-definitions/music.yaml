@@ -46,7 +46,17 @@ ui:
 
 execution:
   # PRIVATE — stripped from every public API response.
+  #
+  # `music` is the runtime once a model is chosen. It stays `mock` because no
+  # music model has been selected yet (docs/milestones.md tracks it as an open
+  # decision) — the adapter, sectioning, lyric pass and validation are built and
+  # tested; only the model is missing, and it plugs in through MUSIC_LAUNCHER.
   runtime: mock
+
+  # A five-minute song is several generations plus crossfading and loudness
+  # matching. Sized for the ceiling of the offered range.
+  timeout_seconds: 3600
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the
