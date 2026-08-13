@@ -81,6 +81,9 @@ export function CreatorWorkspace({
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  /** A generation finished and closed its panel — tells the empty canvas to
+      point at the result rather than read like nothing has happened. */
+  const [justFinished, setJustFinished] = useState(false);
 
   const isCompact = useIsCompact();
 
@@ -122,16 +125,43 @@ export function CreatorWorkspace({
 
   const { jobs: recentJobs } = useRecentGenerations();
 
-  // Default to the newest job so a refresh mid-generation lands back on it
-  // rather than on an empty canvas.
+  // Reattach to work still in flight, so a refresh mid-generation lands back
+  // on its progress rather than on an empty canvas. Only work in flight: a
+  // finished job belongs in the results strip below, not re-opened in the
+  // canvas every time this screen mounts (CR-011).
+  const reattached = useRef(false);
   useEffect(() => {
-    if (selectedJobId === null && recentJobs.length > 0) {
-      setSelectedJobId(recentJobs[0].id);
-    }
+    if (reattached.current || selectedJobId !== null || recentJobs.length === 0) return;
+    reattached.current = true;
+    const running = recentJobs.find((job) => isRunning(job.status));
+    if (running) setSelectedJobId(running.id);
   }, [recentJobs, selectedJobId]);
 
   const { data: selectedJob } = useGeneration(selectedJobId);
   const jobRunning = selectedJob ? isRunning(selectedJob.status) : false;
+
+  /**
+   * Close the generating box the moment its job finishes (CR-011).
+   *
+   * The client's report: a finished video sat inside the "Generating" panel
+   * and was simultaneously listed below, so the same result appeared twice
+   * and the progress UI never cleared. The canvas is for work in progress;
+   * a finished result lives in the strip, Generations and the media library.
+   *
+   * Keyed on the TRANSITION, not on the status: opening a completed job from
+   * the strip on purpose must keep showing it, and only a job that finishes
+   * while being watched closes itself.
+   */
+  const watchedStatus = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = watchedStatus.current;
+    const current = selectedJob?.status ?? null;
+    watchedStatus.current = current;
+    if (current === "completed" && previous !== null && previous !== "completed") {
+      setSelectedJobId(null);
+      setJustFinished(true);
+    }
+  }, [selectedJob?.status]);
 
   // One stream, only while the watched job is unfinished.
   useGenerationStream(selectedJobId, { enabled: jobRunning });
@@ -143,6 +173,7 @@ export function CreatorWorkspace({
     setSubmitError(null);
     try {
       const accepted = await createGeneration.mutateAsync(toCreateInput(workflow, values));
+      setJustFinished(false);
       setSelectedJobId(accepted.job_id);
       setPanelOpen(false);
     } catch (cause) {
@@ -194,7 +225,9 @@ export function CreatorWorkspace({
           </div>
 
           <div className="rounded-zx-lg border-zx-border relative flex min-h-[52vh] flex-1 items-center justify-center overflow-hidden border bg-[radial-gradient(ellipse_at_50%_18%,rgba(190,242,8,0.07),transparent_60%),var(--zx-bg-secondary)] tablet:min-h-0">
-            {!selectedJob ? <EmptyGenerationState workflow={workflow} /> : null}
+            {!selectedJob ? (
+              <EmptyGenerationState workflow={workflow} ready={justFinished} />
+            ) : null}
 
             {selectedJob && jobRunning ? (
               <GenerationProgress
@@ -228,7 +261,13 @@ export function CreatorWorkspace({
             </p>
           ) : null}
 
-          <JobStrip selectedJobId={selectedJobId} onSelect={setSelectedJobId} />
+          <JobStrip
+            selectedJobId={selectedJobId}
+            onSelect={(jobId) => {
+              setJustFinished(false);
+              setSelectedJobId(jobId);
+            }}
+          />
 
           {/* Compact-mode action bar — the panel is an overlay here, so
               Generate must stay reachable without opening it. */}

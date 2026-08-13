@@ -4,6 +4,8 @@ import { loadWorkflowCatalog } from "@/features/workflows/catalog.server";
 import { mockPlan } from "@/mocks/plan";
 import { MarketingNav } from "@/components/marketing/MarketingNav";
 import { Hero } from "@/components/marketing/Hero";
+import { HowItWorks } from "@/components/marketing/HowItWorks";
+import { Reveal } from "@/components/marketing/Reveal";
 import { FaqAccordion } from "@/components/marketing/FaqAccordion";
 import { SiteFooter } from "@/components/marketing/SiteFooter";
 import { WorkflowCard } from "@/components/workflow/WorkflowCard";
@@ -34,6 +36,12 @@ export default async function LandingPage() {
   const workflows = await loadWorkflowCatalog();
   return (
     <div className="bg-zx-bg text-zx-text min-h-screen overflow-x-hidden">
+      {/* Scroll reveals start hidden and are shown by an observer, so a
+          browser with JavaScript off would otherwise see empty sections. */}
+      <noscript>
+        <style>{`[data-zx-reveal]{opacity:1 !important;transform:none !important}`}</style>
+      </noscript>
+
       <MarketingNav />
       <Hero />
 
@@ -42,83 +50,50 @@ export default async function LandingPage() {
         id="tools"
         className="mx-auto max-w-[1280px] px-5 py-16 tablet:px-8 laptop:px-12 laptop:py-20"
       >
-        <SectionHeading
-          title="ONE PLATFORM, LIMITLESS CREATION."
-          subtitle="A growing suite of creation tools — new workflows ship regularly."
-        />
+        <Reveal>
+          <SectionHeading
+            title="ONE PLATFORM, LIMITLESS CREATION."
+            subtitle="A growing suite of creation tools — new workflows ship regularly."
+          />
+        </Reveal>
         <div className="grid grid-cols-1 gap-5 tablet:grid-cols-2 laptop:grid-cols-3">
-          {workflows.map((workflow) => (
-            <WorkflowCard key={workflow.id} workflow={workflow} tone="detailed" />
+          {workflows.map((workflow, index) => (
+            <Reveal key={workflow.id} delay={(index % 3) * 90}>
+              <WorkflowCard workflow={workflow} tone="detailed" />
+            </Reveal>
           ))}
         </div>
       </section>
 
-      {/* ── How it works ─────────────────────────────────────────────── */}
-      <section
-        id="how"
-        className="bg-zx-bg-alt border-zx-border border-y px-5 py-16 tablet:px-8 laptop:px-12 laptop:py-20"
-      >
-        <div className="mx-auto max-w-[1080px]">
-          {/* CR-001 — the client's exact copy. Uppercase display style to
-              match the section headings elsewhere on the page. */}
-          <h2 className="m-0 mb-12 text-center text-[30px] font-extrabold tracking-[-0.03em] laptop:mb-14 laptop:text-[42px]">
-            IMAGINE IT. GENERATE IT. GO VIRAL.
-          </h2>
-          <div className="grid grid-cols-1 gap-6 tablet:grid-cols-3">
-            {[
-              {
-                n: "1",
-                title: "Choose a Tool",
-                desc: "Pick from a growing library of video, music and editing workflows.",
-              },
-              {
-                n: "2",
-                title: "Describe or Upload",
-                desc: "Write a prompt, or bring your own images, video and audio.",
-              },
-              {
-                n: "3",
-                title: "Generate",
-                desc: "Your creation renders in the background — keep working while it does.",
-              },
-            ].map((step) => (
-              <div key={step.n} className="px-6 py-8 text-center">
-                <div className="border-zx-border-active text-zx-primary-light mx-auto mb-5 flex h-[52px] w-[52px] items-center justify-center rounded-[16px] border bg-[linear-gradient(135deg,rgba(190,242,8,0.3),rgba(198,242,36,0.15))] text-[20px] font-extrabold">
-                  {step.n}
-                </div>
-                <div className="mb-2 text-[19px] font-extrabold">
-                  {step.title}
-                </div>
-                <p className="text-zx-text-secondary m-0 text-[14.5px] leading-[1.55]">
-                  {step.desc}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* ── How it works — the stepwise product flow ─────────────────── */}
+      <HowItWorks />
 
       {/* ── Showcase ─────────────────────────────────────────────────── */}
       <section className="mx-auto max-w-[1280px] px-5 py-16 tablet:px-8 laptop:px-12 laptop:py-20">
-        <div className="mb-9 flex flex-wrap items-baseline justify-between gap-3">
+        <Reveal className="mb-9 flex flex-wrap items-baseline justify-between gap-3">
           <h2 className="m-0 text-[26px] font-extrabold tracking-[-0.03em] laptop:text-[34px]">
             Made with {brand.name}
           </h2>
           <span className="text-zx-accent text-[14px] font-bold">
             Videos · Images · Audio
           </span>
-        </div>
+        </Reveal>
         <div className="grid auto-rows-[120px] grid-cols-2 gap-4 laptop:auto-rows-[160px] laptop:grid-cols-4">
-          {SHOWCASE.map((item) => (
-            <div
+          {SHOWCASE.map((item, index) => (
+            <Reveal
               key={item.label}
+              delay={(index % 4) * 70}
               className={`border-zx-border relative overflow-hidden rounded-[14px] border ${item.span}`}
-              style={{ background: item.bg }}
             >
+              <div
+                aria-hidden="true"
+                className="absolute inset-0"
+                style={{ background: item.bg }}
+              />
               <span className="text-zx-text absolute bottom-3 left-[14px] rounded-[7px] bg-[rgba(10,10,11,0.65)] px-[10px] py-1 text-[11.5px] font-bold backdrop-blur-[4px]">
                 {item.label}
               </span>
-            </div>
+            </Reveal>
           ))}
         </div>
       </section>
@@ -126,13 +101,17 @@ export default async function LandingPage() {
       {/* ── Benefits ─────────────────────────────────────────────────── */}
       <section className="bg-zx-bg-alt border-zx-border border-y px-5 py-16 tablet:px-8 laptop:px-12 laptop:py-20">
         <div className="mx-auto max-w-[1080px]">
-          <h2 className="m-0 mb-12 text-center text-[30px] font-extrabold tracking-[-0.03em] laptop:text-[42px]">
+          <Reveal
+            as="h2"
+            className="m-0 mb-12 text-center text-[30px] font-extrabold tracking-[-0.03em] laptop:text-[42px]"
+          >
             BUILT FOR CREATORS WHO REFUSE LIMITS.
-          </h2>
+          </Reveal>
           <div className="grid grid-cols-1 gap-5 tablet:grid-cols-2 laptop:grid-cols-3">
-            {BENEFITS.map((benefit) => (
-              <div
+            {BENEFITS.map((benefit, index) => (
+              <Reveal
                 key={benefit.title}
+                delay={(index % 3) * 90}
                 className="bg-zx-surface border-zx-border rounded-zx-lg border p-6"
               >
                 <span className="border-zx-border-active text-zx-primary-light mb-4 flex h-11 w-11 items-center justify-center rounded-[13px] border bg-[linear-gradient(135deg,rgba(190,242,8,0.3),rgba(198,242,36,0.12))]">
@@ -144,7 +123,7 @@ export default async function LandingPage() {
                 <p className="text-zx-text-secondary m-0 text-[14px] leading-[1.55]">
                   {benefit.desc}
                 </p>
-              </div>
+              </Reveal>
             ))}
           </div>
         </div>
@@ -155,7 +134,7 @@ export default async function LandingPage() {
         id="pricing"
         className="px-5 py-16 tablet:px-8 laptop:px-12 laptop:pt-20 laptop:pb-24"
       >
-        <div className="mx-auto max-w-[520px] text-center">
+        <Reveal className="mx-auto max-w-[520px] text-center">
           <h2 className="m-0 mb-3 text-[30px] font-extrabold tracking-[-0.03em] laptop:text-[42px]">
             ONE PRICE. UNLIMITED POWER.
           </h2>
@@ -209,17 +188,17 @@ export default async function LandingPage() {
               </ButtonLink>
             </div>
           </div>
-        </div>
+        </Reveal>
       </section>
 
       {/* ── FAQ ──────────────────────────────────────────────────────── */}
       <section className="px-5 pb-20 tablet:px-8 laptop:px-12 laptop:pb-24">
-        <div className="mx-auto max-w-[720px]">
+        <Reveal className="mx-auto max-w-[720px]">
           <h2 className="m-0 mb-10 text-center text-[26px] font-extrabold tracking-[-0.03em] laptop:text-[34px]">
             FREQUENTLY ASKED QUESTIONS
           </h2>
           <FaqAccordion />
-        </div>
+        </Reveal>
       </section>
 
       <SiteFooter />

@@ -259,3 +259,45 @@ select:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* ===========================================================================
+   Scroll reveal — landing page section entrances.
+
+   A fade with a short upward lift, driven by IntersectionObserver toggling
+   `data-zx-reveal` from "pending" to "shown". No animation library: the whole
+   mechanism is these two rules plus ~30 lines of observer.
+
+   `--zx-reveal-delay` staggers siblings (cards, steps) from the markup, so a
+   group enters as a sequence rather than all at once.
+
+   Three safety nets, because content that never appears is far worse than
+   content that never animates:
+     * reduced motion  — shown immediately, no transition;
+     * no JavaScript   — <noscript> in the page reveals everything;
+     * observer absent — the component reveals on mount.
+   =========================================================================== */
+
+[data-zx-reveal] {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0);
+  transition:
+    opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--zx-reveal-delay, 0ms);
+  /* Hints the compositor without leaving layers promoted forever. */
+  will-change: opacity, transform;
+}
+
+[data-zx-reveal="shown"] {
+  opacity: 1;
+  transform: none;
+  will-change: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-zx-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
