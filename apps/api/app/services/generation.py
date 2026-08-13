@@ -229,6 +229,10 @@ class GenerationService:
                 kind=str(asset.kind),
                 is_primary=link.is_primary,
                 url=self.assets.download_url(asset) if with_urls else None,
+                # Already loaded with the row, so this costs no extra query.
+                width=asset.width,
+                height=asset.height,
+                duration_seconds=asset.duration_seconds,
             )
             for link, asset in await self.repo.load_outputs(job.id)
         ]

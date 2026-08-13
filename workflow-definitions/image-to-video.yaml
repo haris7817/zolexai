@@ -23,7 +23,11 @@ inputs:
     max_size_mb: 25
 
 duration_mode: fixed
-supported_durations: ["5s", "10s"]
+# The same ladder Extend Video offers (client revision, 13 Aug 2026). Lengths
+# beyond one GPU pass are rendered as chained segments behind the scenes —
+# that is the backend's business, and the option list must not shrink because
+# of it. See apps/worker/worker/adapters/ltx.py, `_render_chain`.
+supported_durations: ["5s", "10s", "15s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
 supported_quality_levels: [Standard, High, Ultra]
 

@@ -167,6 +167,14 @@ export const generationOutputSchema = z.object({
   kind: assetKindSchema,
   is_primary: z.boolean(),
   url: z.string().nullable().default(null),
+
+  /* What the delivered file actually is, measured from it rather than echoed
+     back from the request. The preview frame is sized from these, and the
+     duration shown beside a result comes from here — an extension's requested
+     "5s" is not the length of the 14-second file it produced. */
+  width: z.number().nullable().default(null),
+  height: z.number().nullable().default(null),
+  duration_seconds: z.number().nullable().default(null),
 });
 export type GenerationOutput = z.infer<typeof generationOutputSchema>;
 

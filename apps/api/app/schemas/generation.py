@@ -57,6 +57,21 @@ class GenerationOutput(BaseModel):
     url: str | None = None
     """Short-lived presigned URL. Responses carrying one are marked no-store."""
 
+    # ── What the file actually is ────────────────────────────────────────
+    #
+    # Measured by the worker from the finished artifact, not echoed back from
+    # the request. The client reported two symptoms that were both this data
+    # being absent: a 9:16 video displayed inside a hard-coded 16:9 frame, and
+    # an extension showing "5s" (the requested extension) beside a 14-second
+    # result (the actual file).
+    #
+    # Nothing here is provider detail — a duration and a pixel size are
+    # properties of the media a customer downloaded, which is why they are safe
+    # to project while `execution` never is.
+    width: int | None = None
+    height: int | None = None
+    duration_seconds: float | None = None
+
 
 class GenerationInput(BaseModel):
     role: str

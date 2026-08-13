@@ -8,6 +8,54 @@ import { primaryOutput } from "@/services/generations";
 import { cn } from "@/lib/cn";
 import { ResultActions } from "./ResultActions";
 
+/** Audio has no picture; this is the height of its waveform panel. */
+const AUDIO_SHAPE = { css: "16 / 6", ratio: 16 / 6 } as const;
+const DEFAULT_SHAPE = { css: "16 / 9", ratio: 16 / 9 } as const;
+
+/**
+ * The shape to draw a finished result in.
+ *
+ * Measured dimensions first, because they are what the file actually is. The
+ * requested aspect ratio is the fallback for older jobs whose assets predate
+ * the API reporting width and height, and 16:9 is the last resort.
+ *
+ * Getting this from the request alone would be wrong in a way that matters:
+ * Video to Video and Music Video take their shape from an uploaded file and
+ * carry no `aspect_ratio` parameter at all.
+ */
+function previewShape(job: GenerationJob): { css: string; ratio: number } {
+  const output = primaryOutput(job);
+  if (output?.kind === "audio") return AUDIO_SHAPE;
+
+  if (output?.width && output?.height) {
+    return { css: `${output.width} / ${output.height}`, ratio: output.width / output.height };
+  }
+
+  const requested = String(job.parameters?.aspect_ratio ?? "");
+  const [w, h] = requested.split(":").map(Number);
+  if (w > 0 && h > 0) return { css: `${w} / ${h}`, ratio: w / h };
+
+  return DEFAULT_SHAPE;
+}
+
+/**
+ * How long the delivered file is — not how long was requested.
+ *
+ * On an extension those differ and the difference is the whole point: asking
+ * to extend by 5s produces a 14-second video, and labelling that "5s" is what
+ * the client saw. Falls back to the requested value only when the asset has no
+ * measured duration.
+ */
+function resultDuration(job: GenerationJob): string {
+  const seconds = primaryOutput(job)?.duration_seconds;
+  if (seconds && seconds > 0) {
+    const whole = Math.round(seconds);
+    if (whole < 60) return `${whole}s`;
+    return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+  }
+  return String(job.parameters?.duration ?? "");
+}
+
 /**
  * The centre of the creator workspace. Four states:
  *
@@ -21,24 +69,50 @@ import { ResultActions } from "./ResultActions";
  * it has been deleted.)
  */
 
-export function EmptyGenerationState({ workflow }: { workflow: Workflow }) {
+export function EmptyGenerationState({
+  workflow,
+  ready = false,
+}: {
+  workflow: Workflow;
+  /**
+   * A generation just finished and closed this panel (CR-011). The canvas is
+   * for work in progress, so the result moved to the strip below — say so,
+   * otherwise a video the user waited a minute for looks like it vanished.
+   */
+  ready?: boolean;
+}) {
   const noun = workflow.output_type === "audio" ? "track" : "video";
 
   return (
     <div className="max-w-[380px] p-8 text-center">
       <div
         aria-hidden="true"
-        className="mx-auto mb-[22px] flex aspect-video w-[120px] items-center justify-center rounded-[10px] border-[1.5px] border-dashed border-white/14"
+        className={cn(
+          "mx-auto mb-[22px] flex aspect-video w-[120px] items-center justify-center rounded-[10px] border-[1.5px]",
+          ready
+            ? "border-zx-border-active border-solid bg-zx-primary/8"
+            : "border-dashed border-white/14",
+        )}
       >
-        <span className="text-zx-on-primary flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-[image:var(--zx-gradient-primary)] text-[15px] font-extrabold opacity-55">
-          {brand.shortName}
-        </span>
+        {ready ? (
+          <span className="text-zx-primary-light">
+            <Icon name="check" size={24} />
+          </span>
+        ) : (
+          <span className="text-zx-on-primary flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-[image:var(--zx-gradient-primary)] text-[15px] font-extrabold opacity-55">
+            {brand.shortName}
+          </span>
+        )}
       </div>
       <div className="text-zx-text mb-[7px] text-[16px] font-extrabold">
-        Your generated {noun} will appear here.
+        {ready
+          ? `Your ${noun} is ready.`
+          : `Your generated ${noun} will appear here.`}
       </div>
       <p className="text-zx-text-secondary text-[13.5px] leading-[1.55]">
-        Describe your idea, choose your settings and hit Generate.
+        {ready
+          ? "Find it in your recent generations below, or start another one."
+          : "Describe your idea, choose your settings and hit Generate."}
       </p>
     </div>
   );
@@ -97,14 +171,24 @@ export function GenerationResult({
   onVariation: () => void;
 }) {
   const output = primaryOutput(job);
-  const duration = String(job.parameters?.duration ?? "");
+  const shape = previewShape(job);
+  const duration = resultDuration(job);
 
   return (
-    <div className="animate-zx-fade-up w-[max(220px,min(720px,100%-48px,calc((100vh-360px)*1.78)))]">
+    /* Width is bounded by the viewport height TIMES THE RESULT'S OWN RATIO.
+       The 1.78 that used to be hard-coded here is 16:9, so a portrait video
+       was sized as though it were landscape and overflowed its space — one
+       half of the client's "you can not see it on the box" report. */
+    <div
+      className="animate-zx-fade-up"
+      style={{
+        width: `max(220px, min(720px, 100% - 48px, calc((100vh - 360px) * ${shape.ratio})))`,
+      }}
+    >
       <MediaPreview
         url={output?.url ?? null}
         kind={output?.kind ?? "image"}
-        aspectRatio={output?.kind === "audio" ? "16 / 6" : "16 / 9"}
+        aspectRatio={shape.css}
         fallbackGradient={workflow.ui.thumb}
         className="rounded-zx-md border-zx-border border shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
       />

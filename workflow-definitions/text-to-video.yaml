@@ -25,7 +25,12 @@ prompt:
 inputs: []
 
 duration_mode: fixed
-supported_durations: ["5s", "10s", "15s", "30s"]
+# The same ladder Image to Video and Extend Video offer. 60s was missing here
+# only by oversight — the backend produces it exactly the way those two do, as
+# chained safe-duration passes (see apps/worker/worker/longform/chain.py), and
+# a customer has no reason to find the longest option on two video tools but
+# not the third.
+supported_durations: ["5s", "10s", "15s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1", "4:5"]
 supported_quality_levels: [Standard, High, Ultra]
 
