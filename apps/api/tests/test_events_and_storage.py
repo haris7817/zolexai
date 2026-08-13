@@ -419,34 +419,42 @@ async def test_a_generated_asset_downloads_with_a_usable_filename(
     client: AsyncClient, worker_headers: dict, text_to_video_request: dict
 ) -> None:
     """End to end: the name a worker's output is registered under is the name
-    the browser will save."""
+    the browser will save.
+
+    Completed as image/png because that is what this workflow's runtime
+    currently declares, and the API signs the upload for exactly that type —
+    a worker cannot complete as something else. The extension mapping itself
+    is covered per type by the unit test above; what this proves is that the
+    mapping is actually applied on the path from worker to download.
+    """
     await client.post("/api/v1/generations", json=text_to_video_request)
     worker_id = await register(client, worker_headers)
     job = await claim(client, worker_headers, worker_id)
-    await client.post(
+    ack = await client.post(
         f"/api/v1/internal/jobs/{job['job_id']}/complete",
         headers=worker_headers,
         json={
             "worker_id": worker_id,
             "lease_token": job["lease_token"],
             "output_key": job["output_upload_key"],
-            "output_kind": "video",
-            "output_content_type": "video/mp4",
+            "output_kind": "image",
+            "output_content_type": "image/png",
             "size_bytes": 4096,
-            "width": 896,
-            "height": 512,
+            "width": 960,
+            "height": 540,
         },
     )
+    assert ack.json()["accepted"] is True, ack.text
 
     public = (await client.get(f"/api/v1/generations/{job['job_id']}")).json()
     asset_id = public["outputs"][0]["asset_id"]
 
     listed = (await client.get("/api/v1/media?limit=5")).json()["items"]
     generated = next(item for item in listed if item["id"] == asset_id)
-    assert generated["name"].endswith(".mp4")
+    assert generated["name"].endswith(".png"), generated["name"]
 
     url = (await client.post(f"/api/v1/assets/{asset_id}/download-url")).json()["url"]
-    assert ".mp4" in url, "the attachment filename must reach the browser"
+    assert ".png" in url, "the attachment filename must reach the browser"
 
 
 async def test_one_asset_can_be_read_by_id(client: AsyncClient) -> None:

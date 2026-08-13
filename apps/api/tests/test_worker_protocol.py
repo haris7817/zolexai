@@ -267,6 +267,46 @@ async def test_a_cancelled_job_rejects_further_worker_reports(
     assert ack.json()["accepted"] is False
 
 
+async def test_the_users_prompt_reaches_the_worker_verbatim(
+    client: AsyncClient, worker_headers: dict, text_to_video_request: dict
+) -> None:
+    """The client reported "I put something and it shows something else".
+
+    This pins the API's half of that path: whatever was typed is what the
+    claiming worker is handed — no truncation, no normalisation, no
+    substitution — for prompts with digits, quotes, punctuation and non-ASCII
+    text. Only surrounding whitespace is trimmed.
+    """
+    typed = 'Two cars racing on a Los Angeles road — "flat out", 50% throttle, café naïve 日本語'
+
+    await client.post(
+        "/api/v1/generations",
+        json={**text_to_video_request, "prompt": f"  {typed}  "},
+    )
+    worker_id = await register(client, worker_headers)
+    job = await claim(client, worker_headers, worker_id)
+
+    assert job["prompt"] == typed
+
+    # And the same text comes back on the public read, so what the user sees
+    # in history is what the model was given.
+    public = (await client.get(f"/api/v1/generations/{job['job_id']}")).json()
+    assert public["prompt"] == typed
+
+
+async def test_a_long_prompt_is_rejected_rather_than_silently_shortened(
+    client: AsyncClient, text_to_video_request: dict
+) -> None:
+    """Truncation would be the worst outcome: the job would succeed while
+    quietly generating from something other than what was asked for."""
+    response = await client.post(
+        "/api/v1/generations",
+        json={**text_to_video_request, "prompt": "x" * 5000},
+    )
+    assert response.status_code == 422
+    assert "prompt" in response.text
+
+
 # ── Completion and failure ───────────────────────────────────────────────
 
 

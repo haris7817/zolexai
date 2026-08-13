@@ -39,6 +39,13 @@ async def test_execution_block_never_reaches_a_client(client: AsyncClient) -> No
     for forbidden in ("execution", "runtime", "output_content_type", "mock"):
         assert forbidden not in body, f"'{forbidden}' leaked into the public catalogue"
 
+    # M2 added tuning to the private block — conditioning strengths, cut
+    # alignment, per-workflow wall-clock budgets, pass ceilings. Those describe
+    # how a model is driven, which makes them exactly as private as `runtime`,
+    # and the allowlist projection is what has to keep them out.
+    for tuning in ("timeout_seconds", "v2v_", "align_cuts", "max_segment", "keyframes"):
+        assert tuning not in body, f"'{tuning}' leaked into the public catalogue"
+
     # And the same for a single-workflow response.
     detail = (await client.get("/api/v1/workflows/text-to-video")).text.lower()
     assert "execution" not in detail

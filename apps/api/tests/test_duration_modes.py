@@ -34,6 +34,45 @@ async def test_extension_offers_exactly_the_five_requested_durations(
     assert workflow["supported_durations"] == ["5s", "10s", "15s", "30s", "60s"]
 
 
+async def test_image_to_video_offers_the_same_five_durations(
+    client: AsyncClient,
+) -> None:
+    """Client revision, 13 Aug 2026: Image to Video showed only 5s and 10s.
+
+    The lengths beyond one GPU pass are produced by chained segments in the
+    worker, which is deliberately invisible here — the catalogue promises a
+    length, not a technique.
+    """
+    workflow = (await client.get("/api/v1/workflows/image-to-video")).json()
+    assert workflow["duration_mode"] == "fixed"
+    assert workflow["supported_durations"] == ["5s", "10s", "15s", "30s", "60s"]
+
+
+async def test_a_sixty_second_image_to_video_duration_passes_validation(
+    client: AsyncClient,
+) -> None:
+    """The half a chip cannot prove: the API must also accept the value.
+
+    Submitted with a source image that does not exist, so the request is
+    rejected — the point is WHAT it is rejected for. A complaint about the
+    input and silence about the duration is proof that 60s cleared duration
+    validation, without this test needing a real object in storage.
+    """
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "workflow_id": "image-to-video",
+            "prompt": "gentle push in",
+            "parameters": {"duration": "60s", "aspect_ratio": "16:9", "quality": "High"},
+            "inputs": {"source_image": "00000000-0000-0000-0000-000000000000"},
+        },
+    )
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert "duration" not in fields, "60s must be a valid Image to Video length"
+    assert fields == {"inputs.source_image"}
+
+
 @pytest.mark.parametrize("workflow_id", ["video-to-video", "music-video"])
 async def test_source_workflows_offer_no_duration_choice(
     client: AsyncClient, workflow_id: str
