@@ -22,9 +22,19 @@ from typing import Any
 
 from worker.core.config import settings
 
-_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
-    "zolexai_worker_context", default={}
+_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    # `None` rather than `{}`: a mutable default on a ContextVar is one shared
+    # object across every context, so a single accidental in-place update would
+    # leak one job's binding into every other job's log lines. `_bound()` is the
+    # only reader and it hands back a fresh mapping.
+    "zolexai_worker_context",
+    default=None,
 )
+
+
+def _bound() -> dict[str, Any]:
+    return _context.get() or {}
+
 
 _REDACTED = frozenset({"token", "secret", "password", "authorization", "lease_token", "url"})
 
@@ -32,7 +42,7 @@ _REDACTED = frozenset({"token", "secret", "password", "authorization", "lease_to
 @contextmanager
 def bind(**values: Any) -> Iterator[None]:
     safe = {k: v for k, v in values.items() if v is not None and k not in _REDACTED}
-    token = _context.set({**_context.get(), **safe})
+    token = _context.set({**_bound(), **safe})
     try:
         yield
     finally:
@@ -55,7 +65,7 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
             "service": "worker",
         }
-        payload.update(_context.get())
+        payload.update(_bound())
         for key, value in record.__dict__.items():
             if key not in _RESERVED and key.lower() not in _REDACTED:
                 payload[key] = value
@@ -66,7 +76,7 @@ class JsonFormatter(logging.Formatter):
 
 class ConsoleFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        suffix = " ".join(f"{k}={v}" for k, v in _context.get().items())
+        suffix = " ".join(f"{k}={v}" for k, v in _bound().items())
         line = f"{record.levelname:<7} {record.name:<26} {record.getMessage()}"
         if suffix:
             line += f"  {suffix}"

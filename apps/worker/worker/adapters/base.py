@@ -35,6 +35,7 @@ every real provider does — and streamed to storage without ever being resident
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -180,6 +181,13 @@ class AdapterJob:
         except (KeyError, TypeError, ValueError):
             return default
 
+    def execution_float(self, key: str, default: float) -> float:
+        """The same, for conditioning strengths and other fractional dials."""
+        try:
+            return float(self.execution[key])
+        except (KeyError, TypeError, ValueError):
+            return default
+
 
 @dataclass(frozen=True)
 class AdapterResult:
@@ -211,6 +219,38 @@ class AdapterError(Exception):
         self.internal_detail = internal_detail or user_message
         self.retriable = retriable
         super().__init__(internal_detail or user_message)
+
+
+async def cancellable(job: AdapterJob, operation: Awaitable[Any]) -> Any:
+    """Awaits a long operation, abandoning it the moment the job dies.
+
+    `raise_if_cancelled()` covers work that checkpoints naturally — between
+    segments, between polls. This covers the other case: one external call that
+    runs for minutes without returning, which on a long-form job is most of the
+    wall clock. The media helpers kill their child process when their task is
+    cancelled, so racing the operation against the runner's cancel event stops a
+    re-encode within milliseconds instead of at its end.
+
+    Without an event (tests, tooling) this is a plain await, because
+    cancellation then cannot happen.
+    """
+    event = job.cancellation_event
+    if event is None:
+        return await operation
+
+    op = asyncio.ensure_future(operation)
+    watcher = asyncio.ensure_future(event.wait())
+    try:
+        done, _ = await asyncio.wait({op, watcher}, return_when=asyncio.FIRST_COMPLETED)
+        if op in done:
+            return op.result()
+        op.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await op
+        job.raise_if_cancelled()
+        raise JobCancelled(f"job {job.job_id} cancelled")
+    finally:
+        watcher.cancel()
 
 
 @runtime_checkable

@@ -52,6 +52,57 @@ async def extract_final_frame(source: Path, dest: Path, *, timeout: float = 120.
     return dest
 
 
+async def extract_frames_at(
+    source: Path,
+    timestamps: list[float],
+    destination_dir: Path,
+    *,
+    prefix: str = "keyframe",
+    timeout: float = 120.0,
+) -> list[Path]:
+    """Grabs one still per timestamp. Returns them in the order asked for.
+
+    This is how a restyle keeps the source's composition: the model is shown
+    what the shot actually looks like at several moments inside the window it
+    is about to generate, so the subject stays where the subject was and the
+    camera keeps moving the way it was moving.
+
+    Seeking happens BEFORE `-i`, which makes ffmpeg jump to the nearest
+    keyframe and decode forward from there rather than decoding the whole file
+    per still — the difference between one and several minutes on a long
+    source. Frames are extracted one at a time on purpose: a single-pass filter
+    graph would fail the whole set when one timestamp lands past the last
+    packet, which is exactly what the final timestamp of a segment tends to do.
+    """
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    extracted: list[Path] = []
+
+    for index, when in enumerate(timestamps):
+        dest = destination_dir / f"{prefix}-{index:03d}.png"
+        try:
+            await ffmpeg(
+                [
+                    "-ss", f"{max(0.0, when):.3f}",
+                    "-i", str(source),
+                    "-frames:v", "1",
+                    "-update", "1",
+                    str(dest),
+                ],
+                timeout=timeout,
+            )
+        except FfmpegError:
+            dest.unlink(missing_ok=True)
+            raise
+        if not dest.exists() or dest.stat().st_size == 0:
+            dest.unlink(missing_ok=True)
+            raise FfmpegError(
+                f"no decodable frame at {when:.2f}s in {source.name}"
+            )
+        extracted.append(dest)
+
+    return extracted
+
+
 async def normalize_clip(
     source: Path,
     dest: Path,

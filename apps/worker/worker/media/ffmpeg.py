@@ -104,6 +104,21 @@ async def ffmpeg(args: list[str], *, timeout: float = 600.0) -> str:
     return stderr
 
 
+async def ffmpeg_stdout(args: list[str], *, timeout: float = 600.0) -> bytes:
+    """Runs ffmpeg and returns what it wrote to stdout.
+
+    For the one case where the output is data rather than a file: decoding an
+    audio track to raw PCM so the timing layer can measure it. Writing that to
+    a temporary file first would double the I/O for bytes nobody keeps.
+    """
+    stdout, _ = await _run(
+        settings.ffmpeg_path,
+        ["-hide_banner", "-nostdin", "-loglevel", "error", *args],
+        timeout=timeout,
+    )
+    return stdout
+
+
 async def ffprobe_json(path: Path, *, timeout: float = 60.0) -> dict[str, Any]:
     """Returns ffprobe's format+stream description of a file."""
     stdout, _ = await _run(
