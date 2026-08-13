@@ -40,12 +40,15 @@ from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.media import (
     FfmpegError,
+    OutputExpectation,
     concat_segments,
+    duration_tolerance,
     ffmpeg,
+    mux_audio,
     plan_segments,
     probe_media,
     tools_available,
-    verify_duration,
+    verify_output,
 )
 
 logger = get_logger(__name__)
@@ -113,16 +116,36 @@ class HarnessAdapter:
         suffix = ".mp3" if audio_only else ".mp4"
         output = job.workspace / f"output{suffix}"
 
+        # A workflow whose length came from an uploaded track must deliver that
+        # track, whole — the same promise the real runtime makes. Without this
+        # the harness would produce a "music video" carrying a synthetic tone,
+        # which is precisely the quietly-wrong output this adapter exists to
+        # rule out on every other path.
+        track = job.input_for("source_audio")
+        soundtrack = track.path if track and not audio_only else None
+
         try:
-            await concat_segments(rendered, output)
-            measured = await verify_duration(output, expected_seconds=target_seconds)
+            joined = await concat_segments(
+                rendered, job.workspace / f"joined{suffix}" if soundtrack else output
+            )
+            if soundtrack is not None:
+                await mux_audio(joined, soundtrack, output)
+            info = await verify_output(
+                output,
+                OutputExpectation(
+                    expect_video=not audio_only,
+                    expect_audio=soundtrack is not None,
+                    expected_seconds=target_seconds,
+                    tolerance_seconds=duration_tolerance(target_seconds),
+                ),
+            )
         except FfmpegError as exc:
             raise AdapterError(
                 "This generation could not be completed. Please try again.",
                 internal_detail=f"assembly failed: {exc}",
             ) from exc
 
-        info = await probe_media(output)
+        measured = info.duration_seconds
         await on_progress("uploading", 95, "Almost ready…")
 
         return AdapterResult(

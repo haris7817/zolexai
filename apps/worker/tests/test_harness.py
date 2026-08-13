@@ -18,7 +18,7 @@ import pytest
 
 from worker.adapters.base import AdapterError, AdapterInput, AdapterJob, JobCancelled
 from worker.adapters.harness import HarnessAdapter
-from worker.media import ffmpeg, probe_media, tools_available
+from worker.media import ffmpeg, ffprobe_json, probe_media, tools_available
 
 pytestmark = pytest.mark.skipif(
     not tools_available(), reason="ffmpeg/ffprobe not installed"
@@ -178,6 +178,45 @@ async def test_duration_comes_from_the_source_file_when_there_is_one(
 
     info = await probe_media(result.path)
     assert info.duration_seconds == pytest.approx(5.0, abs=0.75)
+
+
+async def test_an_uploaded_track_reaches_the_finished_music_video(
+    workspace: Path,
+) -> None:
+    """The harness makes the same audio promise the GPU runtime does.
+
+    Without this it would produce a "music video" carrying its own synthetic
+    tone and no trace of the uploaded song — output that looks right and is
+    wrong, which is the exact class of failure this runtime exists to rule out
+    everywhere else.
+    """
+    from tests.conftest import make_track
+
+    track = await make_track(workspace / "song.mp3", 4.0)
+    job = make_job(
+        workspace,
+        workflow_id="music-video",
+        parameters={"aspect_ratio": "16:9"},
+        execution={"runtime": "harness", "max_segment_seconds": 2},
+        inputs=[
+            AdapterInput(
+                role="source_audio",
+                kind="audio",
+                content_type="audio/mpeg",
+                download_url="https://storage.test/signed",
+                path=track,
+            )
+        ],
+    )
+    result, _ = await collect(job)
+
+    info = await probe_media(result.path)
+    assert info.has_video and info.has_audio
+    assert info.duration_seconds == pytest.approx(4.0, abs=0.75)
+
+    payload = await ffprobe_json(result.path)
+    audio = [s for s in payload["streams"] if s["codec_type"] == "audio"]
+    assert len(audio) == 1, "the synthesised per-section audio was left in"
 
 
 async def test_an_unreadable_source_fails_without_burning_retries(workspace: Path) -> None:

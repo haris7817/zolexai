@@ -51,6 +51,18 @@ ui:
 execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
+
+  # The longest job the product has. A four-minute track is eight visual
+  # sections plus assembly and muxing, and the default 30-minute budget would
+  # kill it around section three — after the compute had already been spent.
+  timeout_seconds: 7200
+
+  # Visual cuts are pulled back onto a rise in the track's energy where one is
+  # available, so a section change lands on a hit rather than mid-phrase. This
+  # is event alignment, not beat tracking; set it false for evenly spaced
+  # sections. See worker/longform/timing.py.
+  align_cuts_to_audio: true
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the

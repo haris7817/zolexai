@@ -14,12 +14,20 @@ harness suite.
 from __future__ import annotations
 
 import asyncio
-import sys
 import time
 from pathlib import Path
 
 import pytest
 
+# Job builders, the model substitute, the ffmpeg guard and the synthetic media
+# fixtures are shared with the video-to-video, music-video and long-form suites.
+from tests.conftest import (  # noqa: E402  (local package, after worker imports)
+    collect,
+    make_clip,
+    make_job,
+    needs_ffmpeg,
+    stub_launcher,
+)
 from worker.adapters.base import (
     AdapterError,
     AdapterInput,
@@ -30,79 +38,13 @@ from worker.adapters.base import (
 )
 from worker.adapters.ltx import (
     _MARKERS,
+    ConditioningFrame,
     LtxAdapter,
     grid_for_source,
     match_marker,
     output_dimensions,
 )
-from worker.core.config import settings
-from worker.media import ffmpeg, plan_segments, probe_media, tools_available
-
-needs_ffmpeg = pytest.mark.skipif(
-    not tools_available(), reason="ffmpeg/ffprobe not installed"
-)
-
-
-def make_job(workspace: Path, **overrides) -> AdapterJob:
-    defaults = dict(
-        job_id="00000000-0000-0000-0000-0000000000ff",
-        workflow_id="text-to-video",
-        workflow_version="1",
-        prompt="a cinematic drone shot over a coastline",
-        parameters={"duration": "2s", "aspect_ratio": "16:9", "quality": "High"},
-        inputs=[],
-        execution={"runtime": "ltx"},
-        output_content_type="video/mp4",
-        workspace=workspace,
-    )
-    return AdapterJob(**{**defaults, **overrides})
-
-
-@pytest.fixture
-def workspace(tmp_path: Path) -> Path:
-    path = tmp_path / "job"
-    path.mkdir()
-    return path
-
-
-@pytest.fixture
-def fake_models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A weights directory that passes the existence check without 85 GB."""
-    root = tmp_path / "models"
-    from worker.adapters.ltx import _MODEL_FILES
-
-    for relative in _MODEL_FILES.values():
-        target = root / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.touch()
-    monkeypatch.setattr(settings, "ltx_model_dir", root)
-    return root
-
-
-@pytest.fixture
-def stub_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A working directory that exists, standing in for the LTX repo."""
-    repo = tmp_path / "ltx-repo"
-    repo.mkdir()
-    monkeypatch.setattr(settings, "ltx_repo_dir", repo)
-    return repo
-
-
-def stub_launcher(monkeypatch: pytest.MonkeyPatch, script: Path) -> None:
-    """Routes `_launcher()` to a local Python script; every real flag from
-    `_command()` still lands in the stub's argv."""
-    monkeypatch.setattr(LtxAdapter, "_launcher", lambda self: [sys.executable, str(script)])
-
-
-async def collect(job: AdapterJob):
-    reported: list[tuple[str, int, str]] = []
-
-    async def on_progress(status: str, progress: int, message: str) -> None:
-        reported.append((status, progress, message))
-
-    result = await LtxAdapter().run(job, on_progress)
-    return result, reported
-
+from worker.media import ffmpeg, plan_segments, probe_media
 
 # ── The contract ─────────────────────────────────────────────────────────
 
@@ -135,6 +77,85 @@ def test_the_command_carries_every_flag_the_benchmark_needed(workspace: Path) ->
     assert value_of("--quantization") == "nvfp4-prequant"
     assert "nvfp4" in value_of("--transformer-path")
     assert value_of("--output-path") == str(workspace / "output.mp4")
+
+
+# ── The user's prompt reaches the model (client revision, 13 Aug 2026) ───
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Two cars racing on a Los Angeles road",
+        "3 dancers, then 2 more join",  # digits must survive as digits
+        "a woman says \"don't stop\" — then turns, 50% lit",  # quotes, dash, %
+        "prompt with\nan embedded newline",
+        "café naïve 日本語 emoji 🎬",  # non-ASCII must not be mangled
+        "  leading and trailing space  ",
+        "word " * 400,  # far longer than any UI field suggests
+    ],
+)
+def test_the_users_prompt_reaches_the_model_verbatim(prompt: str, workspace: Path) -> None:
+    """The client's report was "I put something and it shows something else".
+
+    This pins the half we control: whatever reaches the adapter is handed to
+    the model as ONE argv element, byte for byte — no truncation, no quoting,
+    no reflowing, and nothing prepended or appended. If a future "prompt
+    improvement" ever rewrites user text, this fails loudly.
+    """
+    job = make_job(workspace, prompt=prompt)
+    cmd = LtxAdapter()._command(job, 2.0, workspace / "output.mp4")
+
+    assert cmd.count("--prompt") == 1
+    assert cmd[cmd.index("--prompt") + 1] == prompt
+
+    # And nothing else in the command smuggles a second prompt-ish value.
+    assert not any(
+        isinstance(part, str) and part.startswith("--negative-prompt") for part in cmd
+    )
+
+
+def test_the_prompt_is_never_rewritten_between_the_claim_and_the_command(
+    workspace: Path,
+) -> None:
+    """The transport hop the worker owns: claim payload → AdapterJob → argv."""
+    from worker.workflows.resolver import build_adapter_job
+
+    typed = "Two cars racing on a Los Angeles road, low angle, golden hour"
+    job = build_adapter_job(
+        {
+            "job_id": "abc",
+            "workflow_id": "text-to-video",
+            "workflow_version": "1",
+            "prompt": typed,
+            "parameters": {"duration": "5s", "aspect_ratio": "16:9"},
+            "inputs": [],
+            "execution": {"runtime": "ltx"},
+            "output_content_type": "video/mp4",
+        },
+        workspace=workspace,
+    )
+    assert job.prompt == typed
+
+    cmd = LtxAdapter()._command(job, 5.0, workspace / "output.mp4")
+    assert cmd[cmd.index("--prompt") + 1] == typed
+
+
+def test_prompt_enhancement_is_off_unless_a_workflow_asks_for_it(workspace: Path) -> None:
+    """LTX's enhancer rewrites the prompt, which is exactly what a user who
+    typed something specific does not want by default. It is the only
+    adherence lever the distilled entry point offers, so it stays available —
+    per workflow, deliberately, never implicitly."""
+    plain = LtxAdapter()._command(make_job(workspace), 2.0, workspace / "output.mp4")
+    assert "--enhance-prompt" not in plain
+
+    opted_in = LtxAdapter()._command(
+        make_job(workspace, execution={"runtime": "ltx", "enhance_prompt": True}),
+        2.0,
+        workspace / "output.mp4",
+    )
+    assert "--enhance-prompt" in opted_in
+    # Even then the user's own words are still what is sent.
+    assert opted_in[opted_in.index("--prompt") + 1] == make_job(workspace).prompt
 
 
 @pytest.mark.parametrize("aspect", ["16:9", "9:16", "1:1", "4:5", None])
@@ -180,15 +201,20 @@ async def test_an_audio_job_is_refused_loudly(workspace: Path, fake_models: Path
     assert "libx264" in raised.value.internal_detail
 
 
-async def test_a_video_conditioned_job_is_refused_not_silently_ignored(
+async def test_a_source_conditioned_job_never_reaches_the_plain_generation_path(
     workspace: Path, fake_models: Path
 ) -> None:
-    """The dangerous failure is quiet: a video-to-video job whose source is
-    ignored would return unrelated footage that *looks* like success."""
+    """The dangerous failure is quiet: a source-conditioned job whose source is
+    dropped returns unrelated footage that *looks* like success.
+
+    Dispatch is on the workflow id, so this can only happen through a routing
+    mistake — a workflow that carries a source but is not one of the handled
+    ones. That must fail loudly rather than silently becoming text-to-video.
+    """
     job = make_job(
         workspace,
-        workflow_id="video-to-video",
-        inputs=[
+        workflow_id="text-to-video",  # the plain path…
+        inputs=[                      # …carrying an input it cannot honour
             AdapterInput(
                 role="source_video",
                 kind="video",
@@ -205,17 +231,112 @@ async def test_a_video_conditioned_job_is_refused_not_silently_ignored(
     assert "source_video" in raised.value.internal_detail
 
 
-async def test_a_request_beyond_the_measured_ceiling_is_refused(
-    workspace: Path, fake_models: Path
+@pytest.mark.parametrize(
+    ("workflow_id", "duration", "passes"),
+    [
+        ("text-to-video", "5s", 1),
+        ("text-to-video", "30s", 1),
+        ("image-to-video", "30s", 1),
+        ("image-to-video", "60s", 2),
+        ("extend-video", "60s", 2),
+    ],
+)
+def test_no_public_duration_can_become_an_oversized_gpu_pass(
+    workflow_id: str, duration: str, passes: int
 ) -> None:
-    """60s hard-OOMed at 29.6/31.4 GiB on the RTX 5090. Until segmentation is
-    enabled for this runtime, longer requests must not reach the GPU."""
-    job = make_job(workspace, parameters={"duration": "60s", "aspect_ratio": "16:9"})
-    with pytest.raises(AdapterError) as raised:
-        await collect(job)
+    """The safety property behind offering 60s at all.
 
-    assert raised.value.retriable is False
-    assert "ceiling" in raised.value.internal_detail
+    A 60s render hard-OOMed at 29.6/31.4 GiB on the RTX 5090, so every length
+    the product offers must decompose into passes that each stay inside the
+    measured ceiling. This asserts both halves: the count, and that no single
+    pass exceeds it.
+    """
+    seconds = float(duration.rstrip("s"))
+    segments = plan_segments(seconds, max_segment_seconds=30)
+
+    assert len(segments) == passes
+    assert all(segment.duration_seconds <= 30 for segment in segments)
+    assert sum(segment.duration_seconds for segment in segments) == pytest.approx(seconds)
+
+
+def test_a_workflow_cannot_raise_the_per_pass_ceiling_above_the_benchmark(
+    workspace: Path,
+) -> None:
+    """`execution.max_segment_seconds` may make passes SMALLER. A typo that
+    made them bigger would put the out-of-memory failure back on the table,
+    so the benchmarked value is a hard clamp rather than a default."""
+    adapter = LtxAdapter()
+    assert adapter._per_pass_seconds(make_job(workspace)) == 30.0
+    assert (
+        adapter._per_pass_seconds(
+            make_job(workspace, execution={"runtime": "ltx", "max_segment_seconds": 10})
+        )
+        == 10.0
+    )
+    assert (
+        adapter._per_pass_seconds(
+            make_job(workspace, execution={"runtime": "ltx", "max_segment_seconds": 600})
+        )
+        == 30.0
+    )
+
+
+@needs_ffmpeg
+async def test_a_long_text_to_video_is_chained_rather_than_refused(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The client asked for 60s on Image to Video; the mechanism is shared, so
+    this proves it on the plainest workflow: a request beyond one pass becomes
+    several renders chained off each other's final frames, assembled into one
+    file of the requested length."""
+    fixture = await make_clip(tmp_path / "render.mp4", 2.0)
+    log = extension_stub(tmp_path, monkeypatch, fixture, image_optional=True)
+
+    job = make_job(
+        workspace,
+        parameters={"duration": "4s", "aspect_ratio": "16:9"},
+        execution={"runtime": "ltx", "max_segment_seconds": 2},
+    )
+    result, reported = await collect(job)
+
+    conditioned_on = log.read_text().splitlines()
+    assert conditioned_on[0] == "NONE", "the first pass of a text prompt conditions on nothing"
+    assert conditioned_on[1] == str(workspace / "segment-condition-0001.png")
+
+    assert result.duration_seconds == pytest.approx(4.0, abs=1.0)
+    messages = [message for status, _, message in reported if status == "generating"]
+    assert "Generating section 1 of 2…" in messages
+    assert "Generating section 2 of 2…" in messages
+    progress = [value for _, value, _ in reported]
+    assert progress == sorted(progress)
+
+
+@needs_ffmpeg
+async def test_a_long_image_to_video_conditions_the_first_pass_on_the_still(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The client's actual request: Image to Video at a length beyond one
+    pass. The uploaded still must still be frame one."""
+    still = workspace / "still.png"
+    await ffmpeg(
+        ["-f", "lavfi", "-i", "testsrc2=size=896x512:rate=1", "-frames:v", "1", str(still)]
+    )
+    fixture = await make_clip(tmp_path / "render.mp4", 2.0)
+    log = extension_stub(tmp_path, monkeypatch, fixture, image_optional=True)
+
+    job = make_i2v_job(
+        workspace,
+        still,
+        parameters={"duration": "4s", "aspect_ratio": "16:9", "quality": "High"},
+        execution={"runtime": "ltx", "max_segment_seconds": 2},
+    )
+    result, _ = await collect(job)
+
+    conditioned_on = log.read_text().splitlines()
+    assert conditioned_on == [str(still), str(workspace / "segment-condition-0001.png")]
+    assert result.duration_seconds == pytest.approx(4.0, abs=1.0)
 
 
 async def test_missing_weights_fail_before_any_subprocess(workspace: Path) -> None:
@@ -233,8 +354,7 @@ async def test_missing_weights_fail_before_any_subprocess(workspace: Path) -> No
 
 
 def make_i2v_job(workspace: Path, image_path: Path | None, **overrides) -> AdapterJob:
-    return make_job(
-        workspace,
+    defaults = dict(
         workflow_id="image-to-video",
         parameters={"duration": "5s", "aspect_ratio": "16:9", "quality": "High"},
         inputs=[
@@ -246,17 +366,22 @@ def make_i2v_job(workspace: Path, image_path: Path | None, **overrides) -> Adapt
                 path=image_path,
             )
         ],
-        **overrides,
     )
+    return make_job(workspace, **{**defaults, **overrides})
 
 
 def test_the_adapter_declares_its_workflow_support() -> None:
+    """Every video workflow, and no audio one.
+
+    Music stays off this runtime for a measured reason, not a scheduling one:
+    the distilled entry point cannot write an audio-only file at all.
+    """
     adapter = LtxAdapter()
-    assert adapter.supports("text-to-video")
-    assert adapter.supports("image-to-video")
-    assert adapter.supports("extend-video")
+    for workflow in (
+        "text-to-video", "image-to-video", "extend-video", "video-to-video", "music-video"
+    ):
+        assert adapter.supports(workflow), workflow
     assert not adapter.supports("music")
-    assert not adapter.supports("video-to-video")
 
 
 def test_the_command_pins_the_still_as_frame_zero_at_full_strength(
@@ -268,7 +393,7 @@ def test_the_command_pins_the_still_as_frame_zero_at_full_strength(
     still = workspace / "still.png"
     cmd = LtxAdapter()._command(
         make_i2v_job(workspace, still), 5.0, workspace / "output.mp4",
-        conditioning_image=still,
+        conditioning=[ConditioningFrame(still, 0, 1.0)],
     )
 
     at = cmd.index("--image")
@@ -358,21 +483,6 @@ async def test_the_full_i2v_run_conditions_on_the_staged_still(
 # ── Video extension ──────────────────────────────────────────────────────
 
 
-async def make_clip(
-    path: Path, seconds: float, *, audio: bool = False, size: str = "160x120", rate: int = 24
-) -> Path:
-    args = ["-f", "lavfi", "-i", f"testsrc2=size={size}:rate={rate}"]
-    if audio:
-        args += ["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100"]
-    args += ["-t", f"{seconds:.3f}", "-c:v", "libx264", "-preset", "ultrafast",
-             "-pix_fmt", "yuv420p"]
-    if audio:
-        args += ["-c:a", "aac"]
-    args += [str(path)]
-    await ffmpeg(args)
-    return path
-
-
 def make_extension_job(workspace: Path, source: Path | None, **overrides) -> AdapterJob:
     defaults = dict(
         workflow_id="extend-video",
@@ -391,21 +501,35 @@ def make_extension_job(workspace: Path, source: Path | None, **overrides) -> Ada
 
 
 def extension_stub(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixture: Path, *, sleep: float = 0.0
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixture: Path,
+    *,
+    sleep: float = 0.0,
+    image_optional: bool = False,
 ) -> Path:
     """A render stub that records what it was conditioned on.
 
     The invocation log is how chaining is proven: each line is one render's
     `--image` argument, so the test can assert that segment 2 was conditioned
     on segment 1's extracted final frame rather than on the source's.
+
+    `image_optional` logs "NONE" instead of failing when a pass carries no
+    conditioning at all — which is exactly what the first pass of a
+    text-to-video chain must look like.
     """
     log = tmp_path / "invocations.log"
     script = tmp_path / "render.py"
+    lookup = (
+        "img = args[args.index('--image') + 1] if '--image' in args else 'NONE'\n"
+        if image_optional
+        else "img = args[args.index('--image') + 1]\n"
+    )
     script.write_text(
         "import pathlib, shutil, sys, time\n"
         "args = sys.argv[1:]\n"
-        "img = args[args.index('--image') + 1]\n"
-        "out = args[args.index('--output-path') + 1]\n"
+        + lookup
+        + "out = args[args.index('--output-path') + 1]\n"
         f"with pathlib.Path({str(log)!r}).open('a') as f:\n"
         "    f.write(img + '\\n')\n"
         "print('INFO:...:Running denoising loop (8 steps)', flush=True)\n"
@@ -472,7 +596,7 @@ def test_the_extension_command_pins_dimensions_and_seed(workspace: Path) -> None
         make_extension_job(workspace, workspace / "src.mp4"),
         2.0,
         workspace / "part.mp4",
-        conditioning_image=still,
+        conditioning=[ConditioningFrame(still, 0, 1.0)],
         dimensions=(768, 576),
         seed=7,
     )
@@ -526,7 +650,7 @@ async def test_a_single_pass_extension_stitches_source_plus_continuation(
     assert info.has_audio is True, "the original's audio must not be destroyed"
 
     conditioned_on = log.read_text().splitlines()
-    assert conditioned_on == [str(workspace / "condition-0000.png")]
+    assert conditioned_on == [str(workspace / "seed-frame.png")]
     # A single pass never mentions sections (harness rule).
     assert all("section" not in message.lower() for _, _, message in reported)
 
@@ -558,8 +682,8 @@ async def test_a_long_extension_chains_segments_off_each_others_final_frames(
 
     conditioned_on = log.read_text().splitlines()
     assert conditioned_on == [
-        str(workspace / "condition-0000.png"),  # the source's final frame
-        str(workspace / "condition-0001.png"),  # segment 1's final frame
+        str(workspace / "seed-frame.png"),  # the source's final frame
+        str(workspace / "continuation-condition-0001.png"),  # segment 1's final frame
     ]
     assert result.duration_seconds == pytest.approx(6.0, abs=1.5)
 

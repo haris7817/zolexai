@@ -1,29 +1,42 @@
 """Stage-1 GPU smoke test: the LtxAdapter against the real model, no platform.
 
-Every seam around the model is already proven by tests/test_ltx.py with a stub
+Every seam around the model is already proven by the worker suite with a stub
 render. This script swaps the stub for the real thing and nothing else: it
 builds an `AdapterJob` by hand and calls `LtxAdapter().run()` directly — no
-API, no database, no object storage, no tunnel. What it demonstrates, on a GPU
-node, is the exact contract the runner will rely on:
+API, no database, no object storage, no tunnel, no workflow routing. What it
+demonstrates, on a GPU node, is the exact contract the runner relies on:
 
   * the generated command line actually launches the pipeline,
+  * conditioning reaches the model the way the adapter believes it does,
   * the progress markers parse real pipeline output in order,
-  * the finished file verifies against the requested duration,
+  * the finished file passes the same validation a real job's would,
   * the result carries measured (not asserted) metadata.
+
+Because it bypasses routing entirely, **no workflow YAML has to be switched to
+`runtime: ltx` to run any of this.**
 
 Usage, from the worker checkout on the GPU node:
 
-    python scripts/ltx_smoke.py                      # 10s text-to-video
-    python scripts/ltx_smoke.py a koi pond at dawn   # custom prompt
-    IMAGE=/path/to/still.png python scripts/ltx_smoke.py gentle camera push in
-                                                     # image-to-video
-    VIDEO=/path/to/clip.mp4 DURATION=5s python scripts/ltx_smoke.py the scene continues
-                                                     # extend-video
+    # text to video
+    python scripts/ltx_smoke.py a koi pond at dawn
 
-Environment: LTX_REPO_DIR if the LTX checkout is not /workspace/ltx2-benchmark;
-DURATION (e.g. "5s"), ASPECT_RATIO (e.g. "9:16") to vary the request; IMAGE to
-condition on a still (image-to-video); VIDEO to extend a clip (DURATION is then
-the EXTENSION length, and the output is source + continuation stitched).
+    # image to video
+    IMAGE=/path/still.png python scripts/ltx_smoke.py gentle camera push in
+
+    # video extension — DURATION is the EXTENSION length
+    MODE=extend VIDEO=/path/clip.mp4 DURATION=10s python scripts/ltx_smoke.py it continues
+
+    # video to video — duration comes from the SOURCE, so DURATION is ignored
+    MODE=restyle VIDEO=/path/clip.mp4 python scripts/ltx_smoke.py as a charcoal sketch
+    MODE=restyle VIDEO=/path/clip.mp4 REFERENCE=/path/look.png python scripts/ltx_smoke.py …
+
+    # music video — duration comes from the TRACK
+    MODE=music-video AUDIO=/path/song.mp3 python scripts/ltx_smoke.py a dancer, hard side light
+
+Environment: LTX_REPO_DIR if the checkout is not /workspace/ltx2-benchmark;
+DURATION and ASPECT_RATIO to vary the request (both ignored by the
+source-duration modes); MAX_SEGMENT_SECONDS to force chaining on a short input
+so the multi-pass path can be exercised without a long upload.
 """
 
 from __future__ import annotations
@@ -38,49 +51,88 @@ from pathlib import Path
 from worker.adapters.base import AdapterInput, AdapterJob
 from worker.adapters.ltx import LtxAdapter
 
+#: MODE → (workflow id, the input role its source occupies, env var for it).
+_MODES: dict[str, tuple[str, str | None, str | None]] = {
+    "text": ("text-to-video", None, None),
+    "image": ("image-to-video", "source_image", "IMAGE"),
+    "extend": ("extend-video", "source_video", "VIDEO"),
+    "restyle": ("video-to-video", "source_video", "VIDEO"),
+    "music-video": ("music-video", "source_audio", "AUDIO"),
+}
+
+_CONTENT_TYPES = {
+    "source_image": ("image", "image/png"),
+    "source_video": ("video", "video/mp4"),
+    "source_audio": ("audio", "audio/mpeg"),
+    "reference_image": ("image", "image/png"),
+}
+
+
+def _resolve_mode() -> str:
+    explicit = os.getenv("MODE")
+    if explicit:
+        if explicit not in _MODES:
+            raise SystemExit(f"MODE must be one of {sorted(_MODES)}")
+        return explicit
+    # Convenience: the old IMAGE=/VIDEO= invocations keep working.
+    if os.getenv("AUDIO"):
+        return "music-video"
+    if os.getenv("VIDEO"):
+        return "extend"
+    if os.getenv("IMAGE"):
+        return "image"
+    return "text"
+
+
+def _staged(role: str, variable: str, *, required: bool) -> AdapterInput | None:
+    raw = os.getenv(variable)
+    if not raw:
+        if required:
+            raise SystemExit(f"{variable} is required for this mode")
+        return None
+    path = Path(raw).expanduser().resolve()
+    if not path.is_file():
+        raise SystemExit(f"{variable} not found: {path}")
+    kind, content_type = _CONTENT_TYPES[role]
+    return AdapterInput(
+        role=role,
+        kind=kind,
+        content_type=content_type,
+        download_url="file://smoke-test",
+        path=path,
+    )
+
 
 async def main() -> int:
+    mode = _resolve_mode()
+    workflow_id, role, variable = _MODES[mode]
+
     prompt = " ".join(sys.argv[1:]) or (
         "A slow cinematic dolly shot through a neon-lit city at dusk, rain reflections"
     )
-    image = os.getenv("IMAGE")
-    video = os.getenv("VIDEO")
-    if image and video:
-        print("Set IMAGE or VIDEO, not both.")
-        return 1
 
-    inputs = []
-    workflow_id = "text-to-video"
-    if image:
-        still = Path(image).expanduser().resolve()
-        if not still.is_file():
-            print(f"IMAGE not found: {still}")
-            return 1
-        workflow_id = "image-to-video"
-        inputs = [
-            AdapterInput(
-                role="source_image",
-                kind="image",
-                content_type="image/png",
-                download_url="file://smoke-test",
-                path=still,
-            )
-        ]
-    elif video:
-        clip = Path(video).expanduser().resolve()
-        if not clip.is_file():
-            print(f"VIDEO not found: {clip}")
-            return 1
-        workflow_id = "extend-video"
-        inputs = [
-            AdapterInput(
-                role="source_video",
-                kind="video",
-                content_type="video/mp4",
-                download_url="file://smoke-test",
-                path=clip,
-            )
-        ]
+    inputs: list[AdapterInput] = []
+    if role and variable:
+        staged = _staged(role, variable, required=True)
+        assert staged is not None
+        inputs.append(staged)
+    if workflow_id == "video-to-video":
+        reference = _staged("reference_image", "REFERENCE", required=False)
+        if reference is not None:
+            inputs.append(reference)
+
+    execution: dict[str, object] = {"runtime": "ltx"}
+    if os.getenv("MAX_SEGMENT_SECONDS"):
+        # Forces the chaining path on a short input, so the multi-pass
+        # behaviour can be checked without waiting on a two-minute source.
+        execution["max_segment_seconds"] = int(os.environ["MAX_SEGMENT_SECONDS"])
+
+    parameters: dict[str, object] = {"aspect_ratio": os.getenv("ASPECT_RATIO", "16:9")}
+    # The source-duration workflows take no duration at all — passing one would
+    # be testing a shape the API never sends.
+    if workflow_id not in ("video-to-video", "music-video"):
+        parameters["duration"] = os.getenv("DURATION", "10s")
+        parameters["quality"] = "High"
 
     workspace = Path(tempfile.mkdtemp(prefix="ltx-smoke-"))
     job = AdapterJob(
@@ -89,22 +141,18 @@ async def main() -> int:
         workflow_id=workflow_id,
         workflow_version="1",
         prompt=prompt,
-        parameters={
-            "duration": os.getenv("DURATION", "10s"),
-            "aspect_ratio": os.getenv("ASPECT_RATIO", "16:9"),
-            "quality": "High",
-        },
+        parameters=parameters,
         inputs=inputs,
-        execution={"runtime": "ltx"},
+        execution=execution,
         output_content_type="video/mp4",
         workspace=workspace,
     )
 
-    print(f"mode:      {job.workflow_id}")
+    print(f"mode:      {mode} ({workflow_id})")
     print(f"prompt:    {prompt}")
-    if inputs:
-        print(f"input:     {inputs[0].path}")
-    print(f"request:   {job.parameters['duration']} @ {job.parameters['aspect_ratio']}")
+    for item in inputs:
+        print(f"input:     {item.role} = {item.path}")
+    print(f"request:   {parameters}")
     print(f"workspace: {workspace}")
     print("-" * 60)
 

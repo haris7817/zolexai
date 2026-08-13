@@ -65,6 +65,24 @@ ui:
 execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
+
+  # A source longer than one generation pass is restyled in sections, so the
+  # wall-clock budget scales with what a customer may upload rather than with
+  # what a single render costs. Without this the default 30 minutes fails an
+  # honest two-minute source part-way through and the user is told the
+  # generation "took too long".
+  timeout_seconds: 5400
+
+  # Restyle conditioning. These are quality judgements to be made against real
+  # footage on the GPU, which is exactly why they are configuration and not
+  # constants: see `_run_restyle` in apps/worker/worker/adapters/ltx.py for
+  # what each one does. Omitted keys fall back to the adapter's defaults.
+  #
+  #   v2v_keyframes:           source stills shown per pass (default 3)
+  #   v2v_structure_strength:  how hard they pull (default 0.7)
+  #   v2v_continuity_strength: the seam between passes (default 0.85)
+  #   v2v_reference_strength:  the optional reference image (default 0.3)
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the
