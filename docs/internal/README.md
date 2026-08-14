@@ -13,7 +13,9 @@ response. These notes are where the other half lives.
 |---|---|
 | [`ltx-2.5-licensing-review.md`](./ltx-2.5-licensing-review.md) | Licence and commercial-use review for the candidate video model |
 | [`production-runbook.md`](./production-runbook.md) | Production server layout, deploy/rollback procedure, go-live checks (M1 stack) |
-| [`gpu-worker-runbook.md`](./gpu-worker-runbook.md) | RTX 5090 node, its restricted tunnel to the production API, GPU routing and rollback (M2) |
+| [`gpu-worker-runbook.md`](./gpu-worker-runbook.md) | The GPU node, its restricted tunnel to the production API, GPU routing and rollback (M2). Covers the video and music runtimes and process supervision. |
+| [`issue-triton-na-kernel.md`](./issue-triton-na-kernel.md) | 🔴 **Open bug.** LTX video fails above a dimension-dependent length on the PRO 6000. Read before touching video. |
+| [`next-steps-2026-08-15.md`](./next-steps-2026-08-15.md) | Planned work after the 14 Aug migration: outstanding risks, generation-speed options with measurements, quality roadmap |
 
 The runbook names the VPS, its addresses, the deployment paths and the
 CloudPanel routing, which is why it lives here rather than beside the
