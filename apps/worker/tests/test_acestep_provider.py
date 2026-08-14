@@ -30,6 +30,7 @@ AUDIO = b"ID3\x04\x00" + b"\x00" * 4096
 def service(
     *,
     polls_before_ready: int = 0,
+    progress_polls: int = 0,
     status: int = 1,
     submit_status: int = 200,
     audio: bytes = AUDIO,
@@ -54,6 +55,25 @@ def service(
             state["polls"] += 1
             if state["polls"] <= polls_before_ready:
                 return httpx.Response(200, json={"data": [], "code": 200})
+            if state["polls"] <= polls_before_ready + progress_polls:
+                # The real service fills `result` with a PROGRESS record while
+                # still generating — same shape, no `file`. Observed on the GPU,
+                # 14 Aug 2026.
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "task_id": "task-1",
+                                "status": status,
+                                "result": json.dumps(
+                                    [{"progress": 0.4, "stage": "running", "wave": ""}]
+                                ),
+                            }
+                        ],
+                        "code": 200,
+                    },
+                )
             entries = [
                 {
                     "file": f"/v1/audio?path=take{n}.mp3",
@@ -194,6 +214,26 @@ async def test_it_polls_until_the_result_appears(workspace: Path) -> None:
     transport = service(polls_before_ready=3)
     takes = await provider(transport).generate(request(), workspace)
     assert len(takes) == 1
+
+
+async def test_a_progress_record_is_not_mistaken_for_a_finished_take(
+    workspace: Path,
+) -> None:
+    """A populated `result` does NOT mean the audio exists.
+
+    The service writes a progress record into `result` while it is still
+    generating, and only fills in `file` once the mp3 has been written. Treating
+    a non-empty `result` as finished made the provider return zero takes and
+    fail with "reported success but returned no audio" — while the service was
+    working perfectly. Found the first time this ran against a real GPU
+    (14 Aug 2026); every unit test until then used a fake that never emitted the
+    intermediate shape.
+    """
+    transport = service(progress_polls=3)
+    takes = await provider(transport).generate(request(), workspace)
+
+    assert len(takes) == 1
+    assert takes[0].path.read_bytes() == AUDIO
 
 
 async def test_every_take_offered_is_returned(workspace: Path) -> None:

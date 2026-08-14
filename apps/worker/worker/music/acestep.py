@@ -282,8 +282,15 @@ class AceStepProvider:
             # `result` is a JSON document encoded as a string inside the JSON
             # response — decoded twice, on purpose, not by accident.
             entries = json.loads(raw) if isinstance(raw, str) else raw
-            if entries:
-                return list(entries)
+            # A non-empty `result` does NOT mean the take is ready: the service
+            # writes a progress record there while it is still generating, and
+            # only fills in `file` once the audio has been written to disk.
+            # Returning those early entries looks like success and then fails
+            # in `_download` with nothing to download — verified on the GPU,
+            # 14 Aug 2026.
+            ready = [entry for entry in (entries or []) if entry.get("file")]
+            if ready:
+                return ready
 
         return []
 
