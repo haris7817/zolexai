@@ -19,7 +19,11 @@ marketing_description: Describe a scene and watch it come to life as cinematic v
 prompt:
   required: true
   placeholder: "Describe the video you want to create…"
-  max_length: 2000
+  # Effectively unlimited (client request, 14 Aug 2026): 20 000 characters is
+  # ~3 000 words and is the ceiling the API schema allows. Nobody writing a
+  # prompt reaches it. It is not literally removed because the value bounds a
+  # request body, and an unbounded one is a denial-of-service surface.
+  max_length: 20000
 
 # No uploaded assets — the prompt is the only input.
 inputs: []

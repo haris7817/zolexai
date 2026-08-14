@@ -11,7 +11,9 @@ marketing_description: Animate any still image into smooth, natural motion.
 prompt:
   required: true
   placeholder: "Describe how the image should move…"
-  max_length: 2000
+  # See text-to-video.yaml — effectively unlimited, capped only because an
+  # unbounded request body is a denial-of-service surface.
+  max_length: 20000
 
 inputs:
   - role: source_image

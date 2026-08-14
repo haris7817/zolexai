@@ -11,7 +11,9 @@ marketing_description: Generate original tracks from a mood, style or descriptio
 prompt:
   required: true
   placeholder: "Describe the track — mood, style, tempo…"
-  max_length: 1000
+  # See text-to-video.yaml — effectively unlimited, capped only because an
+  # unbounded request body is a denial-of-service surface.
+  max_length: 20000
 
 inputs: []
 

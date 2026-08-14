@@ -11,7 +11,9 @@ marketing_description: Continue any generated video seamlessly, as long as you n
 prompt:
   required: true
   placeholder: "Describe what happens next…"
-  max_length: 2000
+  # See text-to-video.yaml — effectively unlimited, capped only because an
+  # unbounded request body is a denial-of-service surface.
+  max_length: 20000
 
 inputs:
   - role: source_video
