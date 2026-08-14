@@ -81,9 +81,6 @@ export function CreatorWorkspace({
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  /** A generation finished and closed its panel — tells the empty canvas to
-      point at the result rather than read like nothing has happened. */
-  const [justFinished, setJustFinished] = useState(false);
 
   const isCompact = useIsCompact();
 
@@ -114,6 +111,9 @@ export function CreatorWorkspace({
     lastWorkflowId.current = workflow.id;
     form.reset(preserveValues(workflow, form.getValues()));
     setSubmitError(null);
+    // Drop the previous tool's result. Each tool shows its own work and only
+    // its own; the effect below then picks up this workflow's latest.
+    setSelectedJobId(null);
   }, [workflow, form]);
 
   const closePanel = useCallback(() => setPanelOpen(false), []);
@@ -125,43 +125,32 @@ export function CreatorWorkspace({
 
   const { jobs: recentJobs } = useRecentGenerations();
 
-  // Reattach to work still in flight, so a refresh mid-generation lands back
-  // on its progress rather than on an empty canvas. Only work in flight: a
-  // finished job belongs in the results strip below, not re-opened in the
-  // canvas every time this screen mounts (CR-011).
-  const reattached = useRef(false);
+  /**
+   * Put THIS tool's latest work back in the canvas on arrival.
+   *
+   * Work in flight first, so a refresh mid-generation lands on its progress;
+   * otherwise the last finished result, which stays on screen so the customer
+   * can press play on it (client revision, 14 Aug 2026). This replaces CR-011's
+   * behaviour of clearing the canvas the moment a job completed — the finished
+   * video vanishing from the box read as losing it.
+   *
+   * Scoped to `workflow.id`, which is the other half of what was asked: a Text
+   * to Video result must never appear on the Image to Video screen. The old
+   * code searched every recent job regardless of workflow, so it could
+   * reattach to another tool's run.
+   */
+  const reattached = useRef<string | null>(null);
   useEffect(() => {
-    if (reattached.current || selectedJobId !== null || recentJobs.length === 0) return;
-    reattached.current = true;
-    const running = recentJobs.find((job) => isRunning(job.status));
-    if (running) setSelectedJobId(running.id);
-  }, [recentJobs, selectedJobId]);
+    if (reattached.current === workflow.id || selectedJobId !== null) return;
+    if (recentJobs.length === 0) return;
+    reattached.current = workflow.id;
+    const mine = recentJobs.filter((job) => job.workflow_id === workflow.id);
+    const latest = mine.find((job) => isRunning(job.status)) ?? mine.find((job) => job.status === "completed");
+    if (latest) setSelectedJobId(latest.id);
+  }, [recentJobs, selectedJobId, workflow.id]);
 
   const { data: selectedJob } = useGeneration(selectedJobId);
   const jobRunning = selectedJob ? isRunning(selectedJob.status) : false;
-
-  /**
-   * Close the generating box the moment its job finishes (CR-011).
-   *
-   * The client's report: a finished video sat inside the "Generating" panel
-   * and was simultaneously listed below, so the same result appeared twice
-   * and the progress UI never cleared. The canvas is for work in progress;
-   * a finished result lives in the strip, Generations and the media library.
-   *
-   * Keyed on the TRANSITION, not on the status: opening a completed job from
-   * the strip on purpose must keep showing it, and only a job that finishes
-   * while being watched closes itself.
-   */
-  const watchedStatus = useRef<string | null>(null);
-  useEffect(() => {
-    const previous = watchedStatus.current;
-    const current = selectedJob?.status ?? null;
-    watchedStatus.current = current;
-    if (current === "completed" && previous !== null && previous !== "completed") {
-      setSelectedJobId(null);
-      setJustFinished(true);
-    }
-  }, [selectedJob?.status]);
 
   // One stream, only while the watched job is unfinished.
   useGenerationStream(selectedJobId, { enabled: jobRunning });
@@ -173,7 +162,6 @@ export function CreatorWorkspace({
     setSubmitError(null);
     try {
       const accepted = await createGeneration.mutateAsync(toCreateInput(workflow, values));
-      setJustFinished(false);
       setSelectedJobId(accepted.job_id);
       setPanelOpen(false);
     } catch (cause) {
@@ -226,7 +214,7 @@ export function CreatorWorkspace({
 
           <div className="rounded-zx-lg border-zx-border relative flex min-h-[52vh] flex-1 items-center justify-center overflow-hidden border bg-[radial-gradient(ellipse_at_50%_18%,rgba(190,242,8,0.07),transparent_60%),var(--zx-bg-secondary)] tablet:min-h-0">
             {!selectedJob ? (
-              <EmptyGenerationState workflow={workflow} ready={justFinished} />
+              <EmptyGenerationState workflow={workflow} />
             ) : null}
 
             {selectedJob && jobRunning ? (
@@ -263,10 +251,7 @@ export function CreatorWorkspace({
 
           <JobStrip
             selectedJobId={selectedJobId}
-            onSelect={(jobId) => {
-              setJustFinished(false);
-              setSelectedJobId(jobId);
-            }}
+            onSelect={setSelectedJobId}
           />
 
           {/* Compact-mode action bar — the panel is an overlay here, so

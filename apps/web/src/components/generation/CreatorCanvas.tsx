@@ -69,50 +69,31 @@ function resultDuration(job: GenerationJob): string {
  * it has been deleted.)
  */
 
-export function EmptyGenerationState({
-  workflow,
-  ready = false,
-}: {
-  workflow: Workflow;
-  /**
-   * A generation just finished and closed this panel (CR-011). The canvas is
-   * for work in progress, so the result moved to the strip below — say so,
-   * otherwise a video the user waited a minute for looks like it vanished.
-   */
-  ready?: boolean;
-}) {
+/**
+ * Shown only when this tool has never produced anything.
+ *
+ * There is no longer a "finished, look below" variant: a completed result stays
+ * in the canvas so it can be played there (client revision, 14 Aug 2026), so the
+ * only way to see this panel is an empty tool.
+ */
+export function EmptyGenerationState({ workflow }: { workflow: Workflow }) {
   const noun = workflow.output_type === "audio" ? "track" : "video";
 
   return (
     <div className="max-w-[380px] p-8 text-center">
       <div
         aria-hidden="true"
-        className={cn(
-          "mx-auto mb-[22px] flex aspect-video w-[120px] items-center justify-center rounded-[10px] border-[1.5px]",
-          ready
-            ? "border-zx-border-active border-solid bg-zx-primary/8"
-            : "border-dashed border-white/14",
-        )}
+        className="mx-auto mb-[22px] flex aspect-video w-[120px] items-center justify-center rounded-[10px] border-[1.5px] border-dashed border-white/14"
       >
-        {ready ? (
-          <span className="text-zx-primary-light">
-            <Icon name="check" size={24} />
-          </span>
-        ) : (
-          <span className="text-zx-on-primary flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-[image:var(--zx-gradient-primary)] text-[15px] font-extrabold opacity-55">
-            {brand.shortName}
-          </span>
-        )}
+        <span className="text-zx-on-primary flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-[image:var(--zx-gradient-primary)] text-[15px] font-extrabold opacity-55">
+          {brand.shortName}
+        </span>
       </div>
       <div className="text-zx-text mb-[7px] text-[16px] font-extrabold">
-        {ready
-          ? `Your ${noun} is ready.`
-          : `Your generated ${noun} will appear here.`}
+        Your generated {noun} will appear here.
       </div>
       <p className="text-zx-text-secondary text-[13.5px] leading-[1.55]">
-        {ready
-          ? "Find it in your recent generations below, or start another one."
-          : "Describe your idea, choose your settings and hit Generate."}
+        Describe your idea, choose your settings and hit Generate.
       </p>
     </div>
   );
