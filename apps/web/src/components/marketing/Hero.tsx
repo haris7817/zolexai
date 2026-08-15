@@ -147,11 +147,11 @@ function WorkspaceMockup() {
             <div className="text-zx-text-muted text-[11px] font-bold tracking-[0.08em]">
               DURATION
             </div>
-            <div className="flex gap-[6px]">
+            <div className="flex flex-wrap gap-[6px]">
               <span className="border-zx-border-active bg-zx-primary/25 text-zx-primary-light rounded-[7px] border px-[10px] py-[5px] text-[11px] font-bold">
                 5s
               </span>
-              {["10s", "15s"].map((value) => (
+              {["10s", "15s", "30s", "60s"].map((value) => (
                 <span
                   key={value}
                   className="border-zx-border text-zx-text-muted rounded-[7px] border px-[10px] py-[5px] text-[11px] font-bold"

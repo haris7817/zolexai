@@ -108,11 +108,11 @@ function PreviewVideo({ src, label, interaction, className }: PreviewVideoProps)
         <video
           ref={videoRef}
           src={src}
-          muted
+          muted={interaction === "hover"}
           loop
           playsInline
           preload="metadata"
-          aria-label={`${label} silent preview`}
+          aria-label={`${label}${interaction === "hover" ? " silent" : ""} preview`}
           className="h-full w-full object-cover"
           onLoadedData={() => setReady(true)}
           onPlay={() => setPlaying(true)}
