@@ -17,6 +17,7 @@ next-env.d.ts
 
 # Generated + user media — never tracked (tracker M1.02)
 *.mp4
+!apps/web/public/client-previews/*.mp4
 *.mov
 *.webm
 *.mp3

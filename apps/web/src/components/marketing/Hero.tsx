@@ -1,6 +1,8 @@
 import Image from "next/image";
 import { brand } from "@/config/brand";
+import { HERO_PREVIEW_VIDEO } from "@/config/marketing-videos";
 import { ButtonLink } from "@/components/ui/Button";
+import { HeroPreviewVideo } from "@/components/marketing/PreviewVideo";
 
 /**
  * Landing hero + product mockup.
@@ -130,12 +132,7 @@ function WorkspaceMockup() {
                 aria-hidden="true"
                 className="absolute inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(198,242,36,0.16),transparent_60%)]"
               />
-              <div className="relative flex h-[58px] w-[58px] items-center justify-center rounded-full border border-white/25 bg-white/10 backdrop-blur-[6px]">
-                <span
-                  aria-hidden="true"
-                  className="ml-[4px] h-0 w-0 border-y-[10px] border-l-[16px] border-y-transparent border-l-white"
-                />
-              </div>
+              <HeroPreviewVideo src={HERO_PREVIEW_VIDEO} label="ZolexAI creation showcase" />
             </div>
           </div>
 

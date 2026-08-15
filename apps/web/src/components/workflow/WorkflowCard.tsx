@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { Workflow } from "@zolexai/workflow-contracts";
+import { ToolPreviewVideo } from "@/components/marketing/PreviewVideo";
 import { Icon } from "@/components/ui/Icon";
+import { WORKFLOW_PREVIEW_VIDEOS } from "@/config/marketing-videos";
 import { cn } from "@/lib/cn";
 
 /**
@@ -22,6 +24,7 @@ export function WorkflowCard({
   href?: string;
 }) {
   const target = href ?? `/app/create/${workflow.id}`;
+  const previewVideo = WORKFLOW_PREVIEW_VIDEOS[workflow.id];
 
   if (tone === "detailed") {
     return (
@@ -30,6 +33,9 @@ export function WorkflowCard({
         className="bg-zx-surface border-zx-border rounded-zx-lg hover:border-zx-border-active block overflow-hidden border transition-[transform,border-color] duration-200 hover:-translate-y-[3px]"
       >
         <div className="relative h-[130px]" style={{ background: workflow.ui.thumb }}>
+          {previewVideo ? (
+            <ToolPreviewVideo src={previewVideo} label={`${workflow.name} example`} />
+          ) : null}
           <span className="border-zx-border bg-zx-surface-elevated text-zx-primary-light absolute bottom-[-18px] left-5 flex h-10 w-10 items-center justify-center rounded-[11px] border">
             <Icon name={workflow.ui.icon} size={18} />
           </span>
