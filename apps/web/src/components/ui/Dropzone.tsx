@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Asset, WorkflowInput } from "@zolexai/workflow-contracts";
 import { ApiError } from "@/lib/api/client";
@@ -35,11 +35,15 @@ export function Dropzone({
 }) {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const previewUrlRef = useRef<string | null>(null);
 
   const [uploaded, setUploaded] = useState<Asset | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
 
   const maxBytes = input.max_size_mb * 1024 * 1024;
 
@@ -59,6 +63,40 @@ export function Dropzone({
 
   const asset = uploaded?.id === value ? uploaded : (resolved ?? null);
 
+  const resetPreview = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    setPreviewPlaying(false);
+
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreviewUrl(null);
+  }, []);
+
+  useEffect(() => {
+    if (!previewUrl) return;
+    const audio = audioRef.current;
+
+    return () => {
+      audio?.pause();
+      if (previewUrlRef.current === previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+        previewUrlRef.current = null;
+      }
+    };
+  }, [previewUrl]);
+
+  // A parent form can replace or clear the selected asset without using this
+  // component's remove button. A local preview only belongs to the exact asset
+  // created from its browser File, so dispose it as soon as that asset changes.
+  useEffect(() => {
+    if (previewUrl && uploaded?.id !== value) resetPreview();
+  }, [previewUrl, resetPreview, uploaded?.id, value]);
+
   const handleFile = useCallback(
     async (file: File) => {
       setError(null);
@@ -74,9 +112,15 @@ export function Dropzone({
         return;
       }
 
+      resetPreview();
       setUploading(true);
       try {
         const asset = await uploadAsset(file, input.kind);
+        if (input.kind === "audio") {
+          const objectUrl = URL.createObjectURL(file);
+          previewUrlRef.current = objectUrl;
+          setPreviewUrl(objectUrl);
+        }
         setUploaded(asset);
         onChange(asset.id);
         // The new file belongs in the media library immediately.
@@ -92,10 +136,11 @@ export function Dropzone({
         setUploading(false);
       }
     },
-    [input, maxBytes, onChange, queryClient],
+    [input, maxBytes, onChange, queryClient, resetPreview],
   );
 
   const clear = () => {
+    resetPreview();
     setUploaded(null);
     setError(null);
     onChange(null);
@@ -121,6 +166,43 @@ export function Dropzone({
             {formatBytes(asset.size_bytes)}
           </span>
         </span>
+        {input.kind === "audio" && previewUrl && uploaded?.id === value ? (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                const audio = audioRef.current;
+                if (!audio) return;
+                if (audio.paused) {
+                  void audio.play().catch(() => {
+                    setPreviewPlaying(false);
+                    setError("This audio file could not be previewed in your browser.");
+                  });
+                } else {
+                  audio.pause();
+                }
+              }}
+              aria-label={`${previewPlaying ? "Pause" : "Play"} preview of ${asset.name}`}
+              className={cn(
+                "border-zx-primary/35 bg-zx-primary/10 text-zx-primary-light hover:border-zx-primary/65 hover:bg-zx-primary/18",
+                "flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border transition-colors duration-150",
+              )}
+            >
+              <Icon name={previewPlaying ? "pause" : "play"} size={14} />
+            </button>
+            <audio
+              ref={audioRef}
+              src={previewUrl}
+              preload="metadata"
+              onPlay={() => setPreviewPlaying(true)}
+              onPause={() => setPreviewPlaying(false)}
+              onEnded={(event) => {
+                event.currentTarget.currentTime = 0;
+                setPreviewPlaying(false);
+              }}
+            />
+          </>
+        ) : null}
         <button
           type="button"
           onClick={clear}
