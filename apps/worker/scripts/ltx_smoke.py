@@ -156,7 +156,7 @@ async def main() -> int:
     print(f"workspace: {workspace}")
     print("-" * 60)
 
-    async def on_progress(status: str, progress: int, message: str) -> None:
+    async def on_progress(status: str, progress: int, message: str, _details=None) -> None:
         print(
             f"[{time.strftime('%H:%M:%S')}] {status:>15} {progress:3d}%  {message}",
             flush=True,

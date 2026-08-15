@@ -37,13 +37,31 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
-#: Called by an adapter to report progress. (status, progress 0-100, message)
-ProgressCallback = Callable[[str, int, str], Awaitable[None]]
+class ProgressDetails(TypedDict, total=False):
+    """Machine-readable progress context carried beside customer copy."""
+
+    phase: str
+    section_index: int
+    section_total: int
+    section_start_seconds: float
+    section_end_seconds: float
+
+
+class ProgressCallback(Protocol):
+    """Adapter-to-runner progress channel with optional structured context."""
+
+    async def __call__(
+        self,
+        status: str,
+        progress: int,
+        message: str,
+        details: ProgressDetails | None = None,
+    ) -> None: ...
 
 
 def parse_duration_seconds(value: object) -> float | None:

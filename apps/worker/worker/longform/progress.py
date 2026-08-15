@@ -25,7 +25,7 @@ this module are read by customers.
 
 from __future__ import annotations
 
-from worker.adapters.base import ProgressCallback
+from worker.adapters.base import ProgressCallback, ProgressDetails
 
 #: Lifecycle statuses in the order the API ranks them. Anything not listed
 #: sorts last, which keeps an unknown status from silently going backwards.
@@ -55,30 +55,47 @@ class StageReporter:
         """The highest value reported so far."""
         return self._progress
 
-    async def report(self, status: str, progress: int, message: str) -> None:
+    async def report(
+        self,
+        status: str,
+        progress: int,
+        message: str,
+        details: ProgressDetails | None = None,
+    ) -> None:
         """The one exit. Clamps both axes forward, then forwards the report."""
         if _RANK.get(status, len(_RANK)) < _RANK.get(self._status, len(_RANK)):
             status = self._status
         self._status = status
         self._progress = max(self._progress, min(100, progress))
-        await self._on_progress(status, self._progress, message)
+        await self._on_progress(status, self._progress, message, details)
 
     # ── Named stages ─────────────────────────────────────────────────────
 
     async def preparing(self, message: str = "Setting up your generation…") -> None:
-        await self.report("preparing", 8, message)
+        await self.report("preparing", 8, message, {"phase": "preparing"})
 
     async def probing(self, message: str = "Reading your file…") -> None:
-        await self.report("preparing", 12, message)
+        await self.report("preparing", 12, message, {"phase": "preparing"})
 
     async def generating(
         self,
         progress: int,
         message: str = "This usually takes a couple of minutes.",
+        details: ProgressDetails | None = None,
     ) -> None:
-        await self.report("generating", progress, message)
+        await self.report(
+            "generating", progress, message, details or {"phase": "generating"}
+        )
 
-    async def section(self, index: int, total: int, progress: int) -> None:
+    async def section(
+        self,
+        index: int,
+        total: int,
+        progress: int,
+        *,
+        start_seconds: float = 0.0,
+        end_seconds: float = 0.0,
+    ) -> None:
         """Per-segment copy. Silent about sections when there is only one.
 
         A single-pass job announcing "Section 1 of 1" would expose machinery
@@ -89,19 +106,29 @@ class StageReporter:
             if total > 1
             else "This usually takes a couple of minutes."
         )
-        await self.generating(progress, message)
+        await self.generating(
+            progress,
+            message,
+            {
+                "phase": "generating",
+                "section_index": index,
+                "section_total": total,
+                "section_start_seconds": start_seconds,
+                "section_end_seconds": end_seconds,
+            },
+        )
 
     async def stitching(self, message: str = "Assembling your video…") -> None:
-        await self.report("post_processing", 88, message)
+        await self.report("post_processing", 88, message, {"phase": "assembling"})
 
     async def muxing(self, message: str = "Adding your audio…") -> None:
-        await self.report("post_processing", 92, message)
+        await self.report("post_processing", 92, message, {"phase": "adding_audio"})
 
     async def finalizing(self, message: str = "Finishing up…") -> None:
-        await self.report("post_processing", 94, message)
+        await self.report("post_processing", 94, message, {"phase": "verifying"})
 
     async def uploading(self, message: str = "Almost ready…") -> None:
-        await self.report("uploading", 96, message)
+        await self.report("uploading", 96, message, {"phase": "uploading"})
 
 
 def band_for(index: int, total: int) -> tuple[int, int]:

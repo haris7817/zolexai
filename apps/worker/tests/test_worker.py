@@ -130,7 +130,7 @@ def test_the_claim_payload_maps_onto_an_adapter_job() -> None:
 async def test_it_reports_every_lifecycle_stage_in_order(workspace: Path) -> None:
     reported: list[tuple[str, int]] = []
 
-    async def on_progress(status: str, progress: int, _message: str) -> None:
+    async def on_progress(status: str, progress: int, _message: str, _details=None) -> None:
         reported.append((status, progress))
 
     result = await MockAdapter().run(make_job(workspace), on_progress)

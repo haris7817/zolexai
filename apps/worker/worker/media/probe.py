@@ -31,6 +31,10 @@ class MediaInfo:
     """Average video frame rate. Needed when another clip must be normalized
     to match this one — retiming to a guessed rate produces judder."""
 
+    video_stream_count: int = 0
+    audio_stream_count: int = 0
+    audio_duration_seconds: float | None = None
+
     @property
     def aspect_ratio(self) -> float | None:
         if not self.width or not self.height:
@@ -61,7 +65,19 @@ async def probe_media(path: Path) -> MediaInfo:
         has_video=video is not None,
         has_audio=audio is not None,
         fps=_fps_of(video) if video else None,
+        video_stream_count=sum(1 for stream in streams if stream.get("codec_type") == "video"),
+        audio_stream_count=sum(1 for stream in streams if stream.get("codec_type") == "audio"),
+        audio_duration_seconds=_stream_duration(payload, audio) if audio else None,
     )
+
+
+def _stream_duration(payload: dict[str, Any], stream: dict[str, Any]) -> float | None:
+    """A stream's own duration, with the container as a conservative fallback."""
+    for candidate in (stream, payload.get("format") or {}):
+        value = _float_or_none(candidate.get("duration"))
+        if value is not None:
+            return value
+    return None
 
 
 def _fps_of(video: dict[str, Any]) -> float | None:

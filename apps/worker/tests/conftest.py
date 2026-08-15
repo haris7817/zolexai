@@ -68,7 +68,9 @@ async def collect(job: AdapterJob, adapter=None):
     """Runs an adapter and returns (result, every progress report it made)."""
     reported: list[tuple[str, int, str]] = []
 
-    async def on_progress(status: str, progress: int, message: str) -> None:
+    async def on_progress(
+        status: str, progress: int, message: str, _details=None
+    ) -> None:
         reported.append((status, progress, message))
 
     result = await (adapter or LtxAdapter()).run(job, on_progress)
@@ -79,7 +81,9 @@ def recorder() -> tuple[ProgressCallback, list[tuple[str, int, str]]]:
     """A progress callback plus the list it appends to."""
     reported: list[tuple[str, int, str]] = []
 
-    async def on_progress(status: str, progress: int, message: str) -> None:
+    async def on_progress(
+        status: str, progress: int, message: str, _details=None
+    ) -> None:
         reported.append((status, progress, message))
 
     return on_progress, reported

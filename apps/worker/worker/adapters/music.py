@@ -337,7 +337,13 @@ class MusicAdapter:
         for section in sections:
             job.raise_if_cancelled()
             low, high = band_for(section.index, total)
-            await reporter.section(section.index + 1, total, low)
+            await reporter.section(
+                section.index + 1,
+                total,
+                low,
+                start_seconds=section.start_seconds,
+                end_seconds=section.start_seconds + section.duration_seconds,
+            )
 
             request = MusicRequest(
                 prompt=self._caption_for(job, plan, section, total),
@@ -369,7 +375,13 @@ class MusicAdapter:
             digests[digest] = section.index
 
             rendered.append(take.path)
-            await reporter.section(section.index + 1, total, high)
+            await reporter.section(
+                section.index + 1,
+                total,
+                high,
+                start_seconds=section.start_seconds,
+                end_seconds=section.start_seconds + section.duration_seconds,
+            )
 
         return rendered
 

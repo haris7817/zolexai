@@ -1,6 +1,7 @@
 # Issue: Triton neighbourhood-attention kernel fails on longer generations
 
 **Opened:** 14 August 2026
+**Updated:** 15 August 2026 after client acceptance testing
 **Status:** 🔴 **OPEN — live production impact**
 **Severity:** High — customer-visible failures on the most-used workflow
 **Box:** RTX PRO 6000 Blackwell (`sm_120`), instance `47698594`
@@ -14,6 +15,13 @@ error when decoding longer generations on this GPU. Short generations are
 unaffected. The failure is in a *fallback* Triton kernel, which suggests the
 optimised NATTEN kernel is missing on this box and was present on the RTX 5090
 it replaced.
+
+**15 Aug status clarification:** production's per-pass ceiling was subsequently
+lowered to 10 seconds and the duration/aspect matrix passed through chaining.
+The crash is therefore mitigated, not root-caused. The client then exposed a
+second issue: forcing every long result through 10-second passes makes prompt,
+audio and continuity defects visible at exactly those boundaries. The kernel
+defect and the chaining defects must be tracked separately.
 
 ```text
 RuntimeError: Triton Error [CUDA]: invalid argument
@@ -210,7 +218,7 @@ cannot launch on a current-generation card is an upstream defect.
 | 14 Aug 2026 | 9:16 ceiling established: 10s passes, 15s fails |
 | 14 Aug 2026 | `LTX_MAX_SECONDS=15` proven for 60s @ 16:9 — **not applied**, insufficient for portrait |
 
-**Still open:**
+**Historical open list recorded 14 Aug (superseded by the 15 Aug status clarification above):**
 
 - `LTX_MAX_SECONDS` **not changed** on the running worker — production still
   fails at 30s/60s in every aspect ratio
@@ -242,3 +250,61 @@ Worse, each narrowing step found the previous conclusion incomplete:
 **After any hardware change, exercise the product's actual parameter matrix** —
 durations *and* aspect ratios — not one representative sample. The failure mode
 here is size-dependent by construction, and no single sample can see it.
+
+---
+
+## 10. Client findings after the 10-second mitigation (15 Aug)
+
+The client reported a small stop/reset, scene and identity changes, action and
+dialogue replay, and cut-off final speech at roughly 10-second intervals. That
+timing matches the mitigation's pass ceiling. This does **not** prove every seam
+symptom is caused by FFmpeg or by the Triton kernel; it proves the symptoms are
+section-boundary correlated.
+
+### 10.1 Deterministic causes confirmed in the repository
+
+| Finding | Confirmed cause before the local fix | Classification |
+|---|---|---|
+| Action/dialogue repeats every section | `_command()` received the same `job.prompt` for every chained pass | System bug |
+| T2V/I2V audio restarts | Each pass generated its own soundtrack and raw pass files were concatenated | System architecture bug |
+| Silent T2V/I2V could complete | Final validation required video but did not require an audio stream | System bug |
+| I2V identity drifts after pass one | Only the predecessor final still was supplied; the uploaded identity image was dropped | Conditioning bug |
+| Repeated Extend could reuse the wrong source | `?source=` was consumed only by React Hook Form's initial defaults; same-route query changes did not reset it | UI state bug |
+| V2V sliders appeared ineffective | Public quality/motion/adherence values reached job parameters but the distilled adapter never read them | Fake-control bug |
+| FPS/timebase seam risk | Plain generated sections went directly to concat without per-section normalization | Assembly risk, now removed locally |
+| Music Video/V2V source track restart | Not supported by code inspection: both paths already strip model audio and attach the complete source track once after visual assembly | Not the same bug; verify artifacts on RTX |
+
+### 10.2 Still unconfirmed
+
+- Whether the visible pause is one duplicated boundary frame, several static
+  settling frames from conditioned generation, or a timestamp discontinuity.
+- Whether normalized assembly alone removes it. Capture 09.5-10.5 and
+  19.5-20.5 second windows from an RTX result and run frame-difference plus
+  `freezedetect`; do not hide it with a long crossfade.
+- Whether the fallback kernel can be replaced by NATTEN on `sm_120`.
+- Whether the current sparse-still V2V path can produce the client's requested
+  strong shot-for-shot restyle. It preserves structure but is not a true
+  video-conditioned restyle pipeline.
+
+### 10.3 Local mitigation in this worktree (not deployed)
+
+- deterministic section prompt planner; explicit `Persistent:` and
+  `Section N / start-end:` instructions are honoured without paraphrasing user
+  fragments;
+- later I2V passes receive both temporal predecessor context and the original
+  image at a low, non-zero-frame identity strength;
+- generated sections are normalized to a common FPS, timebase, dimensions and
+  stream layout before concat;
+- T2V/I2V require one decodable, non-zero-duration audio stream per pass and in
+  the finished file;
+- source audio for Music Video/V2V remains attached once; Extend preserves the
+  source timeline and appends generated tail audio only when the tail has it;
+- worker/API/SSE progress now carries phase and section index/total/start/end;
+- unsupported public quality/motion/adherence controls are hidden until a
+  runtime actually consumes them.
+
+This does not create a full-duration master dialogue/singing track. The current
+distilled LTX entry point cannot emit audio-only output, so T2V/I2V remains
+`GENERATED_PER_SECTION_AUDIO`. Section prompts stop deterministic dialogue
+replay, but exact continuous dialogue timing needs a separate master-audio
+provider/path and RTX validation.

@@ -31,12 +31,12 @@ duration_mode: fixed
 # of it. See apps/worker/worker/adapters/ltx.py, `_render_chain`.
 supported_durations: ["5s", "10s", "15s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
-supported_quality_levels: [Standard, High, Ultra]
+supported_quality_levels: []
 
 settings:
-  quality: true
-  motion_strength: true
-  prompt_adherence: true
+  quality: false
+  motion_strength: false
+  prompt_adherence: false
   seed: true
 
 capabilities:

@@ -30,12 +30,12 @@ inputs:
 duration_mode: source
 supported_durations: []
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
-supported_quality_levels: [Standard, High]
+supported_quality_levels: []
 
 settings:
-  quality: true
-  motion_strength: true
-  prompt_adherence: true
+  quality: false
+  motion_strength: false
+  prompt_adherence: false
   seed: false
 
 capabilities:

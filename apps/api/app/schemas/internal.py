@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.enums import ErrorCode, JobStatus, WorkerStatus
 
@@ -140,6 +140,34 @@ class JobProgressRequest(BaseModel):
     status: JobStatus
     progress: int = Field(ge=0, le=100)
     message: str = Field(default="", max_length=200)
+    phase: str | None = Field(default=None, max_length=40)
+    section_index: int | None = Field(default=None, ge=1)
+    section_total: int | None = Field(default=None, ge=1)
+    section_start_seconds: float | None = Field(default=None, ge=0)
+    section_end_seconds: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _coherent_section(self) -> JobProgressRequest:
+        fields = (
+            self.section_index,
+            self.section_total,
+            self.section_start_seconds,
+            self.section_end_seconds,
+        )
+        if any(value is not None for value in fields) and any(
+            value is None for value in fields
+        ):
+            raise ValueError("section progress fields must be supplied together")
+        if self.section_index is not None and self.section_total is not None:
+            if self.section_index > self.section_total:
+                raise ValueError("section_index cannot exceed section_total")
+        if (
+            self.section_start_seconds is not None
+            and self.section_end_seconds is not None
+            and self.section_end_seconds < self.section_start_seconds
+        ):
+            raise ValueError("section_end_seconds cannot precede section_start_seconds")
+        return self
 
 
 class JobCompleteRequest(BaseModel):

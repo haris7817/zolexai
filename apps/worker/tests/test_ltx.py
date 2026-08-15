@@ -23,9 +23,12 @@ import pytest
 # fixtures are shared with the video-to-video, music-video and long-form suites.
 from tests.conftest import (  # noqa: E402  (local package, after worker imports)
     collect,
+    conditioning_of,
+    invocations,
     make_clip,
     make_job,
     needs_ffmpeg,
+    render_stub,
     stub_launcher,
 )
 from worker.adapters.base import (
@@ -183,6 +186,13 @@ def test_seeds_differ_between_jobs_and_repeat_within_one(workspace: Path) -> Non
     assert seed_for("job-a") != seed_for("job-b")
 
 
+def test_a_user_seed_reaches_each_section_deterministically(workspace: Path) -> None:
+    job = make_job(workspace, parameters={"duration": "4s", "seed": 1234})
+    adapter = LtxAdapter()
+    assert adapter._seed_for_step(job, 0) == 1234
+    assert adapter._seed_for_step(job, 1) == 1235
+
+
 # ── Guardrails (no GPU, no ffmpeg) ───────────────────────────────────────
 
 
@@ -290,7 +300,7 @@ async def test_a_long_text_to_video_is_chained_rather_than_refused(
     this proves it on the plainest workflow: a request beyond one pass becomes
     several renders chained off each other's final frames, assembled into one
     file of the requested length."""
-    fixture = await make_clip(tmp_path / "render.mp4", 2.0)
+    fixture = await make_clip(tmp_path / "render.mp4", 2.0, audio=True)
     log = extension_stub(tmp_path, monkeypatch, fixture, image_optional=True)
 
     job = make_job(
@@ -313,6 +323,46 @@ async def test_a_long_text_to_video_is_chained_rather_than_refused(
 
 
 @needs_ffmpeg
+async def test_each_longform_command_gets_only_its_assigned_dialogue(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = await make_clip(tmp_path / "render.mp4", 2.0, audio=True)
+    log = render_stub(tmp_path, monkeypatch, fixture)
+    prompt = """Persistent: same woman and same robot
+Section 1: MAYA says first line
+Section 2: ROBOT says second line"""
+    job = make_job(
+        workspace,
+        prompt=prompt,
+        parameters={"duration": "4s", "aspect_ratio": "16:9"},
+        execution={"runtime": "ltx", "max_segment_seconds": 2},
+    )
+
+    await collect(job)
+    prompts = [call[call.index("--prompt") + 1] for call in invocations(log)]
+
+    assert "MAYA says first line" in prompts[0]
+    assert "MAYA says first line" not in prompts[1]
+    assert "ROBOT says second line" not in prompts[0]
+    assert "ROBOT says second line" in prompts[1]
+
+
+@needs_ffmpeg
+async def test_a_silent_model_pass_cannot_be_marked_completed(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    silent = await make_clip(tmp_path / "silent.mp4", 2.0)
+    render_stub(tmp_path, monkeypatch, silent)
+
+    with pytest.raises(AdapterError) as raised:
+        await collect(make_job(workspace))
+
+    assert "no audio stream" in raised.value.internal_detail
+
+
+@needs_ffmpeg
 async def test_a_long_image_to_video_conditions_the_first_pass_on_the_still(
     workspace: Path, fake_models: Path, stub_repo: Path,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -323,8 +373,8 @@ async def test_a_long_image_to_video_conditions_the_first_pass_on_the_still(
     await ffmpeg(
         ["-f", "lavfi", "-i", "testsrc2=size=896x512:rate=1", "-frames:v", "1", str(still)]
     )
-    fixture = await make_clip(tmp_path / "render.mp4", 2.0)
-    log = extension_stub(tmp_path, monkeypatch, fixture, image_optional=True)
+    fixture = await make_clip(tmp_path / "render.mp4", 2.0, audio=True)
+    log = render_stub(tmp_path, monkeypatch, fixture)
 
     job = make_i2v_job(
         workspace,
@@ -334,8 +384,13 @@ async def test_a_long_image_to_video_conditions_the_first_pass_on_the_still(
     )
     result, _ = await collect(job)
 
-    conditioned_on = log.read_text().splitlines()
-    assert conditioned_on == [str(still), str(workspace / "segment-condition-0001.png")]
+    calls = invocations(log)
+    assert conditioning_of(calls[0]) == [(str(still), 0, 1.0)]
+    second = conditioning_of(calls[1])
+    assert second[0] == (str(workspace / "segment-condition-0001.png"), 0, 1.0)
+    assert second[1][0] == str(still), "the original identity anchor was dropped"
+    assert second[1][1] > 0, "the identity anchor reset the continuation at frame zero"
+    assert second[1][2] == pytest.approx(0.2)
     assert result.duration_seconds == pytest.approx(4.0, abs=1.0)
 
 
@@ -727,7 +782,9 @@ async def test_cancellation_stops_the_chain_before_the_next_segment(
 
     cancelled = asyncio.Event()
 
-    async def cancel_on_first_render(status: str, progress: int, message: str) -> None:
+    async def cancel_on_first_render(
+        status: str, progress: int, message: str, _details=None
+    ) -> None:
         if status == "generating":
             cancelled.set()
 

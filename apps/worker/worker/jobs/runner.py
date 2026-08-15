@@ -139,8 +139,13 @@ class JobRunner:
             adapter = resolve_adapter(job)
             keeper = _LeaseKeeper(self, job_id, lease_token, cancelled)
 
-            async def on_progress(status: str, progress: int, message: str) -> None:
-                await keeper.report(status, progress, message)
+            async def on_progress(
+                status: str,
+                progress: int,
+                message: str,
+                details: dict[str, Any] | None = None,
+            ) -> None:
+                await keeper.report(status, progress, message, details)
 
             await on_progress("preparing", 8, "Setting up your generation…")
             job = await self._stage_inputs(job)
@@ -207,7 +212,13 @@ class JobRunner:
         return replace(job, inputs=staged)
 
     async def _report_progress(
-        self, job_id: str, lease_token: str, status: str, progress: int, message: str
+        self,
+        job_id: str,
+        lease_token: str,
+        status: str,
+        progress: int,
+        message: str,
+        details: dict[str, Any] | None = None,
     ) -> None:
         response = await self.client.report_progress(
             job_id,
@@ -216,6 +227,7 @@ class JobRunner:
             status=status,
             progress=progress,
             message=message,
+            details=details,
         )
         if response.get("_rejected") or not response.get("accepted", False):
             raise LeaseLost(response.get("reason", "progress rejected"))
@@ -263,14 +275,22 @@ class _LeaseKeeper:
         self._job_id = job_id
         self._lease_token = lease_token
         self._cancelled = cancelled
-        self._last: tuple[str, int, str] = ("preparing", 0, "")
+        self._last: tuple[str, int, str, dict[str, Any] | None] = (
+            "preparing", 0, "", None
+        )
         self._lost: LeaseLost | None = None
 
-    async def report(self, status: str, progress: int, message: str) -> None:
-        self._last = (status, progress, message)
+    async def report(
+        self,
+        status: str,
+        progress: int,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self._last = (status, progress, message, details)
         try:
             await self._runner._report_progress(
-                self._job_id, self._lease_token, status, progress, message
+                self._job_id, self._lease_token, status, progress, message, details
             )
         except LeaseLost:
             self._cancelled.set()
@@ -293,10 +313,10 @@ class _LeaseKeeper:
     async def _loop(self) -> None:
         while True:
             await asyncio.sleep(settings.lease_keepalive_seconds)
-            status, progress, message = self._last
+            status, progress, message, details = self._last
             try:
                 await self._runner._report_progress(
-                    self._job_id, self._lease_token, status, progress, message
+                    self._job_id, self._lease_token, status, progress, message, details
                 )
                 logger.debug("lease_renewed", extra={"progress": progress})
             except LeaseLost as exc:

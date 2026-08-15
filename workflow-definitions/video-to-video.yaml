@@ -46,12 +46,15 @@ inputs:
 duration_mode: source
 supported_durations: []
 supported_aspect_ratios: ["16:9", "9:16"]
-supported_quality_levels: [Standard, High, Ultra]
+supported_quality_levels: []
 
 settings:
-  quality: true
-  motion_strength: true
-  prompt_adherence: true
+  # These public controls did reach the job, but the distilled adapter never
+  # read them. Private v2v_* settings below are the only real conditioning
+  # controls and remain covered by command-level tests.
+  quality: false
+  motion_strength: false
+  prompt_adherence: false
   seed: false
 
 capabilities:

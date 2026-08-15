@@ -79,6 +79,14 @@ async def verify_output(path: Path, expectation: OutputExpectation) -> MediaInfo
         problems.append("no video stream")
     if expectation.expect_audio and not info.has_audio:
         problems.append("no audio stream")
+    if expectation.expect_audio and info.audio_stream_count != 1:
+        problems.append(
+            f"expected exactly one audio stream, found {info.audio_stream_count}"
+        )
+    if expectation.expect_audio and (
+        info.audio_duration_seconds is None or info.audio_duration_seconds <= 0
+    ):
+        problems.append("audio stream reports no usable duration")
 
     if expectation.expected_seconds is not None:
         tolerance = expectation.tolerance_seconds
@@ -92,6 +100,14 @@ async def verify_output(path: Path, expectation: OutputExpectation) -> MediaInfo
                 problems.append(
                     f"duration {info.duration_seconds:.2f}s differs from planned "
                     f"{expectation.expected_seconds:.2f}s by {drift:.2f}s "
+                    f"(tolerance {tolerance:.2f}s)"
+                )
+        if expectation.expect_audio and info.audio_duration_seconds is not None:
+            audio_drift = abs(info.audio_duration_seconds - expectation.expected_seconds)
+            if audio_drift > tolerance:
+                problems.append(
+                    f"audio duration {info.audio_duration_seconds:.2f}s differs from planned "
+                    f"{expectation.expected_seconds:.2f}s by {audio_drift:.2f}s "
                     f"(tolerance {tolerance:.2f}s)"
                 )
 
@@ -116,6 +132,8 @@ async def verify_output(path: Path, expectation: OutputExpectation) -> MediaInfo
             "width": info.width,
             "height": info.height,
             "has_audio": info.has_audio,
+            "audio_stream_count": info.audio_stream_count,
+            "audio_duration_seconds": info.audio_duration_seconds,
         },
     )
     return info

@@ -298,7 +298,9 @@ async def test_cancellation_stops_a_long_music_video_between_scenes(
 
     cancelled = asyncio.Event()
 
-    async def cancel_once_generating(status: str, progress: int, message: str) -> None:
+    async def cancel_once_generating(
+        status: str, progress: int, message: str, _details=None
+    ) -> None:
         if status == "generating":
             cancelled.set()
 

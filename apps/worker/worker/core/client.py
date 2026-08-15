@@ -109,6 +109,7 @@ class WorkerApiClient:
         status: str,
         progress: int,
         message: str,
+        details: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return await self._post(
             f"/internal/jobs/{job_id}/progress",
@@ -118,6 +119,7 @@ class WorkerApiClient:
                 "status": status,
                 "progress": progress,
                 "message": message,
+                **(details or {}),
             },
         )
 

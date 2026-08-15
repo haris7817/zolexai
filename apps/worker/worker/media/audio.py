@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import struct
+from enum import StrEnum
 from pathlib import Path
 
 from worker.core.logging import get_logger
@@ -31,6 +32,15 @@ from worker.media.ffmpeg import FfmpegError, ffmpeg, ffmpeg_stdout
 from worker.media.probe import probe_media
 
 logger = get_logger(__name__)
+
+
+class AudioMode(StrEnum):
+    """The four supported ownership models for a finished soundtrack."""
+
+    SOURCE_AUDIO = "SOURCE_AUDIO"
+    GENERATED_MASTER_AUDIO = "GENERATED_MASTER_AUDIO"
+    GENERATED_PER_SECTION_AUDIO = "GENERATED_PER_SECTION_AUDIO"
+    NO_AUDIO = "NO_AUDIO"
 
 #: One delivery encoding for every soundtrack we attach or produce.
 _AAC_ARGS = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]

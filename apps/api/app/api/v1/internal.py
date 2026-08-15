@@ -283,6 +283,16 @@ async def report_progress(
         status=payload.status,
         progress=payload.progress,
         message=payload.message,
+        event_payload=payload.model_dump(
+            include={
+                "phase",
+                "section_index",
+                "section_total",
+                "section_start_seconds",
+                "section_end_seconds",
+            },
+            exclude_none=True,
+        ),
     )
     if job is None:
         logger.warning("worker_progress_rejected", extra={"reason": reason})

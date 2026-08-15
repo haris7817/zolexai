@@ -23,6 +23,7 @@ from worker.longform.progress import (
     StageReporter,
     band_for,
 )
+from worker.longform.prompts import plan_section_prompts
 from worker.longform.timing import plan_musical_boundaries
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "StageReporter",
     "band_for",
     "plan_musical_boundaries",
+    "plan_section_prompts",
     "render_chain",
 ]

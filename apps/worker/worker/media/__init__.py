@@ -11,6 +11,7 @@ Nothing in this package knows what a job is.
 """
 
 from worker.media.audio import (
+    AudioMode,
     audio_envelope,
     audio_onsets,
     crossfade_concat,
@@ -41,6 +42,7 @@ from worker.media.validate import (
 )
 
 __all__ = [
+    "AudioMode",
     "FfmpegError",
     "MediaInfo",
     "OutputExpectation",

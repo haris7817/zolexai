@@ -163,6 +163,8 @@ async def test_a_finished_video_passes_every_check_it_should(tmp_path: Path) -> 
         ),
     )
     assert info.duration_seconds == pytest.approx(2.0, abs=0.3)
+    assert info.audio_stream_count == 1
+    assert info.audio_duration_seconds == pytest.approx(2.0, abs=0.3)
 
 
 async def test_a_missing_audio_stream_fails_the_job(tmp_path: Path) -> None:

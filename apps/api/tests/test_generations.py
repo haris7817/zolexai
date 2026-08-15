@@ -66,7 +66,7 @@ async def test_rejects_unsupported_duration_and_lists_the_valid_ones(
         json={
             "workflow_id": "image-to-video",
             "prompt": "move it",
-            "parameters": {"duration": "999s", "aspect_ratio": "16:9", "quality": "High"},
+            "parameters": {"duration": "999s", "aspect_ratio": "16:9"},
             "inputs": {"source_image": "00000000-0000-0000-0000-000000000000"},
         },
     )
@@ -81,7 +81,7 @@ async def test_rejects_missing_required_input(client: AsyncClient) -> None:
         json={
             "workflow_id": "image-to-video",
             "prompt": "animate this",
-            "parameters": {"duration": "5s", "aspect_ratio": "16:9", "quality": "High"},
+            "parameters": {"duration": "5s", "aspect_ratio": "16:9"},
         },
     )
     assert response.status_code == 422
@@ -101,7 +101,7 @@ async def test_rejects_an_asset_the_user_does_not_own(client: AsyncClient) -> No
         json={
             "workflow_id": "image-to-video",
             "prompt": "animate this",
-            "parameters": {"duration": "5s", "aspect_ratio": "16:9", "quality": "High"},
+            "parameters": {"duration": "5s", "aspect_ratio": "16:9"},
             "inputs": {"source_image": "11111111-2222-3333-4444-555555555555"},
         },
     )
@@ -115,7 +115,7 @@ async def test_rejects_an_unknown_input_role(client: AsyncClient) -> None:
         json={
             "workflow_id": "text-to-video",
             "prompt": "a scene",
-            "parameters": {"duration": "5s", "aspect_ratio": "16:9", "quality": "High"},
+            "parameters": {"duration": "5s", "aspect_ratio": "16:9"},
             "inputs": {"not_a_role": "11111111-2222-3333-4444-555555555555"},
         },
     )

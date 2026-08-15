@@ -76,7 +76,7 @@ import asyncio
 import math
 import zlib
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -97,9 +97,11 @@ from worker.longform import (
     RenderStep,
     StageReporter,
     plan_musical_boundaries,
+    plan_section_prompts,
     render_chain,
 )
 from worker.media import (
+    AudioMode,
     FfmpegError,
     MediaInfo,
     OutputExpectation,
@@ -319,19 +321,42 @@ class LtxAdapter:
         seconds = self._requested_seconds(job)
         still = await self._conditioning_image(job, "source_image")
         dimensions = self._requested_dimensions(job)
+        self._record_audio_mode(job, AudioMode.GENERATED_PER_SECTION_AUDIO)
+        prompt_plan: list[str] | None = None
+
+        def prompt_for_step(step: ChainStep) -> str:
+            nonlocal prompt_plan
+            if prompt_plan is None:
+                prompt_plan = plan_section_prompts(job.prompt, step.total)
+            return prompt_plan[step.index]
 
         def conditioning(step: ChainStep) -> list[ConditioningFrame]:
-            # The uploaded still is frame one of the whole result; every later
-            # pass continues from its predecessor's last frame instead.
-            source = step.previous_frame if not step.is_first else still
-            return [ConditioningFrame(source, 0, 1.0)] if source else []
+            if step.is_first:
+                return [ConditioningFrame(still, 0, 1.0)] if still else []
+
+            items: list[ConditioningFrame] = []
+            if step.previous_frame:
+                items.append(ConditioningFrame(step.previous_frame, 0, 1.0))
+            # A predecessor frame carries temporal state but is a weak identity
+            # anchor. Keep the original upload in every I2V pass at low strength
+            # and away from frame zero, so it guides identity without resetting
+            # the section to the composition of the first image.
+            if still:
+                frames = self._frame_count(step.seconds)
+                reference_frame = min(frames - 1, max(1, frames // 3))
+                strength = job.execution_float("i2v_reference_strength", 0.2)
+                if strength > 0 and reference_frame > 0:
+                    items.append(ConditioningFrame(still, reference_frame, strength))
+            return items
 
         rendered = await render_chain(
             job,
             seconds,
             per_pass_seconds=self._per_pass_seconds(job),
             render=self._renderer(job, reporter, dimensions=dimensions,
-                                  conditioning=conditioning),
+                                  conditioning=conditioning,
+                                  prompt_for_step=prompt_for_step,
+                                  require_audio=True),
             reporter=reporter,
         )
 
@@ -339,12 +364,17 @@ class LtxAdapter:
         output = job.workspace / "output.mp4"
         info = await self._assemble(
             job,
-            # Every part came from the same model at the same grid, so the
-            # stream copy inside concat_segments applies; a single part is
-            # moved rather than re-encoded.
-            lambda: concat_segments(rendered, output),
+            # Normalize every pass to one FPS/timebase/stream layout before
+            # concat. Equal requested dimensions do not guarantee equal media
+            # timestamps, and a mismatch becomes a visible seam.
+            lambda: self._assemble_generated_sections(
+                job, rendered, output, dimensions=dimensions, audio=True
+            ),
             output,
-            OutputExpectation(expect_video=True, expected_seconds=seconds),
+            OutputExpectation(
+                expect_video=True, expect_audio=True, expected_seconds=seconds
+            ),
+            reporter,
         )
 
         await reporter.uploading()
@@ -363,6 +393,13 @@ class LtxAdapter:
         """
         staged, source = await self._staged_source(job, "source_video", kind="video")
         extension_seconds = self._requested_seconds(job)
+        prompt_plan: list[str] | None = None
+
+        def prompt_for_step(step: ChainStep) -> str:
+            nonlocal prompt_plan
+            if prompt_plan is None:
+                prompt_plan = plan_section_prompts(job.prompt, step.total)
+            return prompt_plan[step.index]
 
         await reporter.probing("Reading your video…")
         seed_frame = await self._final_frame_of(job, staged)
@@ -383,6 +420,7 @@ class LtxAdapter:
                 job, reporter,
                 dimensions=grid_for_source(source.width, source.height),
                 conditioning=conditioning,
+                prompt_for_step=prompt_for_step,
             ),
             reporter=reporter,
             prefix="continuation",
@@ -392,24 +430,41 @@ class LtxAdapter:
         await reporter.stitching()
         width, height = output_dimensions(source.width, source.height)
         fps = _delivery_fps(source)
-        keep_audio = source.has_audio
+        continuation_infos = [await probe_media(part) for part in rendered]
+        keep_audio = source.has_audio or any(info.has_audio for info in continuation_infos)
+        self._record_audio_mode(
+            job,
+            AudioMode.SOURCE_AUDIO
+            if source.has_audio
+            else (
+                AudioMode.GENERATED_PER_SECTION_AUDIO
+                if keep_audio
+                else AudioMode.NO_AUDIO
+            ),
+        )
         output = job.workspace / "output.mp4"
         expected = (source.duration_seconds or 0.0) + extension_seconds
 
         async def assemble() -> Path:
-            continuation = await concat_segments(
-                rendered, job.workspace / "continuation.mp4"
+            continuation = await self._assemble_generated_sections(
+                job,
+                rendered,
+                job.workspace / "continuation.mp4",
+                dimensions=(width, height),
+                fps=fps,
+                audio=keep_audio,
             )
-            parts = []
-            for index, clip in enumerate((staged, continuation)):
-                job.raise_if_cancelled()
-                parts.append(
-                    await normalize_clip(
-                        clip, job.workspace / f"part-{index:04d}.mp4",
-                        width=width, height=height, fps=fps, audio=keep_audio,
-                    )
-                )
-            return await concat_segments(parts, output)
+            source_part = await normalize_clip(
+                staged,
+                job.workspace / "part-0000.mp4",
+                width=width,
+                height=height,
+                fps=fps,
+                audio=keep_audio,
+            )
+            return await concat_segments(
+                [source_part, continuation], output
+            )
 
         info = await self._assemble(
             job,
@@ -423,6 +478,7 @@ class LtxAdapter:
                 # instead of failing honest 60s extensions on frame rounding.
                 tolerance_seconds=duration_tolerance(expected, floor=1.5),
             ),
+            reporter,
         )
 
         await reporter.uploading()
@@ -512,17 +568,23 @@ class LtxAdapter:
         width, height = output_dimensions(source.width, source.height)
         fps = _delivery_fps(source)
         keep_audio = source.has_audio
+        self._record_audio_mode(
+            job, AudioMode.SOURCE_AUDIO if keep_audio else AudioMode.NO_AUDIO
+        )
         output = job.workspace / "output.mp4"
 
         async def assemble() -> Path:
-            joined = await concat_segments(rendered, job.workspace / "restyled.mp4")
             # `audio=False` on purpose: the model generates its own soundtrack,
             # and a restyle that replaced the user's audio with an invented one
             # would be a bug nobody asked for. The source's own track goes back
             # on below, whole.
-            picture = await normalize_clip(
-                joined, job.workspace / "picture.mp4",
-                width=width, height=height, fps=fps, audio=False,
+            picture = await self._assemble_generated_sections(
+                job,
+                rendered,
+                job.workspace / "picture.mp4",
+                dimensions=(width, height),
+                fps=fps,
+                audio=False,
             )
             if not keep_audio:
                 return picture.replace(output)
@@ -541,6 +603,7 @@ class LtxAdapter:
                 expected_width=width,
                 expected_height=height,
             ),
+            reporter,
         )
 
         await reporter.uploading()
@@ -563,8 +626,16 @@ class LtxAdapter:
         await reporter.probing("Listening to your track…")
 
         target_seconds = track.duration_seconds or 0.0
+        self._record_audio_mode(job, AudioMode.SOURCE_AUDIO)
         dimensions = self._requested_dimensions(job)
         per_pass = self._per_pass_seconds(job)
+        prompt_plan: list[str] | None = None
+
+        def prompt_for_step(step: ChainStep) -> str:
+            nonlocal prompt_plan
+            if prompt_plan is None:
+                prompt_plan = plan_section_prompts(job.prompt, step.total)
+            return prompt_plan[step.index]
 
         boundaries = await self._musical_boundaries(job, staged, target_seconds, per_pass)
 
@@ -577,7 +648,8 @@ class LtxAdapter:
             target_seconds,
             per_pass_seconds=per_pass,
             render=self._renderer(job, reporter, dimensions=dimensions,
-                                  conditioning=conditioning),
+                                  conditioning=conditioning,
+                                  prompt_for_step=prompt_for_step),
             reporter=reporter,
             prefix="scene",
             boundaries=boundaries,
@@ -588,11 +660,12 @@ class LtxAdapter:
         output = job.workspace / "output.mp4"
 
         async def assemble() -> Path:
-            joined = await concat_segments(rendered, job.workspace / "visuals.mp4")
-            picture = await normalize_clip(
-                joined, job.workspace / "picture.mp4",
-                width=width, height=height,
-                fps=float(settings.ltx_frame_rate), audio=False,
+            picture = await self._assemble_generated_sections(
+                job,
+                rendered,
+                job.workspace / "picture.mp4",
+                dimensions=(width, height),
+                audio=False,
             )
             await reporter.muxing("Adding your track…")
             return await mux_audio(picture, staged, output)
@@ -609,6 +682,7 @@ class LtxAdapter:
                 expected_seconds=target_seconds,
                 tolerance_seconds=duration_tolerance(target_seconds, floor=1.0),
             ),
+            reporter,
         )
 
         await reporter.uploading()
@@ -642,6 +716,7 @@ class LtxAdapter:
         build,
         output: Path,
         expectation: OutputExpectation,
+        reporter: StageReporter,
     ) -> MediaInfo:
         """Runs an assembly step, then refuses to ship what it produced unless
         the file is genuinely deliverable.
@@ -652,12 +727,46 @@ class LtxAdapter:
         """
         try:
             await cancellable(job, build())
+            await reporter.finalizing("Verifying your videoâ€¦")
             return await verify_output(output, expectation)
         except FfmpegError as exc:
             raise AdapterError(
                 "This generation could not be completed. Please try again.",
                 internal_detail=f"assembly or validation failed: {exc}",
             ) from exc
+
+    async def _assemble_generated_sections(
+        self,
+        job: AdapterJob,
+        rendered: list[Path],
+        output: Path,
+        *,
+        dimensions: tuple[int, int],
+        fps: float | None = None,
+        audio: bool,
+    ) -> Path:
+        """Normalize FPS/timebase/streams before any generated-section concat."""
+        width, height = dimensions
+        normalized: list[Path] = []
+        for index, part in enumerate(rendered):
+            job.raise_if_cancelled()
+            normalized.append(
+                await normalize_clip(
+                    part,
+                    job.workspace / f"normalized-section-{index:04d}.mp4",
+                    width=width,
+                    height=height,
+                    fps=fps or float(settings.ltx_frame_rate),
+                    audio=audio,
+                )
+            )
+        return await concat_segments(normalized, output)
+
+    def _record_audio_mode(self, job: AdapterJob, mode: AudioMode) -> None:
+        logger.info(
+            "audio_mode_selected",
+            extra={"workflow_id": job.workflow_id, "audio_mode": mode.value},
+        )
 
     # ── Guardrails ───────────────────────────────────────────────────────
 
@@ -824,6 +933,8 @@ class LtxAdapter:
         *,
         dimensions: tuple[int, int],
         conditioning,
+        prompt_for_step: Callable[[ChainStep], str] | None = None,
+        require_audio: bool = False,
     ) -> RenderStep:
         """Binds this job's fixed choices into the callable the chain drives.
 
@@ -844,14 +955,33 @@ class LtxAdapter:
                     step.output,
                     conditioning=items,
                     dimensions=dimensions,
+                    prompt=(prompt_for_step(step) if prompt_for_step else None),
                     # Distinct per pass or every chained render replays the
                     # same noise; still deterministic so a retry reproduces.
-                    seed=zlib.crc32(f"{job.job_id}:{step.index}".encode()),
+                    seed=self._seed_for_step(job, step.index),
                 ),
                 reporter=reporter,
                 band=step.band,
-                section=step.section,
+                section=step.section_progress,
             )
+            if require_audio:
+                try:
+                    await verify_output(
+                        step.output,
+                        OutputExpectation(
+                            expect_video=True,
+                            expect_audio=True,
+                            expected_seconds=step.seconds,
+                        ),
+                    )
+                except FfmpegError as exc:
+                    raise AdapterError(
+                        "This generation could not be completed. Please try again.",
+                        internal_detail=(
+                            f"section {step.index + 1}/{step.total} failed media "
+                            f"validation: {exc}"
+                        ),
+                    ) from exc
 
         return render
 
@@ -878,6 +1008,7 @@ class LtxAdapter:
         conditioning: Sequence[ConditioningFrame] = (),
         dimensions: tuple[int, int] | None = None,
         seed: int | None = None,
+        prompt: str | None = None,
     ) -> list[str]:
         root = settings.ltx_models_root
         # Explicit dimensions (extension and restyle: the source's aspect
@@ -903,7 +1034,7 @@ class LtxAdapter:
             # Exactly what the user typed, as one argv element: no quoting,
             # escaping, truncation or rewriting between the text field and
             # the model. Pinned by test_the_users_prompt_reaches_the_model_verbatim.
-            "--prompt", job.prompt,
+            "--prompt", job.prompt if prompt is None else prompt,
             "--num-frames", str(frames),
             "--height", str(height),
             "--width", str(width),
@@ -925,6 +1056,16 @@ class LtxAdapter:
             cmd += item.as_args()
         return cmd
 
+    def _seed_for_step(self, job: AdapterJob, index: int) -> int:
+        requested = job.parameters.get("seed")
+        try:
+            base = int(requested) if requested is not None else None
+        except (TypeError, ValueError):
+            base = None
+        if base is None:
+            return zlib.crc32(f"{job.job_id}:{index}".encode())
+        return (base + index) % (2**31)
+
     # ── Supervision ──────────────────────────────────────────────────────
 
     async def _execute(
@@ -934,7 +1075,7 @@ class LtxAdapter:
         reporter: StageReporter,
         *,
         band: tuple[int, int] = (GENERATE_FROM, GENERATE_TO),
-        section: tuple[int, int] | None = None,
+        section: tuple[int, int, float, float] | None = None,
     ) -> None:
         """Runs the pipeline, streaming its output for progress and diagnostics.
 
@@ -995,7 +1136,13 @@ class LtxAdapter:
                 if section is None:
                     await reporter.generating(progress, message)
                 else:
-                    await reporter.section(section[0], section[1], progress)
+                    await reporter.section(
+                        section[0],
+                        section[1],
+                        progress,
+                        start_seconds=section[2],
+                        end_seconds=section[3],
+                    )
 
             returncode = await process.wait()
             if returncode != 0:

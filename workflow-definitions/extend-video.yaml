@@ -30,14 +30,14 @@ inputs:
 duration_mode: fixed
 supported_durations: ["5s", "10s", "15s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16"]
-supported_quality_levels: [Standard, High, Ultra]
+supported_quality_levels: []
 
 settings:
-  quality: true
+  quality: false
   # The motion of an extension is inherited from the source clip, so exposing a
   # motion-strength control here would be a slider that changes nothing.
   motion_strength: false
-  prompt_adherence: true
+  prompt_adherence: false
   seed: false
 
 capabilities:

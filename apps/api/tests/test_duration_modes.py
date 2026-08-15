@@ -63,7 +63,7 @@ async def test_a_sixty_second_image_to_video_duration_passes_validation(
         json={
             "workflow_id": "image-to-video",
             "prompt": "gentle push in",
-            "parameters": {"duration": "60s", "aspect_ratio": "16:9", "quality": "High"},
+            "parameters": {"duration": "60s", "aspect_ratio": "16:9"},
             "inputs": {"source_image": "00000000-0000-0000-0000-000000000000"},
         },
     )
@@ -141,7 +141,7 @@ async def test_a_missing_duration_is_rejected_where_one_is_required(
         json={
             "workflow_id": "text-to-video",
             "prompt": "A cinematic drone shot",
-            "parameters": {"aspect_ratio": "16:9", "quality": "High"},
+            "parameters": {"aspect_ratio": "16:9"},
         },
     )
     assert response.status_code == 422
@@ -157,7 +157,7 @@ async def test_a_source_workflow_rejects_a_supplied_duration(client: AsyncClient
         json={
             "workflow_id": "video-to-video",
             "prompt": "Make it look like a watercolour painting",
-            "parameters": {"duration": "10s", "aspect_ratio": "16:9", "quality": "High"},
+            "parameters": {"duration": "10s", "aspect_ratio": "16:9"},
         },
     )
     assert response.status_code == 422

@@ -116,6 +116,25 @@ export function CreatorWorkspace({
     setSelectedJobId(null);
   }, [workflow, form]);
 
+  // A second Extend stays on the same route and changes only `?source=`. React
+  // Hook Form reads `defaultValues` once, so without this reset the newly
+  // generated result never replaces the first clip as the source. That made
+  // original -> extend work, but extend -> extend silently reuse the original.
+  const lastSourceAssetId = useRef(initialSourceAssetId);
+  useEffect(() => {
+    if (
+      !initialSourceAssetId ||
+      lastSourceAssetId.current === initialSourceAssetId
+    ) {
+      return;
+    }
+    lastSourceAssetId.current = initialSourceAssetId;
+    form.reset(
+      withSourceAsset(workflow, form.getValues(), initialSourceAssetId),
+    );
+    setSubmitError(null);
+  }, [initialSourceAssetId, workflow, form]);
+
   const closePanel = useCallback(() => setPanelOpen(false), []);
   const overlayOpen = isCompact && panelOpen;
   useBodyScrollLock(overlayOpen);

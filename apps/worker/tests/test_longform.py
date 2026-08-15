@@ -25,6 +25,7 @@ from worker.longform import (
     StageReporter,
     band_for,
     plan_musical_boundaries,
+    plan_section_prompts,
     render_chain,
 )
 from worker.longform.chain import _plan
@@ -98,6 +99,55 @@ async def test_a_single_pass_job_never_mentions_sections() -> None:
 
     await stage.section(2, 4, 50)
     assert "Generating section 2 of 4…" == reported[-1][2]
+
+
+async def test_section_progress_carries_machine_readable_timing() -> None:
+    reports = []
+
+    async def capture(status, progress, message, details=None) -> None:
+        reports.append((status, progress, message, details))
+
+    stage = StageReporter(capture)
+    await stage.section(2, 3, 50, start_seconds=10.0, end_seconds=20.0)
+
+    assert reports[-1][3] == {
+        "phase": "generating",
+        "section_index": 2,
+        "section_total": 3,
+        "section_start_seconds": 10.0,
+        "section_end_seconds": 20.0,
+    }
+
+
+def test_dialogue_is_assigned_once_instead_of_replayed_per_section() -> None:
+    prompt = '''Persistent: same woman, same silver robot, solid black visor
+Section 1 / 0-10: MAYA: \"Where are we?\"
+Section 2 / 10-20: ROBOT: \"Still moving.\"
+Section 3 / 20-30: MAYA: \"Then keep going.\"'''  # noqa: E501
+
+    planned = plan_section_prompts(prompt, 3)
+
+    assert all("same woman, same silver robot, solid black visor" in item for item in planned)
+    for line in (
+        'MAYA: "Where are we?"',
+        'ROBOT: "Still moving."',
+        'MAYA: "Then keep going."',
+    ):
+        assert sum(line in item for item in planned) == 1
+    assert "restart" in planned[1].lower()
+
+
+def test_a_single_pass_prompt_remains_byte_for_byte_unchanged() -> None:
+    prompt = "  two cars — black and pearl-white\nkeep exactly 2  "
+    assert plan_section_prompts(prompt, 1) == [prompt]
+
+
+def test_inline_then_actions_are_not_replayed() -> None:
+    prompt = "black car starts, then white car overtakes, finally both stop"
+    planned = plan_section_prompts(prompt, 3)
+
+    for fragment in ("black car starts", "white car overtakes", "both stop"):
+        assert sum(fragment in item for item in planned) == 1
 
 
 @pytest.mark.parametrize("total", [1, 2, 3, 5, 12])

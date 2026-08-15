@@ -339,6 +339,7 @@ class GenerationService:
         status: JobStatus,
         progress: int,
         message: str,
+        event_payload: dict[str, Any] | None = None,
     ) -> tuple[GenerationJob | None, str]:
         result = await self._lock_and_authorize(job_id, worker_id, lease_token)
         if isinstance(result, tuple):
@@ -363,7 +364,10 @@ class GenerationService:
         await self.repo.extend_lease(job, lease_seconds=settings.job_lease_seconds)
 
         event = await self.repo.append_event(
-            job, event_type=EventType.PROGRESS, message=job.stage_hint
+            job,
+            event_type=EventType.PROGRESS,
+            message=job.stage_hint,
+            payload=event_payload,
         )
         published = event_bus.JobEvent.from_row(event)
         await self.session.commit()

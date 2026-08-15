@@ -43,7 +43,7 @@ def make_job(workspace: Path, **overrides) -> AdapterJob:
 async def collect(job: AdapterJob):
     reported: list[tuple[str, int, str]] = []
 
-    async def on_progress(status: str, progress: int, message: str) -> None:
+    async def on_progress(status: str, progress: int, message: str, _details=None) -> None:
         reported.append((status, progress, message))
 
     result = await HarnessAdapter().run(job, on_progress)

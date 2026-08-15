@@ -160,7 +160,7 @@ def text_to_video_request() -> dict:
     return {
         "workflow_id": "text-to-video",
         "prompt": "A cinematic drone shot over a neon city at dusk",
-        "parameters": {"duration": "10s", "aspect_ratio": "16:9", "quality": "High"},
+        "parameters": {"duration": "10s", "aspect_ratio": "16:9"},
     }
 
 

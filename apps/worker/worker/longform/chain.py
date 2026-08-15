@@ -84,6 +84,19 @@ class ChainStep:
         """(n, of) for customer copy — None when there is only one pass."""
         return (self.segment.index + 1, self.total) if self.total > 1 else None
 
+    @property
+    def section_progress(self) -> tuple[int, int, float, float] | None:
+        """Structured section position for worker/API/SSE progress events."""
+        if self.total <= 1:
+            return None
+        start = self.segment.start_seconds
+        return (
+            self.segment.index + 1,
+            self.total,
+            start,
+            start + self.segment.duration_seconds,
+        )
+
 
 RenderStep = Callable[[ChainStep], Awaitable[None]]
 """Produces one pass. Must write `step.output` and may report progress inside

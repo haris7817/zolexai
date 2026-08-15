@@ -121,6 +121,45 @@ async def test_last_event_id_resumes_without_replaying_what_was_seen(
     assert [e.seq for e in resumed] == [e.seq for e in full if e.seq > 2]
 
 
+async def test_section_progress_payload_survives_worker_to_sse(
+    client: AsyncClient, worker_headers: dict, text_to_video_request: dict
+) -> None:
+    job_id = (await client.post("/api/v1/generations", json=text_to_video_request)).json()[
+        "job_id"
+    ]
+    worker_id = await register(client, worker_headers)
+    job = await claim(client, worker_headers, worker_id)
+
+    response = await client.post(
+        f"/api/v1/internal/jobs/{job_id}/progress",
+        headers=worker_headers,
+        json={
+            "worker_id": worker_id,
+            "lease_token": job["lease_token"],
+            "status": "generating",
+            "progress": 50,
+            "message": "Generating section 2 of 3â€¦",
+            "phase": "generating",
+            "section_index": 2,
+            "section_total": 3,
+            "section_start_seconds": 10,
+            "section_end_seconds": 20,
+        },
+    )
+    assert response.status_code == 200
+    await client.post(f"/api/v1/generations/{job_id}/cancel")
+
+    events = await asyncio.wait_for(_drain(uuid.UUID(job_id)), timeout=20)
+    progress = next(event for event in events if event.event_type == "progress")
+    assert progress.payload == {
+        "phase": "generating",
+        "section_index": 2,
+        "section_total": 3,
+        "section_start_seconds": 10.0,
+        "section_end_seconds": 20.0,
+    }
+
+
 async def test_a_live_event_reaches_a_connected_subscriber(
     client: AsyncClient, worker_headers: dict, text_to_video_request: dict
 ) -> None:
@@ -243,7 +282,7 @@ async def test_an_unconfirmed_upload_cannot_be_used_as_input(client: AsyncClient
         json={
             "workflow_id": "image-to-video",
             "prompt": "animate this",
-            "parameters": {"duration": "5s", "aspect_ratio": "16:9", "quality": "High"},
+            "parameters": {"duration": "5s", "aspect_ratio": "16:9"},
             "inputs": {"source_image": asset_id},
         },
     )

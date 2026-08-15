@@ -450,7 +450,9 @@ async def test_cancellation_stops_the_chain_before_the_next_pass(
 
     cancelled = asyncio.Event()
 
-    async def cancel_once_generating(status: str, progress: int, message: str) -> None:
+    async def cancel_once_generating(
+        status: str, progress: int, message: str, _details=None
+    ) -> None:
         if status == "generating":
             cancelled.set()
 
