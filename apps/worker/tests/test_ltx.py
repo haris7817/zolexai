@@ -1037,7 +1037,12 @@ async def test_the_full_run_produces_a_verified_result(
     assert result.kind == "video"
     # Measured from the file, not echoed from the request.
     assert result.duration_seconds == pytest.approx(2.0, abs=0.75)
-    assert (result.width, result.height) == (896, 512)
+    # The fixture is 896x512; the result is the 16:9 render grid. The gap is
+    # the point — sections are re-encoded to one explicit dimension before
+    # concat, so a pass that came back the wrong size cannot reach the customer
+    # as a resolution change mid-video. Read from `_DIMENSIONS` so that raising
+    # a grid never silently strands this assertion on the old value again.
+    assert (result.width, result.height) == _DIMENSIONS["16:9"]
     assert result.path.parent == workspace
 
     order = [status for status, _, _ in reported]
