@@ -127,9 +127,16 @@ async def test_an_awkward_length_keeps_its_remainder(
     workspace: Path, fake_models: Path, stub_repo: Path,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """2.5 seconds against a 1-second ceiling is 1 + 1 + 0.5, and the last
+    """2.5 seconds against a 1-second ceiling is three passes, and the last
     half second is the difference between "matches the source" and "close
-    enough". The frame counts asked of the model prove where it went."""
+    enough". The frame counts asked of the model prove where it went.
+
+    The windows are EVEN — 0.833s each — rather than 1 + 1 + 0.5. The remainder
+    is redistributed, not dropped and not rounded up: a 0.5s tail is survivable,
+    but the same arithmetic on a real upload produced 0.03s tails that rendered
+    a single frame. What matters here is that the frames still add to the
+    source's length, which is asserted below.
+    """
     source = await make_clip(workspace / "source.mp4", 2.5)
     log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
 
@@ -142,7 +149,9 @@ async def test_an_awkward_length_keeps_its_remainder(
     # for as a real half-second pass, not dropped and not rounded up to a
     # fourth full one.
     frames = [int(value_of(argv, "--num-frames")) for argv in invocations(log)]
-    assert frames == [24, 24, 12], "the remainder was rounded away"
+    assert sum(frames) == 60, "the remainder was rounded away — 2.5s at 24fps is 60 frames"
+    assert frames == [20, 20, 20]
+    assert all(f > 24 // 10 for f in frames), "no pass may be a degenerate sliver"
 
 
 # ── Conditioning: the source must actually reach the model ───────────────

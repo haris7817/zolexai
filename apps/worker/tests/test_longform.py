@@ -168,8 +168,10 @@ def test_bands_tile_the_generating_range_exactly(total: int) -> None:
     ("total", "ceiling", "expected"),
     [
         (60, 30, [30, 30]),
-        (73, 30, [30, 30, 13]),  # the directive's own example
-        (42, 30, [30, 12]),
+        # The directive's own example. Greedy chunking made this 30+30+13; the
+        # windows are even now, so the same three passes are 24.33 each.
+        (73, 30, [24, 24, 24]),
+        (42, 30, [21, 21]),
         (30, 30, [30]),
         (5, 30, [5]),
     ],
@@ -177,13 +179,22 @@ def test_bands_tile_the_generating_range_exactly(total: int) -> None:
 def test_a_requested_length_becomes_passes_the_gpu_survives(
     total: float, ceiling: float, expected: list[float]
 ) -> None:
-    """The safety property the whole product rests on: a 60s render OOMed on
-    the RTX 5090, so no length the product offers may reach the GPU whole."""
+    """The safety property the whole product rests on: no length the product
+    offers may reach the GPU as a single pass beyond its measured ceiling.
+
+    The pass COUNT is what the ceiling determines, and it is unchanged by even
+    windowing — 73s at a 30s ceiling is three passes either way. What changed is
+    that the last one is no longer whatever happens to be left over, which on
+    real uploads was sometimes a fraction of a second.
+    """
     segments = _plan(total, ceiling, None)
 
     assert [round(s.duration_seconds) for s in segments] == expected
     assert all(s.duration_seconds <= ceiling for s in segments)
     assert sum(s.duration_seconds for s in segments) == pytest.approx(total)
+    assert min(s.duration_seconds for s in segments) > ceiling / 10, (
+        "a sliver pass costs a full model invocation to contribute a frame"
+    )
 
 
 def test_caller_supplied_cut_points_are_used_when_they_are_legal() -> None:
