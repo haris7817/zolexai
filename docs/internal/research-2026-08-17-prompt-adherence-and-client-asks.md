@@ -228,3 +228,67 @@ extend-of-extend chaining plus honest drift expectations.
 **6. Their hard limits look like ours.** 60s per generation, 700 MB video /
 100 MB audio uploads, 540p/720p/1080p. Useful for the restrictions table: our
 ceilings are not out of line with the reference the client trusts.
+
+---
+
+## Addendum 2 (17 Aug): the reference PYTHON engine, read in full
+
+`ltx-main/python` is the engine behind the client's reference product. It is
+LTX 2.3 and we are 2.5, but the mechanics transfer. Findings in order of how
+much they change for us:
+
+**1. Our 8k+1 discovery is their stated invariant.** `_snap_frames`: "LTX
+latent video scale requires (frames - 1) % 8 == 0", snap to nearest, ties up.
+Audio-driven paths use `_snap_frames_ceil` because "snapping down can truncate
+the conditioning audio and create one-latent mismatches" — the exact failure
+our chunk-10 hit. Two days of measurement, stated in their wrapper as a code
+comment. For the upstream report to Lightricks: the `distilled` entry point
+does not snap, their own wrappers all do.
+
+**2. LoRA + FP8/quantization is a KNOWN-BAD combination they guard against.**
+`_effective_quantization` forces quantization to NONE whenever a LoRA is
+loaded ("LoRA+FP8 fusion can use unsupported Triton fp8e4nv kernels") and they
+fit the unquantized model with `--offload cpu` (their default). EVERY one of
+our remaining a2vid (lip-sync) shape crashes ran distilled-LoRA under
+nvfp4-cast. Next GPU experiment: a2vid at 1024x576, quantization none,
+offload cpu — the resolution ceiling may simply vanish.
+
+**3. Their music video IS our lip-sync prototype, productised.** Audio-driven
+segments (default 30s on 2.3), each conditioned on its slice of the track;
+first segment takes the user image at strength <=1.0 (0.65 on retry);
+EVERY later segment pins the previous segment's final frame at strength 1.0;
+per-segment seed = seed + index; conditioning audio is normalised to STEREO
+first (mono is a known trap) and cut with +1s headroom; container padding
+(90.04s probes for a 90s MP3) is absorbed by extending the last frame at
+concat, never by rendering an extra segment.
+
+**4. They deliberately send BARE per-segment prompts.** Tried and removed
+section metadata: "segment index and timing are orchestration metadata …
+adding universal prose only dilutes the user's scene". Continuity comes from
+the pinned frame. Their EXTENSION prompt does append continuity prose (nearly
+identical wording to our continuation block). Direct tension with our
+LONG-FORM CONTINUATION headers → A/B on the GPU: headers vs bare + pinned
+frame, same seed, same track. Whichever wins, wins.
+
+**5. Person replacement mechanics, fully mapped.**
+   - *Pose transfer:* source video → DWPose ONNX (yolox_l + dw-ll_ucoco_384)
+     → OpenPose-style skeleton video → Union Control IC-LoRA conditions on the
+     skeleton; new person's photo is the first-frame anchor. "Union Control
+     does not consume ordinary RGB as pose conditioning — it expects an
+     aligned control video (DWPose/OpenPose, depth, or Canny)."
+   - *Full-body replacement:* the **In-Outpainting IC-LoRA**
+     (`Lightricks/…IC-LoRA-in-outpainting-0.9`, a repo we did not know) +
+     CPU-side OpenCV prep: tracked person boxes → loose temporal mask → GREEN
+     inpainting guide → composite that preserves every pixel outside the
+     edited region.
+   - *Head swap:* a rank-64 LoRA (`head_swap_v3_rank_64.safetensors`).
+   All three are LoRAs on the distilled model plus deterministic CPU prep —
+   no exotic runtime. Their enhancer Gemma is `gemma-3-12b-it` (ours would be
+   the gemma4 E2B-it path per the 2.5 flag help).
+
+**6. Assorted keepers.** Native-enhancer failures retry ONCE with a validated
+fallback prompt (the enhancer is never allowed to be the reason a job fails);
+`negative_prompt_supported = pipeline not in {distilled, ic_lora}` matches our
+understanding; quality ladders exist as explicit fallbacks with audit flags
+(`quality_identity_fallback_used`, `motion_retry_used`) rather than silent
+degradation.
