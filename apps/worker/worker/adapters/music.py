@@ -96,12 +96,15 @@ class MusicAdapter:
 
         self._writer = writer
         """
-        Whatever writes lyrics, when anything does.
+        Whatever writes lyrics. Resolved lazily from configuration when not
+        injected, exactly like the provider.
 
-        Still an open choice. With none configured the song plan and the user's
-        prompt still reach the provider — the current provider writes its own
-        words from those — so this being absent degrades quality rather than
-        breaking the feature.
+        This is NOT optional in practice: the current provider treats an empty
+        lyric sheet as "make an instrumental" (verified on the GPU,
+        2026-08-16), so running without a writer means no production track
+        ever has sung words. That was the client's "lyrics not present"
+        complaint. An earlier comment here claimed the provider writes its own
+        words from the prompt — it does not.
         """
 
     def supports(self, workflow_id: str) -> bool:
@@ -202,6 +205,30 @@ class MusicAdapter:
             retriable=False,
         )
 
+    def _resolve_writer(self) -> LyricsWriter | None:
+        """The configured lyrics writer, or None only when deliberately off.
+
+        Mirrors `_resolve_provider`: lazy so construction stays free, injected
+        writers win, and the import lives here so a writer with heavy
+        dependencies never taxes worker startup. Unlike the provider, an
+        unknown value degrades to no writer rather than failing the job —
+        a misconfigured writer should cost lyric quality, not the track.
+        """
+        if self._writer is not None:
+            return self._writer
+
+        choice = (settings.music_lyrics_writer or "").strip().lower()
+        if choice == "template":
+            from worker.music.writer import TemplateLyricsWriter
+
+            self._writer = TemplateLyricsWriter()
+        elif choice:
+            logger.warning(
+                "unknown_lyrics_writer",
+                extra={"configured": choice, "known": ["template"]},
+            )
+        return self._writer
+
     # ── Lyrics ───────────────────────────────────────────────────────────
 
     async def _lyrics_for(
@@ -239,10 +266,13 @@ class MusicAdapter:
         if job.parameters.get("instrumental"):
             return None
 
-        written = await write_lyrics(brief, plan, self._writer)
+        written = await write_lyrics(brief, plan, self._resolve_writer())
         if written is None:
-            # No writer configured: the provider writes its own words from the
-            # prompt and structure. Not a failure, just less controlled.
+            # Only two ways here: the plan is wordless (ambient/instrumental
+            # genres) or the writer is deliberately disabled. Returning None
+            # sends the provider an empty sheet, which it treats as a request
+            # for an instrumental — never as an invitation to write its own
+            # words. Verified on the GPU, 2026-08-16.
             return None
 
         text, review = written

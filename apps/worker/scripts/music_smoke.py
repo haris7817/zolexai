@@ -116,6 +116,19 @@ async def main() -> int:
     elapsed = time.monotonic() - started
 
     print("-" * 60)
+    # The sheet the adapter actually sent, when one was written. Empty lyrics
+    # means the provider was asked for an instrumental — seeing the words here
+    # is the difference between the two, without needing to listen first.
+    lyrics_path = workspace / "lyrics.txt"
+    if lyrics_path.is_file():
+        print("lyrics sent to the provider:")
+        for line in lyrics_path.read_text(encoding="utf-8").splitlines():
+            print(f"    {line}")
+    elif parameters.get("instrumental") or "lyrics" in parameters:
+        pass  # deliberate: user asked for an instrumental or supplied words
+    else:
+        print("lyrics:    NONE WRITTEN — the provider was asked for an instrumental")
+    print("-" * 60)
     print(f"file:      {result.path}")
     print(f"type:      {result.content_type} ({result.kind})")
     print(f"duration:  {result.duration_seconds}s (measured by ffprobe)")

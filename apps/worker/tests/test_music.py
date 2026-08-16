@@ -499,15 +499,16 @@ async def test_revision_stops_after_a_bounded_number_of_rounds() -> None:
 
 @pytest.mark.parametrize(
     ("seconds", "expected"),
-    [(60, 3), (120, 6), (180, 10), (240, 13), (300, 16)],
+    [(60, 4), (120, 9), (180, 13), (240, 18), (300, 23)],
 )
 def test_the_line_budget_scales_with_the_songs_length(
     seconds: int, expected: int
 ) -> None:
-    """Measured on the RTX 5090: eight lines inside a 60s song came back with
-    the verses silently dropped, while the same sheet across 240s sang every
-    line. A model given more words than the clock holds discards them and does
-    not say which — so the sheet has to be sized to the duration."""
+    """Measured on the GPU, and a band bounded on BOTH sides: eight lines
+    inside a 60s song came back with the verses silently dropped (too dense),
+    while five lines across 120s produced an 82-second instrumental intro
+    (too sparse). Nine lines at 120s sang everything with vocals from 30s —
+    13s/line is the densest point proven safe, and these budgets follow."""
     assert line_budget(seconds) == expected
 
 

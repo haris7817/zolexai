@@ -276,15 +276,28 @@ class WorkerSettings(BaseSettings):
     acestep_poll_seconds: float = 1.0
     """How often to ask whether the task is done."""
 
-    music_seconds_per_line: float = 18.0
+    music_seconds_per_line: float = 13.0
     """
     How much song one line of lyrics needs.
 
-    Measured on the GPU (2026-08-13) and load-bearing: eight lines requested
-    inside a 60-second song produced a track that sang **only the chorus** and
-    silently dropped both verses. The same sheet across 240 seconds sang every
-    line. So the lyric sheet has to be sized to the duration — see
+    Measured on the GPU (2026-08-13 and 2026-08-16) and load-bearing in BOTH
+    directions: eight lines inside a 60-second song sang only the chorus and
+    silently dropped both verses, while five lines across 120 seconds produced
+    an 82-second instrumental intro. Nine lines at 120s sang everything with
+    vocals from 30s — so 13s/line is the densest point proven safe. See
     `worker/music/lyrics.py:line_budget`.
+    """
+
+    music_lyrics_writer: str = "template"
+    """
+    Which lyrics writer fills the song plan with words when the customer's
+    prompt is the only input. "template" is the built-in, dependency-free
+    writer (worker/music/writer.py); empty disables writing entirely.
+
+    Load-bearing: the music model treats an empty lyric sheet as "make an
+    instrumental" (verified on the GPU, 2026-08-16), so a music platform with
+    no writer configured produces NO sung words on any track — which was the
+    client's "lyrics not present" complaint, in its entirety.
     """
 
     music_crossfade_seconds: float = 1.5

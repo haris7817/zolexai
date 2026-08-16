@@ -36,6 +36,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from worker.core.config import settings
 from worker.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -127,12 +128,20 @@ class Section:
 #: intros, instrumental breaks and repeats.
 #:
 #: This is a MEASUREMENT, not a style preference, and it is the most important
-#: number in this module. On the RTX 5090 (2026-08-13) an eight-line sheet
-#: requested inside a 60-second song came back singing **only the chorus** —
-#: both verses were silently dropped. The identical structure across 240
-#: seconds sang every line. A model given more words than the clock can hold
-#: does not compress them; it discards them, and it does not say which.
-_SECONDS_PER_LINE = 18.0
+#: number in this module — and it is a BAND, bounded on both sides:
+#:
+#:   * 8 lines at  60s (7.5s/line) → the model sang only the chorus and
+#:     silently dropped both verses (RTX 5090, 2026-08-13);
+#:   * 5 lines at 120s (24s/line)  → an 82-second instrumental intro plus
+#:     wordless padding (same session);
+#:   * 9 lines at 120s (13.3s/line) → vocals at 30s, every line sung;
+#:   * 12 lines at 240s (20s/line)  → every line sung, real arrangement.
+#:
+#: A model given more words than the clock can hold does not compress them; it
+#: discards them without saying which. Given too few, it pads with instrumental
+#: — which reads to a customer as "lyrics not present". 13s/line is the
+#: densest point proven safe, so the budget it produces is a true ceiling.
+_SECONDS_PER_LINE = 13.0
 
 
 def line_budget(total_seconds: float, seconds_per_line: float | None = None) -> int:
@@ -140,7 +149,7 @@ def line_budget(total_seconds: float, seconds_per_line: float | None = None) -> 
 
     Two is the floor: a song with one line is a loop, not a song.
     """
-    per_line = seconds_per_line or _SECONDS_PER_LINE
+    per_line = seconds_per_line or settings.music_seconds_per_line or _SECONDS_PER_LINE
     return max(2, int(total_seconds / max(1.0, per_line)))
 
 
@@ -461,9 +470,19 @@ def review_lyrics(text: str, plan: SongPlan, brief: LyricBrief | None = None) ->
         )
 
     # ── Structure ────────────────────────────────────────────────────
+    # Only the kinds a song cannot be a song without count as missing. A
+    # pre-chorus or bridge that never arrived is leanness, not a defect — and
+    # at short durations the line budget arithmetically cannot hold every
+    # planned kind at two lines each, so demanding them all would make every
+    # one-minute song unacceptable by construction.
+    essential = {"verse", "chorus", "hook", "drop", "movement"}
     wanted = [s.kind for s in plan.sections if s.carries_words]
     arrived = [tag for tag, lines in sections if lines]
-    missing = [kind for kind in dict.fromkeys(wanted) if kind not in arrived]
+    missing = [
+        kind
+        for kind in dict.fromkeys(wanted)
+        if kind in essential and kind not in arrived
+    ]
     if missing:
         issues.append(
             LyricIssue("structure", f"the plan asks for {missing} and the draft has none")

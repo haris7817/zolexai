@@ -35,6 +35,7 @@ from worker.music.provider import (
     ProviderProgress,
     ProviderUnavailable,
 )
+from worker.music.writer import TemplateLyricsWriter, detect_mood, extract_subject
 
 __all__ = [
     "LyricBrief",
@@ -50,8 +51,11 @@ __all__ = [
     "ProviderUnavailable",
     "Section",
     "SongPlan",
+    "TemplateLyricsWriter",
     "check_lyric_fit",
     "detect_genre",
+    "detect_mood",
+    "extract_subject",
     "line_budget",
     "lines_rhyme",
     "parse_sections",
