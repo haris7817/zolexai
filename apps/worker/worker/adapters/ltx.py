@@ -134,20 +134,57 @@ _MODEL_FILES: dict[str, str] = {
 }
 
 #: LTX's two-stage pipeline requires dimensions divisible by 64 — 480x848 was
-#: rejected outright in benchmarking. These are the closest /64 grids to the
-#: product's aspect ratios; 896x512 is the exact configuration measured on the
-#: RTX 5090, the others scale within the same pixel budget.
+#: rejected outright in benchmarking.
+#:
+#: These grids were re-measured on the RTX PRO 6000 on 16 Aug 2026, after NATTEN
+#: replaced the failing Triton fallback kernel (see `_GRID_CEILINGS`). The
+#: previous set was inherited from the RTX 5090's 32 GB and was roughly a third
+#: smaller than this card sustains.
 _DIMENSIONS: dict[str, tuple[int, int]] = {
-    "16:9": (896, 512),
-    "9:16": (512, 896),
-    "1:1": (640, 640),
+    "16:9": (1024, 576),
+    "9:16": (576, 1024),
+    "1:1": (768, 768),
+    # 4:5 is the odd one out. Exact 4:5 on a /64 lattice is only 512x640, then
+    # 768x960, then 1024x1280 — there is no intermediate, and 768x960 fails.
     "4:5": (512, 640),
 }
-_DEFAULT_DIMENSIONS = (896, 512)
+_DEFAULT_DIMENSIONS = (1024, 576)
 
-#: The largest frame the RTX 5090 benchmark proved (896x512). Grids chosen for
-#: arbitrary source aspects must stay within it or a 30s pass OOMs again.
-_PIXEL_BUDGET = 896 * 512
+#: Single-pass ceilings **measured per grid**, in seconds. Not derived.
+#:
+#: The VAE fails on a *set of bad shapes*, not above a size threshold, and the
+#: set follows no rule anyone has been able to predict. Measured on this card at
+#: 60s: 1024x576 passes, 896x512 fails, 1152x640 fails, 768x960 fails. A larger
+#: grid passing where a smaller one fails rules out every "budget" model, so
+#: nothing here may be interpolated or extrapolated — a grid that is not in this
+#: table has not been run, and gets `_UNMEASURED_CEILING`.
+#:
+#: Before NATTEN this whole table was effectively 10s, because one global value
+#: had to satisfy the worst aspect ratio. That cost every 60s render five seams.
+_GRID_CEILINGS: dict[tuple[int, int], float] = {
+    # current product grids — all proven to 60s, the longest length offered
+    (1024, 576): 60.0,
+    (576, 1024): 60.0,
+    (768, 768): 60.0,
+    (512, 640): 60.0,
+    # previous grids, kept because a source's own aspect can still select them
+    (896, 512): 30.0,  # 60s FAILS: CUBLAS_STATUS_INTERNAL_ERROR
+    (512, 896): 60.0,
+    (640, 640): 60.0,
+}
+
+#: What an unmeasured grid is allowed. Deliberately pessimistic: 10s was the
+#: last value proven safe across every shape the product offered, and a grid
+#: absent from `_GRID_CEILINGS` is by definition one nobody has run.
+_UNMEASURED_CEILING = 10.0
+
+#: The largest frame measured on this card (1024x576 == 768x768 == 589,824 px).
+#: A source's own aspect may still synthesise a grid that is not in
+#: `_GRID_CEILINGS` — a 4:3 upload has no measured grid, and forcing it to 16:9
+#: would make the model keep the style and replace the subject, which is worse
+#: than a shorter pass. Such a grid renders at its true aspect and takes
+#: `_UNMEASURED_CEILING`, so it is chained rather than gambled on.
+_PIXEL_BUDGET = 1024 * 576
 
 #: Delivery is at the source's own resolution (a user's 1080p clip must not
 #: come back as 512p), capped at full HD — beyond that the normalization
@@ -199,13 +236,18 @@ def grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
 
     grids = [
         (w, h)
-        for h in range(256, 897, 64)
-        for w in range(256, 897, 64)
+        for h in range(256, 1025, 64)
+        for w in range(256, 1025, 64)
         if w * h <= _PIXEL_BUDGET
     ]
     # Within a small aspect error the crop is invisible and more pixels win —
-    # otherwise 576x320 (1.80) would beat 896x512 (1.75) for a 16:9 source on
-    # a 1% aspect technicality while halving the frame.
+    # otherwise 576x320 (1.80) would beat 1024x576 (1.78) for a 16:9 source on
+    # a 1% aspect technicality while shrinking the frame.
+    #
+    # Grids reached this way may have no entry in `_GRID_CEILINGS`. That is
+    # deliberate: matching the source's aspect matters more than a long pass,
+    # and an unmeasured grid is chained at `_UNMEASURED_CEILING` rather than
+    # run at a length nobody has proven for that shape.
     close = [grid for grid in grids if error(grid) <= 0.08]
     if close:
         return max(close, key=lambda grid: (grid[0] * grid[1], -error(grid)))
@@ -352,7 +394,7 @@ class LtxAdapter:
         rendered = await render_chain(
             job,
             seconds,
-            per_pass_seconds=self._per_pass_seconds(job),
+            per_pass_seconds=self._per_pass_seconds(job, dimensions),
             render=self._renderer(job, reporter, dimensions=dimensions,
                                   conditioning=conditioning,
                                   prompt_for_step=prompt_for_step,
@@ -408,17 +450,20 @@ class LtxAdapter:
             frame = step.previous_frame
             return [ConditioningFrame(frame, 0, 1.0)] if frame else []
 
+        # The grid follows the SOURCE's aspect, not the request's: the I2V
+        # benchmark showed a mismatched aspect makes the model keep the style
+        # and replace the subject, which at a seam means a different video
+        # after the join. Bound once so the pass ceiling is derived from the
+        # shape actually rendered rather than the requested aspect's.
+        grid = grid_for_source(source.width, source.height)
+
         rendered = await render_chain(
             job,
             extension_seconds,
-            per_pass_seconds=self._per_pass_seconds(job),
-            # The grid follows the SOURCE's aspect, not the request's: the I2V
-            # benchmark showed a mismatched aspect makes the model keep the
-            # style and replace the subject, which at a seam means a different
-            # video after the join.
+            per_pass_seconds=self._per_pass_seconds(job, grid),
             render=self._renderer(
                 job, reporter,
-                dimensions=grid_for_source(source.width, source.height),
+                dimensions=grid,
                 conditioning=conditioning,
                 prompt_for_step=prompt_for_step,
             ),
@@ -558,7 +603,7 @@ class LtxAdapter:
         rendered = await render_chain(
             job,
             target_seconds,
-            per_pass_seconds=self._per_pass_seconds(job),
+            per_pass_seconds=self._per_pass_seconds(job, grid),
             render=self._renderer(job, reporter, dimensions=grid, conditioning=conditioning),
             reporter=reporter,
             prefix="restyled",
@@ -628,7 +673,7 @@ class LtxAdapter:
         target_seconds = track.duration_seconds or 0.0
         self._record_audio_mode(job, AudioMode.SOURCE_AUDIO)
         dimensions = self._requested_dimensions(job)
-        per_pass = self._per_pass_seconds(job)
+        per_pass = self._per_pass_seconds(job, dimensions)
         prompt_plan: list[str] | None = None
 
         def prompt_for_step(step: ChainStep) -> str:
@@ -911,15 +956,33 @@ class LtxAdapter:
             str(job.parameters.get("aspect_ratio") or ""), _DEFAULT_DIMENSIONS
         )
 
-    def _per_pass_seconds(self, job: AdapterJob) -> float:
-        """The most this GPU may be asked for in one invocation.
+    def _per_pass_seconds(
+        self, job: AdapterJob, dimensions: tuple[int, int] | None = None
+    ) -> float:
+        """The most this GPU may be asked for in one invocation, for THIS shape.
 
-        A workflow can lower it via `execution.max_segment_seconds` (smaller
-        passes, more of them); nothing raises it above the benchmarked
-        default, because that is where the out-of-memory failure lives.
+        The ceiling is a property of the grid, not of the product. 1024x576
+        sustains 60s while 896x512 — fewer pixels — dies at 60s and survives 30s.
+        A single global value therefore has to satisfy the worst shape offered,
+        which is how every 60s render came to be split into six passes with five
+        seams when only one aspect ratio needed it.
+
+        `dimensions` is passed by every caller that knows the grid, which is all
+        of them; the default exists so the ceiling can still be asked for
+        generically. A workflow may lower it further via
+        `execution.max_segment_seconds` — nothing raises it above what the grid
+        was measured at, because that is where the kernel failure lives.
         """
+        grid = dimensions or self._requested_dimensions(job)
+        measured = _GRID_CEILINGS.get(grid, _UNMEASURED_CEILING)
         requested = float(job.execution_int("max_segment_seconds", settings.ltx_max_seconds))
-        return max(1.0, min(requested, float(settings.ltx_max_seconds)))
+        # Three clamps, all lowering: the workflow's own override, the
+        # operational brake, and what this grid was actually measured at.
+        # `settings.ltx_max_seconds` is kept in the chain so one environment
+        # variable can still pull every shape down mid-incident without a
+        # deploy — that lever saved the product on 14 Aug and must not be
+        # quietly removed by making the ceiling per-shape.
+        return max(1.0, min(requested, float(settings.ltx_max_seconds), measured))
 
     def _frame_count(self, seconds: float) -> int:
         return max(1, round(seconds * settings.ltx_frame_rate))

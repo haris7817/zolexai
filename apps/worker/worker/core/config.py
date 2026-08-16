@@ -197,11 +197,24 @@ class WorkerSettings(BaseSettings):
     side; the VRAM ceiling is an engineering fact independent of it).
     """
 
-    ltx_max_seconds: int = 30
+    ltx_max_seconds: int = 60
     """
-    Longest single-pass generation the GPU survived in benchmarking. 30s
-    completed (with VRAM pressure during audio decode); 60s hard-OOMed at
-    29.6/31.4 GiB. Long-form beyond this is the segmentation layer's job.
+    Operational brake on single-pass length, not the real ceiling.
+
+    The real ceiling is per-grid and lives in `adapters/ltx._GRID_CEILINGS`,
+    because the VAE fails on particular shapes rather than above a size: on the
+    RTX PRO 6000, 1024x576 sustains 60s while 896x512 — fewer pixels — does not.
+    A single global number can only ever encode the worst shape, which is how
+    every 60s render came to be six passes with five seams.
+
+    This value is the emergency lever: lowering it via the environment pulls
+    every shape down immediately, with no deploy. That is exactly what
+    contained the 14 Aug incident, so it stays in the clamp chain.
+
+    60 because that is the longest length the product offers and every current
+    grid was measured at it (16 Aug 2026, after NATTEN replaced the failing
+    Triton fallback kernel). Raising it above 60 does nothing on its own — a
+    grid still cannot exceed its measured entry.
     """
 
     ltx_frame_rate: int = 24

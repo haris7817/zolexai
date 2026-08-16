@@ -40,6 +40,8 @@ from worker.adapters.base import (
     JobTimedOut,
 )
 from worker.adapters.ltx import (
+    _DIMENSIONS,
+    _GRID_CEILINGS,
     _MARKERS,
     ConditioningFrame,
     LtxAdapter,
@@ -273,10 +275,10 @@ def test_a_workflow_cannot_raise_the_per_pass_ceiling_above_the_benchmark(
     workspace: Path,
 ) -> None:
     """`execution.max_segment_seconds` may make passes SMALLER. A typo that
-    made them bigger would put the out-of-memory failure back on the table,
-    so the benchmarked value is a hard clamp rather than a default."""
+    made them bigger would put the kernel failure back on the table, so the
+    measured value is a hard clamp rather than a default."""
     adapter = LtxAdapter()
-    assert adapter._per_pass_seconds(make_job(workspace)) == 30.0
+    assert adapter._per_pass_seconds(make_job(workspace)) == 60.0
     assert (
         adapter._per_pass_seconds(
             make_job(workspace, execution={"runtime": "ltx", "max_segment_seconds": 10})
@@ -287,8 +289,36 @@ def test_a_workflow_cannot_raise_the_per_pass_ceiling_above_the_benchmark(
         adapter._per_pass_seconds(
             make_job(workspace, execution={"runtime": "ltx", "max_segment_seconds": 600})
         )
-        == 30.0
+        == 60.0
     )
+
+
+def test_the_pass_ceiling_is_a_property_of_the_grid_not_the_product(
+    workspace: Path,
+) -> None:
+    """The whole point of measuring per shape.
+
+    896x512 holds FEWER pixels than 1024x576 and dies at 60s where 1024x576
+    survives, so no size-derived rule can produce these two numbers. Both come
+    from running them (16 Aug 2026). A global ceiling had to satisfy the worst
+    shape, which cost every 60s render five seams it did not need.
+    """
+    adapter = LtxAdapter()
+    job = make_job(workspace)
+    assert adapter._per_pass_seconds(job, (1024, 576)) == 60.0
+    assert adapter._per_pass_seconds(job, (896, 512)) == 30.0
+
+
+def test_an_unmeasured_grid_gets_the_pessimistic_ceiling(workspace: Path) -> None:
+    """A shape absent from the table has never been executed.
+
+    Because the failure is a set of bad shapes rather than a size threshold,
+    an unrun grid cannot be assumed safe by being small — 768x960 fails while
+    the larger 1024x576 passes. Unknown therefore means the last value proven
+    across every shape, not an interpolation.
+    """
+    adapter = LtxAdapter()
+    assert adapter._per_pass_seconds(make_job(workspace), (704, 704)) == 10.0
 
 
 @needs_ffmpeg
@@ -599,11 +629,11 @@ def extension_stub(
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
-        ((1920, 1080), (896, 512)),
-        ((1080, 1920), (512, 896)),
-        ((720, 720), (640, 640)),
-        ((160, 120), (768, 576)),  # 4:3 has an exact in-budget grid
-        ((None, None), (896, 512)),
+        ((1920, 1080), (1024, 576)),
+        ((1080, 1920), (576, 1024)),
+        ((720, 720), (768, 768)),
+        ((160, 120), (1024, 768)),  # 4:3 has an exact in-budget grid
+        ((None, None), (1024, 576)),
     ],
 )
 def test_the_generation_grid_follows_the_source_aspect(source, expected) -> None:
@@ -613,11 +643,25 @@ def test_the_generation_grid_follows_the_source_aspect(source, expected) -> None
     assert grid_for_source(*source) == expected
 
 
+def test_a_source_aspect_keeps_its_shape_even_without_a_measured_ceiling() -> None:
+    """Aspect fidelity outranks pass length.
+
+    A 4:3 upload has no measured grid. Snapping it to the nearest measured one
+    would be a 16:9 render of a 4:3 source, and a mismatched aspect is what made
+    the model keep the style and replace the subject. So it renders at its true
+    shape and is chained at the pessimistic ceiling instead — a seam is
+    recoverable, a swapped subject is not.
+    """
+    grid = grid_for_source(160, 120)
+    assert abs(grid[0] / grid[1] - 4 / 3) < 0.05
+    assert grid not in _GRID_CEILINGS, "test is meaningless if this becomes measured"
+
+
 def test_every_reachable_grid_is_legal_for_the_model() -> None:
     for width, height in [(w, h) for w in (100, 640, 1280, 3840) for h in (90, 480, 2160)]:
         gw, gh = grid_for_source(width, height)
         assert gw % 64 == 0 and gh % 64 == 0
-        assert gw * gh <= 896 * 512, "beyond the measured VRAM budget"
+        assert gw * gh <= 1024 * 576, "beyond the measured budget"
 
 
 @pytest.mark.parametrize(
@@ -626,7 +670,7 @@ def test_every_reachable_grid_is_legal_for_the_model() -> None:
         ((3840, 2160), (1920, 1080)),  # 4K capped to full HD
         ((1080, 1920), (1080, 1920)),  # portrait full HD is already legal
         ((161, 121), (160, 120)),      # odd sizes rounded even for yuv420p
-        ((None, None), (896, 512)),
+        ((None, None), (1024, 576)),
     ],
 )
 def test_output_resolution_is_the_sources_capped_and_even(source, expected) -> None:
@@ -635,14 +679,29 @@ def test_output_resolution_is_the_sources_capped_and_even(source, expected) -> N
     assert output_dimensions(*source) == expected
 
 
-@pytest.mark.parametrize(
-    ("duration", "passes"), [("5s", 1), ("10s", 1), ("15s", 1), ("30s", 1), ("60s", 2)]
-)
-def test_the_public_durations_map_to_the_measured_pass_ceiling(duration, passes) -> None:
-    """The client contract (5/10/15/30/60) against the GPU fact (30s max per
-    pass): 60 seconds is two chained renders, everything else is one."""
+@pytest.mark.parametrize("duration", ["5s", "10s", "15s", "30s", "60s"])
+def test_every_public_duration_is_a_single_pass_on_a_measured_grid(duration) -> None:
+    """The client contract (5/10/15/30/60) against the GPU fact.
+
+    Before NATTEN the per-pass ceiling was 10s, so a 60s render was six passes
+    with five seams — and every boundary symptom the client reported (action
+    replay, identity drift, the visible pause) can only occur AT a boundary.
+    Measured 16 Aug on the RTX PRO 6000, every current grid sustains 60s in one
+    pass, so the product's whole duration range is now seamless.
+
+    This is the regression guard for that: if a grid's ceiling is ever lowered
+    below 60, this fails and says exactly which duration started chaining again.
+    """
     seconds = float(duration.rstrip("s"))
-    assert len(plan_segments(seconds, max_segment_seconds=30)) == passes
+    adapter = LtxAdapter()
+    job = make_job(Path("."))
+    for aspect, grid in _DIMENSIONS.items():
+        # The grid is passed explicitly, so the job's own aspect is irrelevant —
+        # this asks each shape directly what it was measured at.
+        ceiling = adapter._per_pass_seconds(job, grid)
+        assert len(plan_segments(seconds, max_segment_seconds=ceiling)) == 1, (
+            f"{aspect} {grid} chains at {duration} (ceiling {ceiling}s)"
+        )
 
 
 def test_the_extension_command_pins_dimensions_and_seed(workspace: Path) -> None:
