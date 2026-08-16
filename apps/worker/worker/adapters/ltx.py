@@ -599,7 +599,16 @@ class LtxAdapter:
         continuation, both normalized to one set of encoder parameters at the
         source's own (capped) resolution.
         """
-        staged, source = await self._staged_source(job, "source_video", kind="video")
+        # Extension gets its own, far looser source ceiling: the GPU renders
+        # only the continuation, so the source's length prices as one ffmpeg
+        # re-encode rather than as render passes. Holding it to the render
+        # ceiling is what made extend-of-extend stop working at 5½ minutes.
+        staged, source = await self._staged_source(
+            job,
+            "source_video",
+            kind="video",
+            limit_seconds=float(settings.ltx_max_extend_source_seconds),
+        )
         extension_seconds = self._requested_seconds(job)
         prompt_plan: list[str] | None = None
 
@@ -1033,7 +1042,12 @@ class LtxAdapter:
             )
 
     async def _staged_source(
-        self, job: AdapterJob, role: str, *, kind: str
+        self,
+        job: AdapterJob,
+        role: str,
+        *,
+        kind: str,
+        limit_seconds: float | None = None,
     ) -> tuple[Path, MediaInfo]:
         """The uploaded file and its measurements, or a clear refusal.
 
@@ -1095,7 +1109,12 @@ class LtxAdapter:
         # The bound that stops a job running for hours. Nothing capped this,
         # so an hour-long upload became ~120 render passes: it could not finish
         # inside its own timeout, and it held the card until it failed.
-        limit = float(settings.ltx_max_source_seconds)
+        # `limit_seconds` lets a workflow whose render cost does NOT scale with
+        # the source (extension: the source is re-encoded, never re-rendered)
+        # carry a looser bound than the render-length default.
+        limit = float(
+            limit_seconds if limit_seconds is not None else settings.ltx_max_source_seconds
+        )
         if info.duration_seconds > limit:
             raise AdapterError(
                 f"That {noun} is {_minutes(info.duration_seconds)} long, and "

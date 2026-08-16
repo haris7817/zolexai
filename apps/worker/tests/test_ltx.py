@@ -40,6 +40,7 @@ from worker.adapters.base import (
     GenerationAdapter,
     JobCancelled,
     JobTimedOut,
+    parse_duration_seconds,
 )
 from worker.adapters.ltx import (
     _DIMENSIONS,
@@ -256,6 +257,10 @@ async def test_a_source_conditioned_job_never_reaches_the_plain_generation_path(
         ("image-to-video", "30s", 1),
         ("image-to-video", "60s", 2),
         ("extend-video", "60s", 2),
+        # The long end of the extension ladder (client ask #1, 17 Aug 2026) —
+        # minutes of continuation are still nothing but conforming passes.
+        ("extend-video", "2m", 4),
+        ("extend-video", "5m", 10),
     ],
 )
 def test_no_public_duration_can_become_an_oversized_gpu_pass(
@@ -268,7 +273,8 @@ def test_no_public_duration_can_become_an_oversized_gpu_pass(
     measured ceiling. This asserts both halves: the count, and that no single
     pass exceeds it.
     """
-    seconds = float(duration.rstrip("s"))
+    seconds = parse_duration_seconds(duration)
+    assert seconds is not None
     segments = plan_segments(seconds, max_segment_seconds=30)
 
     assert len(segments) == passes
@@ -844,6 +850,48 @@ async def test_a_corrupt_source_fails_without_burning_retries(
 
     assert raised.value.retriable is False
     assert "video" in raised.value.user_message.lower()
+
+
+@needs_ffmpeg
+async def test_an_extension_source_is_not_held_to_the_render_source_ceiling(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Client ask #1 ("make video extension unlimited"), the half that was
+    actually broken: the second extension's SOURCE is the first extension's
+    output, so holding extensions to `ltx_max_source_seconds` capped the chain
+    at 5½ minutes total. Extension renders only the continuation — the source
+    is re-encoded, never re-rendered — so it carries its own, looser ceiling.
+
+    The render ceiling is pinned BELOW this test's source; if the extension
+    path ever consults it again, this refuses instead of rendering.
+    """
+    monkeypatch.setattr(settings, "ltx_max_source_seconds", 1.0)
+    source = await make_clip(workspace / "source.mp4", 2.0, audio=True)
+    fixture = await make_clip(tmp_path / "render.mp4", 2.0)
+    extension_stub(tmp_path, monkeypatch, fixture)
+
+    result, _ = await collect(make_extension_job(workspace, source))
+
+    assert result.duration_seconds == pytest.approx(4.0, abs=1.0)
+
+
+@needs_ffmpeg
+async def test_an_extension_source_beyond_its_own_ceiling_is_refused_before_compute(
+    workspace: Path, fake_models: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The looser ceiling is still a ceiling — an unbounded upload is ffmpeg
+    time and disk on a card other customers are queued for. Same contract as
+    the music-video refusal: immediate, named lengths, not retriable."""
+    monkeypatch.setattr(settings, "ltx_max_extend_source_seconds", 1.0)
+    source = await make_clip(workspace / "source.mp4", 2.0)
+
+    with pytest.raises(AdapterError) as raised:
+        await collect(make_extension_job(workspace, source))
+
+    assert raised.value.retriable is False
+    assert "trim" in raised.value.user_message.lower()
+    assert "source ceiling" in raised.value.internal_detail
 
 
 @needs_ffmpeg

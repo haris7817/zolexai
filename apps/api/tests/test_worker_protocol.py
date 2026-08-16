@@ -298,10 +298,15 @@ async def test_a_long_prompt_is_rejected_rather_than_silently_shortened(
     client: AsyncClient, text_to_video_request: dict
 ) -> None:
     """Truncation would be the worst outcome: the job would succeed while
-    quietly generating from something other than what was asked for."""
+    quietly generating from something other than what was asked for.
+
+    One past the ceiling, not a round large number: the limit was raised to
+    the API maximum (37e301f, client request 14 Aug 2026) and a hard-coded
+    5000 quietly became a VALID prompt, which inverted this test's meaning.
+    """
     response = await client.post(
         "/api/v1/generations",
-        json={**text_to_video_request, "prompt": "x" * 5000},
+        json={**text_to_video_request, "prompt": "x" * 20_001},
     )
     assert response.status_code == 422
     assert "prompt" in response.text

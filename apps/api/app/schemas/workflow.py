@@ -26,7 +26,8 @@ AssetKindLiteral = Literal["video", "image", "audio"]
 DurationMode = Literal["fixed", "source", "minutes"]
 """How a workflow's output duration is decided (M2, client requirement §5/8/10).
 
-  `fixed`   — the user picks from `supported_durations` ("5s", "10s", …).
+  `fixed`   — the user picks from `supported_durations` ("5s", "10s", …; the
+              long end of a ladder may be written in minutes, "2m", "5m").
   `source`  — the duration comes from the uploaded source file; the user picks
               nothing and a request supplying a duration is rejected. Video to
               Video and Music Video work this way: a 45-second source yields a
@@ -224,12 +225,22 @@ class WorkflowDefinition(BaseModel):
         else:
             if not self.supported_durations:
                 raise ValueError(f"duration_mode '{self.duration_mode}' needs supported_durations")
-            suffix = "m" if self.duration_mode == "minutes" else "s"
-            bad = [d for d in self.supported_durations if not _is_duration(d, suffix)]
+            # `minutes` is single-unit by design — mixing units in Music's list
+            # is the drift the modes exist to stop. `fixed` is a ladder of
+            # exact lengths and may span units: Extend Video runs "5s" through
+            # "5m" (client ask #1, 17 Aug 2026), and forcing that long end to
+            # be written "300s" would push the unit conversion into every UI.
+            suffixes = ("m",) if self.duration_mode == "minutes" else ("s", "m")
+            bad = [
+                d
+                for d in self.supported_durations
+                if not any(_is_duration(d, suffix) for suffix in suffixes)
+            ]
             if bad:
                 raise ValueError(
                     f"duration_mode '{self.duration_mode}' entries must look like "
-                    f"'30{suffix}'; got {bad}"
+                    + " or ".join(f"'30{suffix}'" for suffix in suffixes)
+                    + f"; got {bad}"
                 )
 
         return self

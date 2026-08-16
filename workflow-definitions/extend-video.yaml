@@ -21,14 +21,24 @@ inputs:
     required: true
     label: SOURCE VIDEO
     drop_hint: a video
+    # Far looser than the 5-minute rule on Music Video and Video to Video, and
+    # deliberately so: those render the whole source, an extension renders only
+    # the continuation. The source is kept as-is and continued from its final
+    # frame, so its length prices as encoding, not generation. Worker-side
+    # ceiling is LTX_MAX_EXTEND_SOURCE_SECONDS; keep the two in step.
+    help: Up to 30 minutes. Your video is kept as-is and continued from its final frame.
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
 
-# The five extension outcomes the client asked for, exactly (CR-008). Longer
-# ones may be produced by chained generation behind the scenes — that is the
-# backend's business, and the option list must not shrink because of it.
+# The five outcomes of CR-008, plus the long end (client ask #1, 17 Aug 2026:
+# "make video extension unlimited"). Unlimited-the-noun is the pair of facts
+# that every result can itself be extended and that the source ceiling above is
+# far past anything a chain of extensions produces in practice; this list is
+# just how far ONE step can go. Longer entries are produced by chained
+# generation behind the scenes — that is the backend's business, and the option
+# list must not shrink because of it.
 duration_mode: fixed
-supported_durations: ["5s", "10s", "15s", "30s", "60s"]
+supported_durations: ["5s", "10s", "15s", "30s", "60s", "2m", "5m"]
 supported_aspect_ratios: ["16:9", "9:16"]
 supported_quality_levels: []
 
@@ -59,6 +69,12 @@ execution:
   # Deterministic prompt structuring — see text-to-video.yaml for the full
   # note and apps/worker/worker/longform/enhance.py for the rules.
   prompt_structuring: true
+
+  # A five-minute continuation is the same order of work as Music Video's
+  # longest job (same chained passes, same assembly), and a long source adds
+  # re-encoding time on top. The default 30-minute budget would kill exactly
+  # the jobs the 2m/5m options above exist to allow.
+  timeout_seconds: 7200
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

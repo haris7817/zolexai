@@ -238,6 +238,24 @@ class WorkerSettings(BaseSettings):
     track" and a job that appears to hang.
     """
 
+    ltx_max_extend_source_seconds: float = 1800.0
+    """
+    Longest source Extend Video will continue from — deliberately far looser
+    than `ltx_max_source_seconds`, because the cost model is different in kind.
+
+    For music video and restyle the source's length IS the render bill: every
+    second of upload is a second the model must generate. An extension renders
+    only the requested continuation; the source contributes its final frame and
+    is then re-encoded once on the CPU for the stitch. Holding extensions to
+    the render ceiling anyway is what made "extend it again" stop working at
+    five and a half minutes total — the second extension's SOURCE was the first
+    extension's output (client ask #1, 17 Aug 2026).
+
+    30 minutes bounds what the ceiling actually protects here — ffmpeg time,
+    disk, and the upload itself — while being far past anything a chain of
+    generated-then-extended videos reaches in practice.
+    """
+
     # ── Music runtime (M2) ───────────────────────────────────────────────
     #
     # No music model is selected yet (docs/milestones.md tracks it as a pending

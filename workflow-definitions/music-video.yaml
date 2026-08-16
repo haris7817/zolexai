@@ -29,7 +29,12 @@ inputs:
     # in step.
     help: Up to 5 minutes. The video is generated to match your whole track.
     accept: ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg"]
-    max_size_mb: 64
+    # 200 matches the platform's audio ceiling (see MAX_SIZE_BYTES in
+    # apps/api/app/services/storage.py). The old 64 was sized for MP3s and
+    # silently refused honest lossless uploads — a five-minute stereo WAV is
+    # 50-85 MB. Bytes were never the work bound anyway; the 5-minute LENGTH
+    # rule above is, and it is enforced before any compute is spent.
+    max_size_mb: 200
 
 # Duration is automatic (CR-007): the final video matches the full uploaded
 # track — a 30-second song yields a 30-second video, a 4-minute song a 4-minute

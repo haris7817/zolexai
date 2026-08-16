@@ -4,7 +4,8 @@ Three behaviours were asked for by name (change log CR-006..CR-009):
 
   * Video to Video and Music Video take their duration from the uploaded file
     automatically — the user is never offered a choice.
-  * Video Extension offers exactly 5 / 10 / 15 / 30 / 60 seconds.
+  * Video Extension offers 5 / 10 / 15 / 30 / 60 seconds (CR-008), extended to
+    2 and 5 minutes for client ask #1 (17 Aug 2026).
   * Music is chosen in minutes, not video-style second presets.
 
 These tests pin the public catalogue, the request validation and the startup
@@ -25,13 +26,17 @@ from app.services.workflow_registry import WorkflowRegistryError, load_registry
 # ── The catalogue serves the modes the client asked for ──────────────────
 
 
-async def test_extension_offers_exactly_the_five_requested_durations(
+async def test_extension_offers_the_requested_ladder_up_to_five_minutes(
     client: AsyncClient,
 ) -> None:
-    """CR-008, verbatim: 5 / 10 / 15 / 30 / 60 seconds."""
+    """CR-008's five values, plus the long end added for client ask #1
+    (17 Aug 2026, "make video extension unlimited"): a single step now goes to
+    five minutes, and any result can itself be extended again."""
     workflow = (await client.get("/api/v1/workflows/extend-video")).json()
     assert workflow["duration_mode"] == "fixed"
-    assert workflow["supported_durations"] == ["5s", "10s", "15s", "30s", "60s"]
+    assert workflow["supported_durations"] == [
+        "5s", "10s", "15s", "30s", "60s", "2m", "5m",
+    ]
 
 
 async def test_image_to_video_offers_the_same_five_durations(
@@ -71,6 +76,27 @@ async def test_a_sixty_second_image_to_video_duration_passes_validation(
     fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
     assert "duration" not in fields, "60s must be a valid Image to Video length"
     assert fields == {"inputs.source_image"}
+
+
+async def test_a_five_minute_extension_duration_passes_validation(
+    client: AsyncClient,
+) -> None:
+    """Same proof shape as the 60s test above, for the extension ladder's new
+    long end: the nonexistent source is complained about, the duration is not,
+    so "5m" cleared validation."""
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "workflow_id": "extend-video",
+            "prompt": "the chase continues through the old town",
+            "parameters": {"duration": "5m", "aspect_ratio": "16:9"},
+            "inputs": {"source_video": "00000000-0000-0000-0000-000000000000"},
+        },
+    )
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert "duration" not in fields, "5m must be a valid extension length"
+    assert fields == {"inputs.source_video"}
 
 
 @pytest.mark.parametrize("workflow_id", ["video-to-video", "music-video"])
@@ -236,6 +262,37 @@ def test_minutes_mode_rejects_second_style_entries(tmp_path: Path) -> None:
         _definition("""
             duration_mode: minutes
             supported_durations: ["30s", "1m"]
+        """),
+    )
+    with pytest.raises(WorkflowRegistryError, match="must look like"):
+        load_registry(tmp_path)
+
+
+def test_fixed_mode_accepts_minutes_at_the_long_end_of_a_ladder(tmp_path: Path) -> None:
+    """`fixed` is a ladder of exact lengths, and a ladder may span units —
+    Extend Video runs "5s" through "5m" (client ask #1, 17 Aug 2026). Only
+    `minutes` mode is single-unit by design; see the test above."""
+    _write(
+        tmp_path,
+        "sample.yaml",
+        _definition("""
+            duration_mode: fixed
+            supported_durations: ["30s", "60s", "2m"]
+        """),
+    )
+    registry = load_registry(tmp_path)
+    assert registry.get("sample").supported_durations == ["30s", "60s", "2m"]
+
+
+def test_fixed_mode_still_rejects_a_malformed_entry(tmp_path: Path) -> None:
+    """Looser is not lawless: an entry that parses under neither unit is the
+    same startup failure it always was."""
+    _write(
+        tmp_path,
+        "sample.yaml",
+        _definition("""
+            duration_mode: fixed
+            supported_durations: ["30s", "2 minutes"]
         """),
     )
     with pytest.raises(WorkflowRegistryError, match="must look like"):
