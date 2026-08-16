@@ -208,13 +208,30 @@ _BAD_FRAME_BANDS: dict[bool, dict[tuple[int, int], list[tuple[int, int, int]]]] 
         (576, 1024): [(233, 247, 248), (714, 735, 736)],
         (768, 768): [(714, 735, 736)],  # 240 passes on 1:1 — measured
     },
-    # conditioned (any --image): the band moves entirely. 240 and 720 PASS
-    # conditioned (the image/extend matrix cells), 1440-1464 fail.
+    # conditioned (any --image): the band moves entirely, and it is WIDE.
+    #
+    # This started as (1436, 1520, 1528) — the counts a 60s pass produces,
+    # which is all anyone had measured. Then music video, whose cuts follow
+    # musical onsets, produced a 57.54s pass: 1381 frames, BELOW the band, so
+    # unnudged — and it crashed the decoder twice (2026-08-16). Probed
+    # afterwards on the same card: 1381 FAIL, 1437 FAIL, 1528 PASS.
+    #
+    # The interior of 737..1527 is UNMEASURED, which is not the same as good.
+    # This bug has refuted every rule proposed for it — 1440 fails while 1528
+    # passes, and the two are indistinguishable under every modulus tried — so
+    # the band now runs from the highest count proven safe (736) to the next
+    # one proven safe (1528). A customer's job is the wrong place to discover
+    # which of the counts in between are poisoned.
+    #
+    # THIS COSTS TIME: a 45s conditioned pass (1080 frames) renders as 1528 and
+    # is trimmed back, roughly 40% more compute than it needs. A deliberate
+    # trade — correct now, efficient once the true lower edge is measured with
+    # `scripts/frame_probe.py` and the band narrowed to it.
     True: {
-        (1024, 576): [(1436, 1520, 1528)],
-        (576, 1024): [(1436, 1520, 1528)],
-        (768, 768): [(1436, 1520, 1528)],
-        (512, 640): [(1436, 1520, 1528)],  # extend 4:5 failed via its 16:9 source
+        (1024, 576): [(737, 1527, 1528)],
+        (576, 1024): [(737, 1527, 1528)],
+        (768, 768): [(737, 1527, 1528)],
+        (512, 640): [(737, 1527, 1528)],  # extend 4:5 failed via its 16:9 source
     },
 }
 
