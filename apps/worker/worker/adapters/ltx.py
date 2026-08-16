@@ -209,14 +209,42 @@ _BAD_FRAME_BANDS: dict[bool, dict[tuple[int, int], list[tuple[int, int, int]]]] 
         (576, 1024): [(233, 247, 248), (714, 735, 736)],
         (768, 768): [(714, 735, 736)],  # 240 passes on 1:1 — measured
     },
-    # conditioned (any --image): EMPTY, and that is a finding rather than an
-    # omission. Every failure recorded here — 1381, 1437, 1440, 1464 — is a
-    # count that is not 8k+1. Every 8k+1 count probed on the same card and
-    # grid passed: 1289, 1385, 1441. 1440 FAILS and 1441 PASSES, one frame
-    # apart. `_conforming_frames` below now guarantees the input is 8k+1, so
-    # there is nothing left for a band to catch.
-    True: {},
+    # conditioned (any --image): bands over the 8k+1 LATTICE POINTS, because
+    # for conditioned passes even the lattice is not sufficient and this table
+    # briefly being empty broke production.
+    #
+    # On 16 Aug the lattice theory looked complete: 1381/1437/1440 FAIL,
+    # 1289/1385/1441/1528 PASS, all failures non-conforming. The conditioned
+    # bands were emptied on that theory — and within two hours seven customer
+    # image-to-video jobs died, because the snap had turned the MATRIX-PROVEN
+    # 720 into 721, and 721-conditioned crashes. 720 passes and 721 fails,
+    # one frame apart, the mirror image of 1440/1441. There is no rule. The
+    # bands below map every unmeasured conditioned lattice point to the next
+    # MEASURED-PASS count at or above it:
+    #
+    #   measured PASS (conditioned): 120, 240, 360, 720 (matrix, i2v cells),
+    #                                1289, 1385, 1441, 1528 (probed 16 Aug)
+    #   measured FAIL (conditioned): 721 (production, 7 jobs), 1381, 1437,
+    #                                1440, 1464
+    True: {
+        grid: [
+            # 721..1288 → 1289: the only counts here in practice are the 30.0s
+            # menu edge (which passes through as 720 before the snap) and
+            # music-video beat windows, which run near the 60s ceiling.
+            (721, 1288, 1289),
+            (1290, 1384, 1385),
+            (1386, 1440, 1441),
+            (1442, 1527, 1528),
+        ]
+        for grid in ((1024, 576), (576, 1024), (768, 768), (512, 640))
+    },
 }
+
+#: Conditioned counts proven by the full matrix or by production jobs. These
+#: pass through EXACTLY as requested — never snapped, never banded — because
+#: every one of them is evidence, and 720→721 is how evidence got replaced by
+#: a theory and broke image-to-video for a night.
+_MEASURED_SAFE_CONDITIONED = frozenset({120, 240, 360, 720, 1289, 1385, 1441, 1528})
 
 #: The model's native frame convention: counts of the form 8k+1.
 #:
@@ -250,25 +278,33 @@ def safe_frame_count(
 ) -> int:
     """The frame count actually sent to the pipeline for this shape.
 
-    Two steps, in this order:
+    Measurement outranks theory here, in this exact order:
 
-    1. Snap to the model's native 8k+1 lattice. This is the fix — it is what
-       the pipeline's own sibling entry points do, and every crash on record
-       is a count that skipped it.
-    2. Apply any band still MEASURED to fail at a conforming count. The
-       conditioned set is empty because snapping resolved all of it; the
-       unconditioned bands are kept because they were measured at low counts
-       where nothing has been re-probed since, and a 7-frame nudge is not
-       worth gambling against.
+    1. A conditioned count that is MEASURED SAFE passes through untouched.
+       This rule exists because its absence broke production: the lattice
+       snap turned the matrix-proven 720 into 721, and 721-conditioned
+       crashes. Evidence first, always.
+    2. Snap to the model's native 8k+1 lattice (its sibling entry points all
+       do; every unconditioned crash on record was a non-conforming count,
+       and 737 is verified by a live production job).
+    3. Apply the measured bands: conditioned lattice points that are not
+       measured land on the next measured-pass count above them, and the
+       unconditioned low-count bands from the matrix era still apply.
 
     The caller renders the substitute and trims back to the requested
     duration, so the delivered video is exactly the length asked for, in one
     pass, with no seam.
     """
+    if conditioned and frames in _MEASURED_SAFE_CONDITIONED:
+        return frames
     frames = conforming_frames(frames)
     for lo, hi, landing in _BAD_FRAME_BANDS[conditioned].get(dimensions, ()):
         if lo <= frames <= hi:
-            return conforming_frames(landing)
+            # The landing is a MEASUREMENT and is used exactly. Snapping it
+            # would replace evidence with theory — 1528 is measured-pass and
+            # not on the lattice, and "1529 must be fine, it conforms" is
+            # precisely the reasoning that produced 721.
+            return landing
     return frames
 
 #: The largest frame measured on this card (1024x576 == 768x768 == 589,824 px).
