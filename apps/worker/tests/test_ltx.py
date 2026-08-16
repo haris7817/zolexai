@@ -49,6 +49,7 @@ from worker.adapters.ltx import (
     grid_for_source,
     match_marker,
     output_dimensions,
+    safe_frame_count,
 )
 from worker.core.config import settings
 from worker.media import ffmpeg, plan_segments, probe_media
@@ -309,6 +310,63 @@ def test_the_pass_ceiling_is_a_property_of_the_grid_not_the_product(
     job = make_job(workspace)
     assert adapter._per_pass_seconds(job, (1024, 576)) == 60.0
     assert adapter._per_pass_seconds(job, (896, 512)) == 30.0
+
+
+class TestSafeFrameCount:
+    """The decoder's bad shapes, dodged by rendering past them and trimming.
+
+    Every number here is a 16 Aug 2026 measurement (CUBLAS_STATUS_INTERNAL_ERROR
+    in the VAE's batched GEMM). The set follows no rule — 240 fails
+    unconditioned where 1440 passes, and WITH a conditioning image it is 1440
+    that fails while 240 passes — so this function must be a lookup into
+    measured bands, never arithmetic.
+    """
+
+    def test_measured_bad_counts_land_on_measured_safe_ones(self) -> None:
+        # 10s and 30s at the standard grids: the exact cells the matrix caught.
+        assert safe_frame_count((1024, 576), 240, conditioned=False) == 248
+        assert safe_frame_count((1024, 576), 720, conditioned=False) == 736
+        assert safe_frame_count((576, 1024), 240, conditioned=False) == 248
+        assert safe_frame_count((576, 1024), 720, conditioned=False) == 736
+        assert safe_frame_count((768, 768), 720, conditioned=False) == 736
+
+    def test_good_counts_pass_through_untouched(self) -> None:
+        for frames in (120, 232, 248, 360, 736, 1440):
+            assert safe_frame_count((1024, 576), frames, conditioned=False) == frames
+        # 1:1 decodes 240 fine — measured, and the band must not leak across grids.
+        assert safe_frame_count((768, 768), 240, conditioned=False) == 240
+
+    def test_conditioning_moves_the_bad_set_entirely(self) -> None:
+        """The matrix's strangest true result: image-to-video PASSED at 10s and
+        30s where text FAILED, and FAILED at 60s where text passed. Same grids.
+        The bad set is a function of conditioning, so the table must be too."""
+        # conditioned: 240 and 720 are fine, 1440 is not
+        assert safe_frame_count((1024, 576), 240, conditioned=True) == 240
+        assert safe_frame_count((1024, 576), 720, conditioned=True) == 720
+        assert safe_frame_count((1024, 576), 1440, conditioned=True) == 1528
+        # unconditioned: 1440 is fine
+        assert safe_frame_count((1024, 576), 1440, conditioned=False) == 1440
+
+    def test_the_whole_measured_bad_band_is_covered_not_just_the_hits(self) -> None:
+        """1448 and 1464 also failed — the band between measurements must nudge
+        too, because a music-video section can land on any frame count."""
+        for frames in (1440, 1448, 1464, 1500):
+            assert safe_frame_count((1024, 576), frames, conditioned=True) == 1528
+
+    def test_an_unmeasured_grid_is_left_alone(self) -> None:
+        """No measurement, no landing to prefer — and unmeasured grids already
+        run short passes under the pessimistic ceiling."""
+        assert safe_frame_count((896, 640), 240, conditioned=False) == 240
+
+    def test_every_landing_is_at_or_above_the_request(self) -> None:
+        """Trimming down is exact; padding up is impossible — a landing below
+        the request would deliver a short video."""
+        from worker.adapters.ltx import _BAD_FRAME_BANDS
+
+        for table in _BAD_FRAME_BANDS.values():
+            for bands in table.values():
+                for lo, hi, landing in bands:
+                    assert landing > hi >= lo
 
 
 def test_an_unmeasured_grid_gets_the_pessimistic_ceiling(workspace: Path) -> None:

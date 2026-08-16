@@ -178,6 +178,65 @@ _GRID_CEILINGS: dict[tuple[int, int], float] = {
 #: absent from `_GRID_CEILINGS` is by definition one nobody has run.
 _UNMEASURED_CEILING = 10.0
 
+#: Frame counts the VAE decoder cannot decode, and where to land instead.
+#:
+#: The decoder dies in a cuBLAS batched GEMM (`CUBLAS_STATUS_INTERNAL_ERROR`
+#: from `cublasGemmStridedBatchedEx`, all dims cast to int32) at specific
+#: (grid, conditioned, frame-count) triples. The failing set follows no rule
+#: anyone has produced: at 1024x576 unconditioned, 240 fails while 232, 248 and
+#: 1440 pass; WITH a conditioning image the same 1440 fails and 240 passes.
+#: Every entry below is a measurement from 16 Aug 2026 — nothing interpolated.
+#:
+#: Structure: bad band (inclusive) → first measured-safe landing at or above
+#: the band. Rendering a few extra frames costs seconds; the output is trimmed
+#: back to the exact requested duration afterwards, so the customer's video is
+#: bit-for-bit the length they asked for. This removes the failure without a
+#: ceiling, without chaining and without seams.
+#:
+#: Landings marked with their evidence:
+#:   248  measured ✅ at 1024x576 and 576x1024
+#:   736  measured ✅ at 1024x576, 576x1024 and 768x768
+#:   1528 measured ✅ at 1024x576 conditioned; applied to the other grids
+#:        because they fail identically at 1440 and are re-verified by the
+#:        matrix before any deploy
+_BAD_FRAME_BANDS: dict[bool, dict[tuple[int, int], list[tuple[int, int, int]]]] = {
+    # unconditioned: (band_lo, band_hi, safe_landing)
+    False: {
+        (1024, 576): [(233, 247, 248), (714, 735, 736)],
+        (576, 1024): [(233, 247, 248), (714, 735, 736)],
+        (768, 768): [(714, 735, 736)],  # 240 passes on 1:1 — measured
+    },
+    # conditioned (any --image): the band moves entirely. 240 and 720 PASS
+    # conditioned (the image/extend matrix cells), 1440-1464 fail.
+    True: {
+        (1024, 576): [(1436, 1520, 1528)],
+        (576, 1024): [(1436, 1520, 1528)],
+        (768, 768): [(1436, 1520, 1528)],
+        (512, 640): [(1436, 1520, 1528)],  # extend 4:5 failed via its 16:9 source
+    },
+}
+
+
+def safe_frame_count(
+    dimensions: tuple[int, int], frames: int, *, conditioned: bool
+) -> int:
+    """The frame count actually sent to the pipeline for this shape.
+
+    Returns `frames` untouched unless it falls inside a measured bad band for
+    this exact (grid, conditioned) pair, in which case it returns the measured
+    safe landing above the band. The caller renders the substitute and trims
+    the output back to the requested duration — the delivered video is exactly
+    the length asked for, in one pass, with no seam.
+
+    Unknown grids return `frames` unchanged: without a measurement there is no
+    landing to prefer, and the pessimistic per-shape ceiling already keeps
+    unmeasured shapes on short passes.
+    """
+    for lo, hi, landing in _BAD_FRAME_BANDS[conditioned].get(dimensions, ()):
+        if lo <= frames <= hi:
+            return landing
+    return frames
+
 #: The largest frame measured on this card (1024x576 == 768x768 == 589,824 px).
 #: A source's own aspect may still synthesise a grid that is not in
 #: `_GRID_CEILINGS` — a 4:3 upload has no measured grid, and forcing it to 16:9
@@ -1010,6 +1069,24 @@ class LtxAdapter:
             items = conditioning(step)
             if asyncio.iscoroutine(items):
                 items = await items
+            # Dodge the decoder's measured bad shapes: render a few extra
+            # frames where the exact count would crash the VAE, then trim back
+            # so the delivered pass is exactly the planned length.
+            requested_frames = self._frame_count(step.seconds)
+            frames = safe_frame_count(
+                dimensions, requested_frames, conditioned=bool(items)
+            )
+            if frames != requested_frames:
+                logger.info(
+                    "frame_count_nudged",
+                    extra={
+                        "workflow_id": job.workflow_id,
+                        "grid": list(dimensions),
+                        "requested_frames": requested_frames,
+                        "rendered_frames": frames,
+                        "conditioned": bool(items),
+                    },
+                )
             await self._execute(
                 job=job,
                 cmd=self._command(
@@ -1022,11 +1099,16 @@ class LtxAdapter:
                     # Distinct per pass or every chained render replays the
                     # same noise; still deterministic so a retry reproduces.
                     seed=self._seed_for_step(job, step.index),
+                    num_frames=frames,
                 ),
                 reporter=reporter,
                 band=step.band,
                 section=step.section_progress,
             )
+            if frames != requested_frames:
+                # BEFORE verification and before any continuity frame is
+                # extracted, so the seam frame sits at the planned timestamp.
+                await self._trim_to(job, step.output, step.seconds)
             if require_audio:
                 try:
                     await verify_output(
@@ -1072,12 +1154,16 @@ class LtxAdapter:
         dimensions: tuple[int, int] | None = None,
         seed: int | None = None,
         prompt: str | None = None,
+        num_frames: int | None = None,
     ) -> list[str]:
         root = settings.ltx_models_root
         # Explicit dimensions (extension and restyle: the source's aspect
         # decides) beat the requested aspect ratio's lookup.
         width, height = dimensions or self._requested_dimensions(job)
-        frames = self._frame_count(seconds)
+        # `num_frames` lets the renderer substitute a measured-safe count for a
+        # frame count the VAE cannot decode (see `safe_frame_count`); the extra
+        # material is trimmed after the render, never delivered.
+        frames = num_frames if num_frames is not None else self._frame_count(seconds)
         if seed is None:
             # The pipeline's default seed is fixed, which would hand two users
             # with the same prompt the same video. CRC of the job id:
@@ -1118,6 +1204,35 @@ class LtxAdapter:
             # rather than as an unordered set.
             cmd += item.as_args()
         return cmd
+
+    async def _trim_to(self, job: AdapterJob, path: Path, seconds: float) -> None:
+        """Cuts a nudged render back to the requested length, in place.
+
+        A re-encode rather than a stream copy: `-c copy` can only cut on a
+        keyframe, and the whole point is landing on the exact requested
+        duration. Settings match the section normalizer so a trimmed pass is
+        indistinguishable from an untrimmed one downstream.
+        """
+        trimmed = path.with_name(path.stem + ".trimmed.mp4")
+        try:
+            await cancellable(
+                job,
+                ffmpeg([
+                    "-i", str(path),
+                    "-t", f"{seconds:.3f}",
+                    "-c:v", "libx264", "-preset", "medium", "-crf", "17",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart",
+                    str(trimmed),
+                ]),
+            )
+        except FfmpegError as exc:
+            raise AdapterError(
+                "This generation could not be completed. Please try again.",
+                internal_detail=f"trimming a nudged render failed: {exc}",
+            ) from exc
+        trimmed.replace(path)
 
     def _seed_for_step(self, job: AdapterJob, index: int) -> int:
         requested = job.parameters.get("seed")
