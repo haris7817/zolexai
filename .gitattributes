@@ -1,0 +1,23 @@
+# Development happens on Windows; everything that runs, runs on Linux.
+#
+# Without this, Git's autocrlf stores CRLF in the blob for files authored on
+# Windows. A shell script with CRLF fails on the GPU box with
+# `$'\r': command not found` — an error that points nowhere near the real
+# cause. Committed once already; hence this file.
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# Same reasoning: these are read by Linux tooling and by containers.
+Dockerfile      text eol=lf
+*.dockerfile    text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.py            text eol=lf
+
+# Media fixtures and weights must never be line-ending converted.
+*.png   binary
+*.jpg   binary
+*.mp4   binary
+*.mp3   binary
+*.wav   binary
+*.safetensors binary
