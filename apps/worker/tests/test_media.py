@@ -99,6 +99,67 @@ def test_impossible_plans_are_rejected(total: float, window: float) -> None:
         plan_segments(total, max_segment_seconds=window)
 
 
+@pytest.mark.parametrize(
+    ("total", "window"),
+    [
+        (240.03, 60.0),   # a 4-minute MP3: encoder padding, never exactly 240
+        (4.03, 1.0),      # the same shape at test scale
+        (60.000001, 60.0),  # a hair over one pass
+        (121.7, 60.0),
+        (29.98, 10.0),
+        (185.4, 60.0),
+    ],
+)
+def test_no_plan_ends_in_a_degenerate_sliver(total: float, window: float) -> None:
+    """The bug this function had until 16 Aug 2026.
+
+    Greedy chunking filled the window repeatedly and let the remainder be its
+    own segment. The workflows that chain longest — music video, video-to-video,
+    extend — take their length from an uploaded file, and a file's duration is
+    an arbitrary real: a four-minute MP3 probes at 240.03s because the encoder
+    pads. So the plan came out `60, 60, 60, 60, 0.03`, and that final window
+    became ONE FRAME after `round(0.03 * 24)`.
+
+    That is a full model invocation, its full cost, and a frozen flash welded
+    onto the end of the customer's video. Landing exactly on a multiple of the
+    ceiling was the exception, not the rule.
+
+    A sliver is defined here as under a tenth of a window: short enough that it
+    cannot be an intentional split, and comfortably below the point where the
+    frame count starts rounding to something degenerate.
+    """
+    segments = plan_segments(total, max_segment_seconds=window)
+
+    assert all(s.duration_seconds <= window + 1e-6 for s in segments), (
+        "a window over the ceiling is a measured hardware failure, not a preference"
+    )
+    shortest = min(s.duration_seconds for s in segments)
+    assert shortest > window / 10, (
+        f"{total}s at a {window}s ceiling produced a {shortest:.4f}s sliver"
+    )
+    assert sum(s.duration_seconds for s in segments) == pytest.approx(total)
+
+
+def test_windows_are_even_so_progress_advances_evenly() -> None:
+    """A side benefit worth pinning: passes of similar length take similar time,
+    so the customer's bar moves at a steady rate instead of stalling on a long
+    section and then jumping through a short one."""
+    segments = plan_segments(100.0, max_segment_seconds=30.0)
+    assert len(segments) == 4
+    durations = [s.duration_seconds for s in segments]
+    assert max(durations) - min(durations) < 1e-6
+    assert all(d <= 30.0 for d in durations)
+
+
+def test_an_exact_multiple_still_plans_the_obvious_way() -> None:
+    """The even split must not invent passes where greedy chunking was already
+    right — 120s at a 60s ceiling is two 60s passes, not three 40s ones."""
+    segments = plan_segments(120.0, max_segment_seconds=60.0)
+    assert [s.duration_seconds for s in segments] == [60.0, 60.0]
+
+    assert len(plan_segments(60.0, max_segment_seconds=60.0)) == 1
+
+
 # ── Real media (ffmpeg required) ─────────────────────────────────────────
 
 

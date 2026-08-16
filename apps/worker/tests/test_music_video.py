@@ -39,7 +39,7 @@ from tests.conftest import (
 )
 from worker.adapters.base import AdapterError, JobCancelled
 from worker.adapters.ltx import LtxAdapter
-from worker.media import audio_envelope, ffmpeg, probe_media
+from worker.media import audio_envelope, ffmpeg, plan_segments, probe_media
 
 
 def music_video_job(workspace: Path, track: Path | None, **overrides):
@@ -106,14 +106,19 @@ async def test_a_track_longer_than_one_pass_becomes_several_scenes(
     )
     result, reported = await collect(job)
 
-    assert len(invocations(log)) == 4
+    # Five, not four: the MP3 probes a little over 4.0s because the encoder
+    # pads, so a 1s ceiling needs five windows. They are EVEN — five of ~0.81s
+    # — rather than four full ones and a 0.03s sliver that would have cost a
+    # whole model invocation to contribute a single frame.
+    assert len(invocations(log)) == 5
+    assert all(s.duration_seconds > 0.1 for s in plan_segments(4.03, max_segment_seconds=1.0))
     assert result.duration_seconds == pytest.approx(4.0, abs=1.0)
 
     progress = [value for _, value, _ in reported]
     assert progress == sorted(progress)
     messages = [message for _, _, message in reported]
-    assert "Generating section 1 of 4…" in messages
-    assert "Generating section 4 of 4…" in messages
+    assert "Generating section 1 of 5…" in messages
+    assert "Generating section 5 of 5…" in messages
     # The mechanism stays invisible: no model, no GPU, no file format.
     assert all(
         not any(word in message.lower() for word in ("ltx", "gpu", "mp4", "ffmpeg"))

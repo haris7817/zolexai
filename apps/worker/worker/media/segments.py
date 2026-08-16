@@ -17,6 +17,7 @@ whichever model M2 selects.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -73,7 +74,12 @@ def plan_segments(
       * contributions sum to `total_seconds` exactly;
       * segments are contiguous and ordered;
       * a duration within one pass yields exactly one segment with no overlap,
-        so short jobs never pay for machinery they do not need.
+        so short jobs never pay for machinery they do not need;
+      * no segment exceeds `max_segment_seconds`, because that is a measured
+        hardware limit rather than a preference;
+      * **no segment is degenerately short.** Windows are even, so the shortest
+        is always within one pass-length of the longest. A sub-second window
+        costs a full model invocation and contributes a single frame.
     """
     if total_seconds <= 0:
         raise ValueError("total_seconds must be positive")
@@ -87,21 +93,40 @@ def plan_segments(
     # be entirely re-generated material and contribute nothing.
     overlap = max(0.0, min(overlap_seconds, max_segment_seconds / 2))
 
-    segments: list[Segment] = []
-    start = 0.0
-    index = 0
-    while start < total_seconds - 1e-9:
-        duration = min(max_segment_seconds, total_seconds - start)
-        segments.append(
-            Segment(
-                index=index,
-                start_seconds=start,
-                duration_seconds=duration,
-                overlap_seconds=0.0 if index == 0 else overlap,
-            )
+    # EVEN windows, not greedy ones.
+    #
+    # Filling `max_segment_seconds` repeatedly and letting the remainder be its
+    # own segment produces a degenerate tail whenever the total is not a clean
+    # multiple — and it never is, because the workflows that chain longest take
+    # their length from an uploaded file. A four-minute MP3 probes at 240.03s,
+    # not 240.0, so a 60s ceiling gave `60, 60, 60, 60, 0.03`. That last window
+    # is one frame after `round(0.03 * 24)`: a full model invocation, a real
+    # cost, and a frozen flash concatenated onto the end of the customer's
+    # video. Observed at test scale 16 Aug 2026 (4.03s at a 1s ceiling → five
+    # passes, the last of them 0.03s).
+    #
+    # `ceil` then divide gives the same pass count, every window under the
+    # ceiling, no degenerate tail, and a progress bar that advances evenly
+    # because the passes actually take similar time.
+    count = math.ceil(total_seconds / max_segment_seconds - 1e-9)
+    duration = total_seconds / count
+
+    segments = [
+        Segment(
+            index=index,
+            # Computed from the index rather than accumulated, so the floating
+            # point error cannot walk: the final segment must end exactly at
+            # `total_seconds` for `verify_duration` to hold.
+            start_seconds=total_seconds * index / count,
+            duration_seconds=(
+                total_seconds - total_seconds * index / count
+                if index == count - 1
+                else duration
+            ),
+            overlap_seconds=0.0 if index == 0 else overlap,
         )
-        start += duration
-        index += 1
+        for index in range(count)
+    ]
     return segments
 
 
