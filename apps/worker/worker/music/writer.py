@@ -84,11 +84,20 @@ def detect_mood(prompt: str) -> str:
 #: Words that describe the *recording*, not the song's subject. A prompt like
 #: "pop song about summer in Lahore, female vocals, clear singing" is about
 #: summer in Lahore; the rest is production direction and must not be sung.
+#:
+#: Mood adjectives belong here too. They are real instructions — `detect_mood`
+#: reads them — but they are instructions ABOUT the song, and a chorus that
+#: opens "Summer nights in Karachi, catchy and energetic" is the writer
+#: singing the brief back at the customer.
 _PRODUCTION_TERMS = re.compile(
     r"\b(vocals?|vocalist|voice|singing|singer|sung|male|female|man|woman|"
     r"bpm|tempo|key|beats?|drums?|guitars?|pianos?|synths?|bass|strings|"
     r"acoustic|electric|clear|clean|catchy|studio|quality|production|mix|"
-    r"instrumental|audio|sound|style|genre)\b",
+    r"instrumental|audio|sound|style|genre|"
+    r"upbeat|energetic|uplifting|joyful|happy|sad|slow|fast|emotional|"
+    r"heartfelt|melancholy|dreamy|chill|relaxing|dark|bright|moody|"
+    r"cinematic|epic|smooth|soft|loud|powerful|gentle|romantic|nostalgic|"
+    r"and|with|plus)\b",
     re.IGNORECASE,
 )
 
@@ -117,8 +126,10 @@ def extract_subject(prompt: str) -> str:
         if not cleaned:
             continue
         # A segment is production direction when removing those terms leaves
-        # nothing meaningful behind ("female vocals" → ""), and subject matter
-        # when something survives ("summer in Lahore" → itself).
+        # nothing meaningful behind ("catchy and energetic" → ""), and subject
+        # matter when something survives ("summer in Lahore" → itself). What
+        # survives keeps its original wording: the subject is the one part of
+        # the prompt the customer listens for, so it is never paraphrased.
         if not _PRODUCTION_TERMS.sub("", cleaned).strip(" \t-—"):
             continue
         segments.append(cleaned)

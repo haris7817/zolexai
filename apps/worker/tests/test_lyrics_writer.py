@@ -58,6 +58,40 @@ def test_the_subject_is_the_about_clause_without_production_direction() -> None:
     assert subject == "summer in Lahore"
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        (
+            "an upbeat pop song about summer nights in Karachi, female vocals, "
+            "catchy and energetic",
+            "summer nights in Karachi",
+        ),
+        (
+            "a slow ballad about missing my hometown, male vocals, piano and "
+            "strings, heartfelt",
+            "missing my hometown",
+        ),
+        (
+            "an upbeat pop anthem about winning together as a team, joyful and "
+            "uplifting, female vocals",
+            "winning together as a team",
+        ),
+        (
+            "a song about my daughter Ayesha and her first day at school",
+            "my daughter Ayesha and her first day at school",
+        ),
+    ],
+)
+def test_mood_direction_never_becomes_the_subject(prompt: str, expected: str) -> None:
+    """Mood words are instructions ABOUT the song, not its subject.
+
+    They are real — `detect_mood` reads them — but the subject line opens the
+    chorus, and "Summer nights in Karachi, catchy and energetic" is the writer
+    singing the customer's brief back at them.
+    """
+    assert extract_subject(prompt) == expected
+
+
 def test_multiple_subject_segments_survive_and_production_terms_do_not() -> None:
     subject = extract_subject("a ballad about love, loss and hope, male vocals")
     assert "love" in subject
