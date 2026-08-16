@@ -74,6 +74,8 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
+import signal
 import zlib
 from collections import deque
 from collections.abc import Callable, Sequence
@@ -1317,6 +1319,13 @@ class LtxAdapter:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(settings.ltx_repo_dir),
+                # The launcher is `uv run python -m ...`, so the process this
+                # handle refers to is uv and the one holding tens of gigabytes
+                # of VRAM is its child. Its own session makes the pair a
+                # process GROUP, which is the only handle that reaches both.
+                # Ignored on Windows, where the tests run against a stub that
+                # spawns nothing.
+                start_new_session=True,
             )
         except (FileNotFoundError, NotADirectoryError) as exc:
             raise AdapterError(
@@ -1372,12 +1381,81 @@ class LtxAdapter:
                     ),
                 )
         finally:
-            if process.returncode is None:
-                process.kill()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=10)
-                except TimeoutError:
-                    logger.warning("ltx_kill_timeout", extra={"pid": process.pid})
+            await _terminate_render(process)
+
+
+#: How long to wait for a killed render — the whole process group — to be gone
+#: before giving up and saying so. A generous ceiling: the alternative to
+#: waiting is claiming another job while the old one still owns the card.
+_KILL_GRACE_SECONDS = 30.0
+
+
+async def _terminate_render(process: asyncio.subprocess.Process) -> bool:
+    """Kill a render and everything it spawned, and confirm the card is free.
+
+    Killing the handle alone is not enough and the log proves it. On
+    2026-08-16 a job lost its lease mid-generation, the cleanup here reported
+    `ltx_kill_timeout`, the worker claimed the next job in the same second,
+    and that job died with 43 MB free of a 102 GB card — the render that was
+    supposedly killed still held ~56 GB. `uv run python -m ...` means the
+    handle is uv and the memory belongs to its child, which a signal to the
+    handle never reaches.
+
+    So the group gets the signal, and then this WAITS for the group to empty
+    rather than assuming. `killpg(pgid, 0)` raises once nothing is left in it,
+    which is the only reliable "the card is actually free now" available
+    without polling the driver.
+
+    Returns whether the group is confirmed gone. A False is serious — it means
+    a render is still holding VRAM that nothing is tracking.
+    """
+    if process.returncode is not None:
+        return True
+
+    loop = asyncio.get_running_loop()
+    pgid: int | None = None
+    if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+        try:
+            pgid = os.getpgid(process.pid)
+        except (ProcessLookupError, PermissionError, OSError):
+            pgid = None
+
+    try:
+        if pgid is not None:
+            os.killpg(pgid, signal.SIGKILL)
+        else:
+            process.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        # Already gone, or not ours to signal. Fall through to the wait, which
+        # settles which of the two it was.
+        pass
+
+    # Reap the handle first so the process table entry goes away.
+    try:
+        await asyncio.wait_for(process.wait(), timeout=_KILL_GRACE_SECONDS)
+    except (TimeoutError, asyncio.CancelledError):
+        logger.warning("ltx_kill_timeout", extra={"pid": process.pid})
+
+    if pgid is None:
+        return process.returncode is not None
+
+    # The grandchild is not ours to wait() on — it is reparented when uv dies —
+    # so the group is polled instead. This is the part that was missing.
+    deadline = loop.time() + _KILL_GRACE_SECONDS
+    while loop.time() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True
+        except (PermissionError, OSError):
+            return True
+        await asyncio.sleep(0.25)
+
+    logger.error(
+        "ltx_render_still_holding_gpu",
+        extra={"pid": process.pid, "pgid": pgid, "waited": _KILL_GRACE_SECONDS},
+    )
+    return False
 
 
 def _delivery_fps(source: MediaInfo) -> float:

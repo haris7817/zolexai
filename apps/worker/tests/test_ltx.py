@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import time
 from pathlib import Path
 
@@ -1031,6 +1032,58 @@ async def test_cancellation_kills_the_render_process(
     # A killed child can never write the sentinel; a survivor would within 4s.
     await asyncio.sleep(5)
     assert not sentinel.exists(), "the subprocess outlived its job"
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "killpg"),
+    reason="process groups are POSIX; the worker runs on Linux and the stub "
+    "launcher on Windows spawns nothing to orphan",
+)
+async def test_cancellation_kills_what_the_render_itself_spawned(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Killing the handle is not killing the render, and production proved it.
+
+    The launcher is `uv run python -m ltx_pipelines.distilled`: the handle is
+    uv, and every byte of VRAM belongs to the python process uv started. On
+    2026-08-16 a job lost its lease, cleanup signalled the handle and logged
+    `ltx_kill_timeout`, the worker claimed the next job in the same second,
+    and that job died with 43 MB free of a 102 GB card — the "killed" render
+    was still holding ~56 GB.
+
+    So this mirrors the real shape: a parent that spawns a survivor and then
+    waits. Only a signal to the process GROUP reaches the survivor.
+    """
+    sentinel = tmp_path / "grandchild-survived.txt"
+    script = tmp_path / "spawner.py"
+    script.write_text(
+        "import subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c',\n"
+        "    'import pathlib, time; time.sleep(4); "
+        f"pathlib.Path({str(sentinel)!r}).write_text(\"the kill missed the child\")'])\n"
+        "print('started', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    stub_launcher(monkeypatch, script)
+
+    cancelled = asyncio.Event()
+    cancelled.set()
+    job = make_job(workspace, _cancelled=cancelled)
+
+    began = time.monotonic()
+    with pytest.raises(JobCancelled):
+        await collect(job)
+    assert time.monotonic() - began < 5, "cancellation must not wait for the render"
+
+    # The grandchild writes at +4s. Waiting past that is the whole test: an
+    # orphan is invisible until it does something, and on the GPU the thing it
+    # does is hold the card until the next job fails.
+    await asyncio.sleep(6)
+    assert not sentinel.exists(), (
+        "a process the render spawned outlived the job — on the GPU this is "
+        "the orphan that OOMs whatever runs next"
+    )
 
 
 async def test_an_expired_budget_kills_the_render_the_same_way(
