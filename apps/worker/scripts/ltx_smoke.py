@@ -36,12 +36,18 @@ Usage, from the worker checkout on the GPU node:
 Environment: LTX_REPO_DIR if the checkout is not /workspace/ltx2-benchmark;
 DURATION and ASPECT_RATIO to vary the request (both ignored by the
 source-duration modes); MAX_SEGMENT_SECONDS to force chaining on a short input
-so the multi-pass path can be exercised without a long upload.
+so the multi-pass path can be exercised without a long upload; EXECUTION as a
+JSON object to set any private execution key, which is how two conditioning
+settings get compared on the same footage without a redeploy between takes:
+
+    EXECUTION='{"v2v_keyframes": 3}' MODE=restyle VIDEO=/path/clip.mp4 \
+        python scripts/ltx_smoke.py as a charcoal sketch
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -126,6 +132,14 @@ async def main() -> int:
         # Forces the chaining path on a short input, so the multi-pass
         # behaviour can be checked without waiting on a two-minute source.
         execution["max_segment_seconds"] = int(os.environ["MAX_SEGMENT_SECONDS"])
+    if os.getenv("EXECUTION"):
+        # Arbitrary private execution keys, as JSON. Conditioning strengths and
+        # densities are quality judgements that can only be made by looking at
+        # real footage, so comparing two settings has to be possible without
+        # editing a YAML and redeploying between takes:
+        #
+        #   EXECUTION='{"v2v_keyframes": 3}' MODE=restyle VIDEO=… script.py …
+        execution.update(json.loads(os.environ["EXECUTION"]))
 
     parameters: dict[str, object] = {"aspect_ratio": os.getenv("ASPECT_RATIO", "16:9")}
     # The source-duration workflows take no duration at all — passing one would
