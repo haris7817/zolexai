@@ -1077,19 +1077,28 @@ async def test_cancellation_kills_what_the_render_itself_spawned(
     )
     stub_launcher(monkeypatch, script)
 
+    # Cancelled AFTER the render is up, not before. Pre-setting the event —
+    # which the sibling tests do, correctly, for their own purpose — kills the
+    # process on the read loop's first pass, before it has spawned anything,
+    # so there is no orphan to miss and the test passes against any code at
+    # all. That is how the first version of this test came to pass against the
+    # pre-fix adapter.
     cancelled = asyncio.Event()
-    cancelled.set()
     job = make_job(workspace, _cancelled=cancelled)
+
+    async def cancel_once_it_is_running() -> None:
+        await asyncio.sleep(1.5)
+        cancelled.set()
 
     began = time.monotonic()
     with pytest.raises(JobCancelled):
-        await collect(job)
-    assert time.monotonic() - began < 5, "cancellation must not wait for the render"
+        await asyncio.gather(collect(job), cancel_once_it_is_running())
+    assert time.monotonic() - began < 8, "cancellation must not wait for the render"
 
-    # The grandchild writes at +4s. Waiting past that is the whole test: an
+    # The survivor writes at +4s. Waiting past that is the whole test: an
     # orphan is invisible until it does something, and on the GPU the thing it
     # does is hold the card until the next job fails.
-    await asyncio.sleep(6)
+    await asyncio.sleep(5)
     assert not sentinel.exists(), (
         "a process the render spawned outlived the job — on the GPU this is "
         "the orphan that OOMs whatever runs next"
