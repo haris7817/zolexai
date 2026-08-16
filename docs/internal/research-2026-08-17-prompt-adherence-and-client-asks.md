@@ -181,3 +181,50 @@ pipeline + one real job through zolexai.com before the client sees it.
 - Local: `packages/ltx-pipelines/docs/pipelines.md`, `conditioning.md`,
   `ic_lora.py` CLI, `utils/args.py` (enhancer flags), plus the 16 Aug
   measurement sessions recorded in `docs/internal/`.
+
+---
+
+## Addendum (17 Aug): the client's own LTX 2.3 backend, read in full
+
+The client shared their Node.js LTX 2.3 stack (controller/routes/schema/
+service/validation). We run 2.5; the value is seeing what they treat as table
+stakes. What it changes:
+
+**1. Their text-to-video default is `two_stage_hq`** — the guided pipeline,
+with `negative_prompt`, step counts 15–40, and `fp8-cast`/`fp8-scaled-mm`
+quantization. Every adherence comparison the client makes is against a GUIDED
+render. This promotes the guided tier (P3) from "quality option" to "the gap
+the client is actually measuring". Our distilled tier stays the fast default;
+the guided tier is what "follows the prompt" means to them.
+
+**2. Their prompt pipeline is layered, and enhancement is never silent.**
+Normalizer → semantic compiler producing a **fingerprinted, human-approved
+contract** (generation is refused if the approved plan drifted) → camera
+director → LTX-native `enhance_prompt` with a fallback prompt. Confirms our
+Tier A design (structure, don't paraphrase; keep the user's text verbatim) and
+adds two ideas worth stealing later: an approval step for enhanced prompts,
+and a post-completion "was it faithful?" feedback endpoint.
+
+**3. Their Video Animate maps 1:1 onto the IC-LoRA pilot.** Targets
+person/background/other; person modes replace/add/edit; up to 4 person
+reference images; an **inpainting mask video — white regenerates, black
+keeps** — which is exactly the shape of `ic_lora.py`'s
+`--conditioning-attention-mask`; pose transfer via DWPose conversion; and a
+head-swap engine for single-identity replacement. Their identity strategies
+(`ltx_pose_transfer`, `ltx_full_body`, `face_lock`…) are productised names
+over the same control-signal machinery we verified yesterday.
+
+**4. Identity replacement requires explicit consent, audited.** A consent
+checkbox with versioned audit strings, enforced server-side, before any person
+swap runs. When our Transform mode ships person replacement, this is a
+REQUIREMENT, not polish — copy the pattern.
+
+**5. `extend/:jobId` — extension without re-upload.** They stream the engine's
+own prior output back in as the source. Same pattern our "Generate Music
+Video" button needs (we already have asset-id inputs, so ours is simpler), and
+their extend menu is the same 5–60s ours is — "unlimited" in practice means
+extend-of-extend chaining plus honest drift expectations.
+
+**6. Their hard limits look like ours.** 60s per generation, 700 MB video /
+100 MB audio uploads, 540p/720p/1080p. Useful for the restrictions table: our
+ceilings are not out of line with the reference the client trusts.
