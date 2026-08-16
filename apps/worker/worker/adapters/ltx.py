@@ -275,10 +275,22 @@ _V2V_KEYFRAME_BOUNDS = (3, 16)
 being anchored only at their ends; the ceiling stops a long pass from becoming
 a slideshow of the original with the prompt doing nothing."""
 
-_V2V_STRUCTURE_STRENGTH = 0.7
+_V2V_STRUCTURE_STRENGTH = 0.45
 """How hard those stills pull. At 1.0 the source frame IS the output frame and
 the prompt does nothing; near 0 the prompt wins and the source is a suggestion.
-This is the dial between "restyled" and "unrelated"."""
+This is the dial between "restyled" and "unrelated".
+
+It moved with the density above and cannot be read apart from it. At three
+stills per pass, 0.7 held the look and lost the subject. At one still every
+four seconds — roughly 2.7x as many anchors on a 30-second clip — 0.7 held the
+subject and lost the look: the first A/B against the client's own footage came
+back with the requested oil painting nowhere in it. Total pull is what
+changed, so the per-anchor figure came down to compensate.
+
+0.45 is an ESTIMATE, in proportion to the density change and nothing more.
+`scripts/v2v_sweep.sh` measures 0.7/0.55/0.4/0.25 against one clip and is what
+should set this number; the lowest strength that still holds the subject is
+the answer."""
 
 _V2V_CONTINUITY_STRENGTH = 0.85
 """Frame 0 of every pass after the first, taken from the previous pass's last

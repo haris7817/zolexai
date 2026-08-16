@@ -89,7 +89,8 @@ execution:
   #   v2v_keyframes:           fixed count per pass, overriding the density
   #                            above. For footage where the derived number is
   #                            wrong; normally leave unset.
-  #   v2v_structure_strength:  how hard they pull (default 0.7)
+  #   v2v_structure_strength:  how hard they pull (default 0.45 — lowered with
+  #                            the density above; the two cannot be read apart)
   #   v2v_continuity_strength: the seam between passes (default 0.85)
   #   v2v_reference_strength:  the optional reference image (default 0.3)
 
