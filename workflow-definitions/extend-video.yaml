@@ -55,6 +55,11 @@ ui:
 execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
+
+  # Deterministic prompt structuring — see text-to-video.yaml for the full
+  # note and apps/worker/worker/longform/enhance.py for the rules.
+  prompt_structuring: true
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the

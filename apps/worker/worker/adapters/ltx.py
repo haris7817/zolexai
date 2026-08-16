@@ -79,7 +79,7 @@ import signal
 import zlib
 from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from worker.adapters.base import (
@@ -101,6 +101,7 @@ from worker.longform import (
     plan_musical_boundaries,
     plan_section_prompts,
     render_chain,
+    structure_prompt,
 )
 from worker.media import (
     AudioMode,
@@ -460,6 +461,15 @@ class LtxAdapter:
         await reporter.preparing()
         self._require_models()
 
+        # Deterministic prompt structuring, per workflow via the private
+        # execution block. The user's text survives verbatim as the first
+        # block of the structured prompt — `structure_prompt` appends derived
+        # continuity rules, it never rewrites — and the stored job still
+        # carries exactly what the user typed, because this happens here in
+        # the worker rather than anywhere the prompt is persisted.
+        if job.execution.get("prompt_structuring"):
+            job = replace(job, prompt=structure_prompt(job.prompt))
+
         # Dispatch on the WORKFLOW, never on which inputs happen to be present:
         # a mis-routed job must fail loudly rather than being quietly treated as
         # whichever workflow its inputs resemble.
@@ -487,7 +497,9 @@ class LtxAdapter:
         def prompt_for_step(step: ChainStep) -> str:
             nonlocal prompt_plan
             if prompt_plan is None:
-                prompt_plan = plan_section_prompts(job.prompt, step.total)
+                prompt_plan = plan_section_prompts(
+                    job.prompt, step.total, total_seconds=seconds
+                )
             return prompt_plan[step.index]
 
         def conditioning(step: ChainStep) -> list[ConditioningFrame]:
@@ -558,7 +570,11 @@ class LtxAdapter:
         def prompt_for_step(step: ChainStep) -> str:
             nonlocal prompt_plan
             if prompt_plan is None:
-                prompt_plan = plan_section_prompts(job.prompt, step.total)
+                # Timestamps in an extension prompt are relative to the
+                # EXTENSION, which is the only timeline the user is writing for.
+                prompt_plan = plan_section_prompts(
+                    job.prompt, step.total, total_seconds=extension_seconds
+                )
             return prompt_plan[step.index]
 
         await reporter.probing("Reading your video…")
@@ -811,7 +827,11 @@ class LtxAdapter:
         def prompt_for_step(step: ChainStep) -> str:
             nonlocal prompt_plan
             if prompt_plan is None:
-                prompt_plan = plan_section_prompts(job.prompt, step.total)
+                # Timestamped shots in a music-video prompt refer to positions
+                # in the SONG, which is exactly the timeline of the chain.
+                prompt_plan = plan_section_prompts(
+                    job.prompt, step.total, total_seconds=target_seconds
+                )
             return prompt_plan[step.index]
 
         boundaries = await self._musical_boundaries(job, staged, target_seconds, per_pass)

@@ -17,11 +17,45 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 
 _SECTION_LINE = re.compile(
     r"^\s*(?:section\s+\d+(?:\s*/\s*(?:\d+|\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?(?:\s*(?:s|sec|seconds))?))?|\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?\s*(?:s|sec|seconds)?)\s*[:\-]\s*(.+)$",
     re.IGNORECASE,
 )
+
+#: A shot pinned to a time range, the way the client's own example prompts
+#: write them: "0:00-0:10 a woman walks in", "[0:30 – 0:45]: chorus, wide shot",
+#: "15s-30s: drone pullback". At least one side must be unambiguous time —
+#: mm:ss, or seconds with an explicit s/sec suffix — so prose like "3-4 cars
+#: pass" never matches.
+_TIMED_LINE = re.compile(
+    r"^\s*\[?\s*"
+    r"(\d{1,3}:\d{2}|\d+(?:\.\d+)?\s*s(?:ec(?:onds)?)?)"
+    r"\s*(?:-|–|—|to)\s*"
+    r"(\d{1,3}:\d{2}|\d+(?:\.\d+)?\s*s(?:ec(?:onds)?)?)"
+    r"\s*\]?\s*[:\-–—]?\s*(.+)$",
+    re.IGNORECASE,
+)
+
+
+def _parse_timestamp(raw: str) -> float:
+    text = raw.strip().lower()
+    if ":" in text:
+        minutes, seconds = text.split(":")
+        return int(minutes) * 60 + int(seconds)
+    return float(re.sub(r"\s*s(?:ec(?:onds)?)?$", "", text))
+
+
+@dataclass(frozen=True)
+class _Action:
+    text: str
+    start: float | None = None
+    end: float | None = None
+
+    @property
+    def timed(self) -> bool:
+        return self.start is not None
 _PERSISTENT_LINE = re.compile(
     r"^\s*(?:persistent|continuity|subject(?:s)?|scene|constraints?)\s*:\s*(.+)$",
     re.IGNORECASE,
@@ -38,7 +72,12 @@ _INLINE_SEQUENCE = re.compile(
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
 
 
-def plan_section_prompts(master_prompt: str, section_total: int) -> list[str]:
+def plan_section_prompts(
+    master_prompt: str,
+    section_total: int,
+    *,
+    total_seconds: float | None = None,
+) -> list[str]:
     """Return one prompt per section without replaying sequential material.
 
     A single-pass request is byte-for-byte unchanged.  For a chain, explicit
@@ -46,12 +85,25 @@ def plan_section_prompts(master_prompt: str, section_total: int) -> list[str]:
     contiguously.  Everything else is an unchanging reference shared by all
     sections.  Empty later sections receive only a continuation instruction;
     they never receive an earlier action again merely to fill space.
+
+    When the prompt pins shots to time ranges ("0:30-0:45: chorus, wide shot")
+    and `total_seconds` is known, each timed shot lands in the section whose
+    window contains its midpoint — the client's multi-shot prompts say WHERE
+    an action belongs, and allocating them by count instead of by time was
+    putting the chorus shot in the wrong minute of the song. Sections are
+    treated as even windows; musical-boundary sections deviate a little from
+    even, which moves a shot by at most a couple of seconds at a seam.
     """
     if section_total <= 1:
         return [master_prompt]
 
     persistent, actions = _separate(master_prompt)
-    assigned = _distribute(actions, section_total)
+    if total_seconds and any(action.timed for action in actions):
+        assigned, persistent = _distribute_timed(
+            actions, section_total, total_seconds, persistent
+        )
+    else:
+        assigned = _distribute([a.text for a in actions], section_total)
     prompts: list[str] = []
 
     for index, current in enumerate(assigned, start=1):
@@ -71,23 +123,30 @@ def plan_section_prompts(master_prompt: str, section_total: int) -> list[str]:
     return prompts
 
 
-def _separate(master_prompt: str) -> tuple[str, list[str]]:
+def _separate(master_prompt: str) -> tuple[str, list[_Action]]:
     lines = [line for line in master_prompt.splitlines() if line.strip()]
     persistent: list[str] = []
-    actions: list[str] = []
+    actions: list[_Action] = []
     undecided: list[str] = []
 
     for line in lines:
+        timed = _TIMED_LINE.match(line)
+        if timed:
+            start = _parse_timestamp(timed.group(1))
+            end = _parse_timestamp(timed.group(2))
+            if end >= start:
+                actions.append(_Action(timed.group(3).strip(), start, end))
+                continue
         section = _SECTION_LINE.match(line)
         if section:
-            actions.append(section.group(1).strip())
+            actions.append(_Action(section.group(1).strip()))
             continue
         fixed = _PERSISTENT_LINE.match(line)
         if fixed:
             persistent.append(fixed.group(1).strip())
             continue
         if _DIALOGUE_LINE.match(line) or _SEQUENCE_START.match(line):
-            actions.append(line.strip())
+            actions.append(_Action(line.strip()))
             continue
         undecided.append(line)
 
@@ -97,7 +156,9 @@ def _separate(master_prompt: str) -> tuple[str, list[str]]:
     for line in undecided:
         sequence = _INLINE_SEQUENCE.split(line.strip())
         if len(sequence) > 1:
-            actions.extend(fragment.strip() for fragment in sequence if fragment.strip())
+            actions.extend(
+                _Action(fragment.strip()) for fragment in sequence if fragment.strip()
+            )
             continue
         fragments = _SENTENCE_BOUNDARY.split(line.strip())
         for fragment in fragments:
@@ -108,7 +169,7 @@ def _separate(master_prompt: str) -> tuple[str, list[str]]:
                 or "“" in fragment
                 or "”" in fragment
             ):
-                actions.append(fragment)
+                actions.append(_Action(fragment))
             else:
                 persistent.append(fragment)
 
@@ -124,3 +185,35 @@ def _distribute(actions: list[str], total: int) -> list[str]:
         return [""] * total
     width = math.ceil(len(actions) / total)
     return ["\n".join(actions[index * width : (index + 1) * width]) for index in range(total)]
+
+
+def _distribute_timed(
+    actions: list[_Action],
+    total: int,
+    total_seconds: float,
+    persistent: str,
+) -> tuple[list[str], str]:
+    """Timed shots land in the section whose window holds their midpoint.
+
+    A prompt that pins shots to timestamps is deliberate about WHERE things
+    happen, so the untimed leftovers in the same prompt are treated as
+    persistent context rather than shuffled into whichever section had room —
+    a stray untimed line jumping the queue ahead of "0:30: the chorus" would
+    reorder the user's own storyboard.
+    """
+    window = total_seconds / total
+    buckets: list[list[tuple[float, str]]] = [[] for _ in range(total)]
+
+    for action in actions:
+        if not action.timed:
+            persistent = f"{persistent}\n{action.text}".strip()
+            continue
+        midpoint = (action.start + (action.end if action.end is not None else action.start)) / 2
+        index = min(total - 1, max(0, int(midpoint / window)))
+        buckets[index].append((action.start, action.text))
+
+    assigned = [
+        "\n".join(text for _, text in sorted(bucket, key=lambda item: item[0]))
+        for bucket in buckets
+    ]
+    return assigned, persistent

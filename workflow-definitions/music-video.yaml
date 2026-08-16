@@ -61,6 +61,10 @@ execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
 
+  # Deterministic prompt structuring — see text-to-video.yaml for the full
+  # note and apps/worker/worker/longform/enhance.py for the rules.
+  prompt_structuring: true
+
   # The longest job the product has. A four-minute track is eight visual
   # sections plus assembly and muxing, and the default 30-minute budget would
   # kill it around section three — after the compute had already been spent.

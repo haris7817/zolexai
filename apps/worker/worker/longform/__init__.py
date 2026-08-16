@@ -17,6 +17,7 @@ what conditions the first pass and what happens to the parts afterwards.
 """
 
 from worker.longform.chain import ChainStep, RenderStep, render_chain
+from worker.longform.enhance import structure_prompt
 from worker.longform.progress import (
     GENERATE_FROM,
     GENERATE_TO,
@@ -36,4 +37,5 @@ __all__ = [
     "plan_musical_boundaries",
     "plan_section_prompts",
     "render_chain",
+    "structure_prompt",
 ]

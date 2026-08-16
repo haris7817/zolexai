@@ -59,6 +59,15 @@ ui:
 execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
+
+  # Deterministic prompt structuring (worker-side). The user's text reaches the
+  # model verbatim as the first block; the worker appends derived continuity
+  # rules (counts, colours, persistence) — the measured fix for identity and
+  # colour drift on the unguided distilled runtime. Rules, not a language
+  # model: it cannot paraphrase away a detail. See
+  # apps/worker/worker/longform/enhance.py.
+  prompt_structuring: true
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the
