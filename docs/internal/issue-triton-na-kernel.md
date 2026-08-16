@@ -1,10 +1,152 @@
 # Issue: Triton neighbourhood-attention kernel fails on longer generations
 
 **Opened:** 14 August 2026
-**Updated:** 15 August 2026 after client acceptance testing
-**Status:** 🔴 **OPEN — live production impact**
-**Severity:** High — customer-visible failures on the most-used workflow
+**Updated:** 16 August 2026 — **root-caused and fixed**
+**Status:** 🟢 **RESOLVED** — cause found, fix applied, ceilings re-measured
+**Severity:** was High — customer-visible failures on the most-used workflow
 **Box:** RTX PRO 6000 Blackwell (`sm_120`), instance `47698594`
+
+---
+
+## 0. Resolution (16 August 2026)
+
+**NATTEN was never installed. It is a declared, pinned, optional dependency of
+`ltx-core` — and the default VAE decode path expects it.**
+
+```toml
+# packages/ltx-core/pyproject.toml
+[project.optional-dependencies]
+natten = [
+    # Pinned wheel + matching torch so DiffVAE does not hit TokPerm IMA on
+    # older PyTorch/NVIDIA stacks.
+    "natten==0.21.7+torch2130cu132; sys_platform == 'linux' and ...",
+    "torch==2.13.0; ...",
+]
+```
+
+Two things in that block deserved attention long before today. The comment
+names **IMA — illegal memory access** — the exact second error in §4.3, and says
+the pin exists to prevent it. And the box already ran `torch 2.13.0+cu132`,
+precisely what the wheel is built for.
+
+The mechanism, confirmed from the pipeline's own documentation:
+
+```
+--diffvae-optimization chunked_eager   (the DEFAULT)
+    → "deferred stage-4, W-chunks=4, cutlass-fna (or Triton/eager fallback)"
+    → NATTEN absent, so the fallback is taken
+    → fallback_na → triton_na → _na3d_kernel → cannot launch at larger shapes
+    → LTX_MAX_SECONDS=10 → six passes for a 60s video → five seams
+```
+
+FNA is Fused Neighbourhood Attention: NATTEN's kernel. The default configuration
+assumes it is present.
+
+### Install
+
+```bash
+cd /workspace/ltx2-benchmark
+uv sync --extra natten --group kernels     # --group kernels is REQUIRED
+```
+
+**`--group kernels` is not optional.** `uv sync --extra natten` alone resolves
+the lockfile for the named extras only and **uninstalls `ltx-kernels`** — the
+NVFP4 CUDA extension production depends on — along with the whole
+`nvidia-cutlass-dsl` stack. A dry run caught this; without it the install would
+have taken every video generation on the box down. Always:
+
+```bash
+uv sync --extra natten --group kernels --dry-run
+```
+
+and require the output to be exactly `+ natten` with no `-` lines.
+
+194 MB, prebuilt for `sm_120`, no compilation, torch untouched.
+
+### Measured after (single pass, 60s, `nvfp4-prequant`)
+
+| Aspect | Grid before | Ceiling before | Grid now | Ceiling now |
+|---|---|---|---|---|
+| 16:9 | 896×512 | 20s | **1024×576** | **60s** |
+| 9:16 | 512×896 | 10s | **576×1024** | **60s** |
+| 1:1 | 640×640 | ≥15s | **768×768** | **60s** |
+| 4:5 | 512×640 | ≥15s | 512×640 | **60s** |
+
+**Every duration the product offers is now one pass on every aspect ratio**, and
+the grids are 29–44% larger rather than smaller. A 60s render went from six
+passes and five seams to one pass and none.
+
+That matters far beyond speed. Action replay, identity drift, dialogue restart
+and the visible pause were all reported at ~10-second intervals — the pass
+boundary. A symptom that occurs *at* a boundary cannot occur when there is no
+boundary.
+
+### The failure that remains, and it is a different one
+
+`896×512` at 60s now fails in the VAE's **MLP**, not its attention:
+
+```
+chunked/mlp.py:119  _swiglu_tiled_residual_modulated_op
+torch.mm(ws, w_down.t(), out=out_buf[:n])
+RuntimeError: CUDA error: CUBLAS_STATUS_INTERNAL_ERROR ... cublasGemmEx
+```
+
+`fallback_na`, `triton_na` and `_na3d_kernel` are gone from the stack entirely.
+This is the same error class as the 720p probe (`1280×704`), so it is a second,
+independent defect — not a regression of this one. It is worked around by not
+using `896×512`, which is why the 16:9 grid moved.
+
+### The shape rule: there isn't one
+
+Measured at 60s. Note that a **larger** grid passes where a **smaller** one
+fails, in both directions:
+
+| Grid | Pixels | Result |
+|---|---|---|
+| 1024×576 | 589,824 | ✅ |
+| 896×512 | 458,752 | ❌ |
+| 1152×640 | 737,280 | ❌ |
+| 768×960 | 737,280 | ❌ |
+| 768×768 | 589,824 | ✅ |
+| 640×640 | 409,600 | ✅ |
+
+Width, height, area and pixel-count models were each proposed and each refuted
+within an hour. **The failing set is a collection of bad shapes with no
+predictable rule.** Every grid must therefore be measured, never interpolated —
+which is why `adapters/ltx._GRID_CEILINGS` holds measured values only and any
+absent grid takes a pessimistic 10s.
+
+### Also fixed alongside
+
+`plan_segments` chunked greedily, so a source whose length was not a clean
+multiple of the ceiling produced a sliver final window — `240.03s @ 60` gave
+`60, 60, 60, 60, 0.03`, and 0.03s is **one frame**. A full model invocation to
+produce a frozen flash on the end of the video. Windows are even now. This hit
+music-video, video-to-video and extend, whose lengths come from uploaded files
+and are therefore never round numbers.
+
+### Still to verify
+
+Image-to-video, extend-video and video-to-video have **never executed on this
+hardware in any configuration**, and they condition on an uploaded file —
+conditioning previously lowered the ceiling (§4.2). `scripts/ltx_matrix.sh`
+covers them; `scripts/coverage_gaps.sh` covers the chained path and the music
+runtime, neither of which the matrix reaches.
+
+---
+
+## 0.1 Why this took two days to find
+
+The information was in the repository the entire time. `pyproject.toml` declared
+the dependency, pinned the wheel, and its comment named the exact error. The
+optimisation guide stated that the default decode mode falls back to Triton
+without NATTEN. Nobody read either, because the failure looked like a hardware
+limit — and once something is believed to be a hardware limit, the search moves
+to workarounds instead of causes.
+
+Every intermediate conclusion was a workaround, and each was wrong in a way the
+next measurement exposed. The one thing never tried was reading what the
+dependency file said.
 
 ---
 
