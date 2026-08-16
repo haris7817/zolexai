@@ -687,7 +687,7 @@ async def test_cancelling_a_long_song_stops_between_sections(workspace: Path) ->
     seen = 0
 
     async def cancel_after_the_first_section(
-        status: str, progress: int, message: str
+        status: str, progress: int, message: str, _details=None
     ) -> None:
         nonlocal seen
         if status == "generating":
