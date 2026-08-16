@@ -1056,12 +1056,22 @@ async def test_cancellation_kills_what_the_render_itself_spawned(
     waits. Only a signal to the process GROUP reaches the survivor.
     """
     sentinel = tmp_path / "grandchild-survived.txt"
+
+    # Two files rather than a `-c` one-liner: the survivor's body has to
+    # contain a quoted path, and nesting that inside a quoted argument inside
+    # a written script is how the first version of this test came to spawn
+    # nothing at all and pass against the very code it was written to catch.
+    survivor = tmp_path / "survivor.py"
+    survivor.write_text(
+        "import pathlib, time\n"
+        "time.sleep(4)\n"
+        f"pathlib.Path({str(sentinel)!r}).write_text('the kill missed the child')\n"
+    )
+
     script = tmp_path / "spawner.py"
     script.write_text(
         "import subprocess, sys, time\n"
-        "subprocess.Popen([sys.executable, '-c',\n"
-        "    'import pathlib, time; time.sleep(4); "
-        f"pathlib.Path({str(sentinel)!r}).write_text(\"the kill missed the child\")'])\n"
+        f"subprocess.Popen([sys.executable, {str(survivor)!r}])\n"
         "print('started', flush=True)\n"
         "time.sleep(30)\n"
     )
