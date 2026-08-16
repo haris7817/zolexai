@@ -107,6 +107,8 @@ class WorkflowRegistry:
         aspect_ratio: str | None,
         quality: str | None,
         input_roles: set[str],
+        lyrics: str | None = None,
+        lyrics_language: str | None = None,
     ) -> WorkflowDefinition:
         """Checks a submitted generation request against its workflow.
 
@@ -188,6 +190,21 @@ class WorkflowRegistry:
             problems.append(
                 {"field": "quality", "reason": "This tool does not use a quality level."}
             )
+
+        # Lyrics on a video workflow is a client bug, same policy as the rest:
+        # present-and-unsupported is reported, never silently dropped.
+        if not definition.settings.lyrics:
+            if lyrics is not None:
+                problems.append(
+                    {"field": "lyrics", "reason": "This tool does not take lyrics."}
+                )
+            if lyrics_language is not None:
+                problems.append(
+                    {
+                        "field": "lyrics_language",
+                        "reason": "This tool does not take a lyrics language.",
+                    }
+                )
 
         missing = [role for role in definition.required_roles if role not in input_roles]
         if missing:

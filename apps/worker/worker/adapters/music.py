@@ -31,6 +31,7 @@ output across sections fails the job rather than shipping.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import math
 import zlib
@@ -121,6 +122,9 @@ class MusicAdapter:
 
         # ── Plan the song before asking for a note of it ─────────────
         brief = LyricBrief.from_prompt(job.prompt)
+        requested_language = str(job.parameters.get("lyrics_language") or "").strip()
+        if requested_language:
+            brief = dataclasses.replace(brief, language=requested_language)
         plan = plan_song(total_seconds, genre=brief.genre)
         logger.info(
             "music_planned",

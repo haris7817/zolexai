@@ -113,6 +113,9 @@ export const workflowSchema = z.object({
     motion_strength: z.boolean(),
     prompt_adherence: z.boolean(),
     seed: z.boolean(),
+    // Music only: a lyrics box plus a lyric-language choice. Defaulted so
+    // API responses predating the field still parse.
+    lyrics: z.boolean().default(false),
   }),
 
   capabilities: z.object({

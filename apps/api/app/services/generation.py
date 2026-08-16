@@ -105,6 +105,8 @@ class GenerationService:
             aspect_ratio=params.aspect_ratio,
             quality=params.quality,
             input_roles=set(request.inputs),
+            lyrics=params.lyrics,
+            lyrics_language=params.lyrics_language,
         )
 
         await self._validate_inputs(user, request, definition)

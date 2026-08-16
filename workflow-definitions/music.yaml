@@ -34,6 +34,10 @@ settings:
   motion_strength: false
   prompt_adherence: true
   seed: true
+  # A lyrics box (the customer's own words, never rewritten — the model sings
+  # whatever language the sheet is in, 50+ supported) and a language choice
+  # for generated lyrics.
+  lyrics: true
 
 capabilities:
   download: true

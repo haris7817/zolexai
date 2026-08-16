@@ -88,6 +88,10 @@ class SettingsSpec(BaseModel):
     motion_strength: bool = False
     prompt_adherence: bool = False
     seed: bool = False
+    lyrics: bool = False
+    """Whether the panel offers a lyrics box and a lyric-language choice.
+    Music only; a video workflow receiving lyrics is a client bug and is
+    rejected in `validate_request`."""
 
 
 class CapabilitiesSpec(BaseModel):

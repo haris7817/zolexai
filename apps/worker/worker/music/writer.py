@@ -250,6 +250,16 @@ class TemplateLyricsWriter:
         )
         rng = random.Random(seed)
 
+        if brief.language.strip().lower() not in ("", "english", "en"):
+            # The music model sings whatever language the sheet is written in,
+            # but this writer's bank is English. Saying so beats silently
+            # singing English at someone who asked for Urdu — and the log line
+            # is the evidence for prioritising the multilingual (LLM) writer.
+            logger.warning(
+                "lyrics_language_not_supported_by_template_writer",
+                extra={"requested": brief.language, "writing": "English"},
+            )
+
         mood = detect_mood(brief.topic)
         subject = extract_subject(brief.topic)
         sheet = self._compose(rng, plan, mood, subject)

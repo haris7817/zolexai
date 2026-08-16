@@ -34,6 +34,16 @@ class GenerationParameters(BaseModel):
     prompt_adherence: int = Field(default=75, ge=0, le=100)
     seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
 
+    lyrics: str | None = Field(default=None, max_length=10_000)
+    """The customer's own words, passed to the music runtime untouched — they
+    are the one thing the platform must never rewrite. The music model sings
+    whatever language the sheet is written in (50+ supported natively), so
+    this field IS multilingual lyrics support."""
+    lyrics_language: str | None = Field(default=None, max_length=32)
+    """Requested language for GENERATED lyrics, when the customer supplies
+    none. Recorded and passed to the worker's lyric writer; writers that
+    cannot honour it say so in the log rather than silently singing English."""
+
 
 class GenerationCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
