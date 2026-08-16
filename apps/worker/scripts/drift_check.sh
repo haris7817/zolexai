@@ -100,17 +100,32 @@ for bucket in range(int(span)):
     print(row)
 
 print()
+# Halves are the wrong summary and were tried first: a clip that lets go in
+# its SECOND window has already collapsed before either half is averaged, so
+# both halves agree and the verdict reads "holds" for a clip that plainly did
+# not. What drift actually looks like is a peak followed by a fall that never
+# recovers — so report the peak, the floor, and the worst single step down.
 for label, s in zip(labels, series):
     if len(s) < 2:
         continue
     ordered = [s[k] for k in sorted(s)]
-    half = max(1, len(ordered) // 2)
-    first, second = ordered[:half], ordered[half:]
-    opening = sum(first) / len(first)
-    closing = sum(second) / len(second)
-    drop = (opening - closing) / opening * 100 if opening else 0.0
-    verdict = "HOLDS" if drop < 5 else ("DRIFTS" if drop < 12 else "DRIFTS BADLY")
-    print(f"  {label:>{width}}: first half {opening:.3f} -> second half "
-          f"{closing:.3f}   {drop:+.1f}%   {verdict}")
+    mean = sum(ordered) / len(ordered)
+    peak, floor = max(ordered), min(ordered)
+    worst = min(
+        ((b - a) / a * 100 if a else 0.0, i)
+        for i, (a, b) in enumerate(zip(ordered, ordered[1:]), start=1)
+    )
+    fall = (floor - peak) / peak * 100 if peak else 0.0
+    verdict = "HOLDS" if fall > -12 else ("DRIFTS" if fall > -20 else "DRIFTS BADLY")
+    print(
+        f"  {label:>{width}}: mean {mean:.3f}  peak {peak:.3f}  floor {floor:.3f}"
+        f"  ({fall:+.1f}%)   worst step {worst[0]:+.1f}% into window {worst[1]}"
+        f"   {verdict}"
+    )
+print()
+print("  Higher mean = follows the upload more closely. A deep fall from peak")
+print("  to floor is the subject drifting away. Note that a very high mean can")
+print("  also mean the restyle barely changed anything — the table above and a")
+print("  look at the clip settle that; this only measures fidelity over time.")
 print()
 PY
