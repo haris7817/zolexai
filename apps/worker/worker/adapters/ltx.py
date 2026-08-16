@@ -255,11 +255,25 @@ _MAX_OUTPUT_SHORT_SIDE = 1080
 #: through the private `execution` block, because the right values are a
 #: quality judgement made against real footage on a real GPU, and baking them
 #: in would make that judgement a code change.
-_V2V_KEYFRAMES = 3
-"""Source stills shown to the model per pass. One locks the opening
-composition and lets everything after it drift; too many turn a restyle into a
-slideshow of the original. Three across a window keeps subject placement and
-the direction of movement without pinning every frame."""
+_V2V_KEYFRAME_SECONDS = 4.0
+"""How much output one source still is asked to anchor.
+
+This is a DENSITY, not a count, and that distinction is the whole fix. A fixed
+count spreads itself across whatever the pass happens to be: three stills over
+a 30-second pass leaves the model generating ten continuous seconds with
+nothing tying it to the customer's footage, and the gap is where a restyle
+stops being a restyle — subjects drift out of frame, then out of the video.
+Reported by the client on a 30s clip ("after 20 secs it changes, then there is
+no woman present"), and the arithmetic above is exactly that complaint.
+
+Four seconds is chosen to sit under the interval at which drift became visible
+in that footage, not from theory. Conditioning is `--image PATH IDX STRENGTH`
+triples, so a denser leash costs nothing at generation time."""
+
+_V2V_KEYFRAME_BOUNDS = (3, 16)
+"""Floor and ceiling on stills per pass. The floor keeps short passes from
+being anchored only at their ends; the ceiling stops a long pass from becoming
+a slideshow of the original with the prompt doing nothing."""
 
 _V2V_STRUCTURE_STRENGTH = 0.7
 """How hard those stills pull. At 1.0 the source frame IS the output frame and
@@ -613,7 +627,20 @@ class LtxAdapter:
         reference = await self._conditioning_image(job, "reference_image")
         grid = grid_for_source(source.width, source.height)
 
-        keyframes = max(1, min(8, job.execution_int("v2v_keyframes", _V2V_KEYFRAMES)))
+        # An explicit count still wins — it is how a workflow pins conditioning
+        # for footage where the derived density is wrong — but the default is
+        # derived per pass from the duration it actually has to cover.
+        explicit_keyframes = job.execution.get("v2v_keyframes")
+        keyframe_seconds = max(
+            0.5, job.execution_float("v2v_keyframe_seconds", _V2V_KEYFRAME_SECONDS)
+        )
+        floor, cap = _V2V_KEYFRAME_BOUNDS
+
+        def keyframes_for(seconds: float) -> int:
+            if explicit_keyframes is not None:
+                return max(1, min(cap, int(explicit_keyframes)))
+            return max(floor, min(cap, math.ceil(seconds / keyframe_seconds)))
+
         structure = job.execution_float("v2v_structure_strength", _V2V_STRUCTURE_STRENGTH)
         continuity = job.execution_float("v2v_continuity_strength", _V2V_CONTINUITY_STRENGTH)
         reference_strength = job.execution_float(
@@ -622,6 +649,7 @@ class LtxAdapter:
 
         async def conditioning(step: ChainStep) -> list[ConditioningFrame]:
             frames = self._frame_count(step.seconds)
+            keyframes = keyframes_for(step.seconds)
             items: list[ConditioningFrame] = []
 
             # Frame 0 is the seam (or, on the first pass, the one place a

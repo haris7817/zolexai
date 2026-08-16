@@ -246,7 +246,61 @@ async def test_the_number_of_source_stills_is_tunable_and_bounded(
     await collect(
         restyle_job(workspace, source, execution={"runtime": "ltx", "v2v_keyframes": 99})
     )
-    assert len(conditioning_of(invocations(log)[0])) <= 9, "an unbounded count would OOM"
+    assert len(conditioning_of(invocations(log)[0])) <= 17, "an unbounded count would OOM"
+
+
+@needs_ffmpeg
+async def test_source_stills_are_spread_by_time_rather_than_by_pass(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fixed count per pass is a leash whose length depends on the pass.
+
+    Three stills over a 30-second pass leaves ten continuous seconds with
+    nothing tying the output to the customer's footage, and that gap is where
+    a restyle stops being one — the client reported the subject leaving the
+    video entirely after ~20 seconds of a 30-second clip. So conditioning is a
+    density: the longer the pass, the more stills, at a roughly constant
+    number of seconds each.
+    """
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    # A 2-second source under a 1-second ceiling: two passes of ~1s each. At a
+    # 0.25s interval each pass earns four stills, where a fixed count would
+    # have given the same three however long the pass ran.
+    await collect(
+        restyle_job(
+            workspace, source,
+            execution={
+                "runtime": "ltx",
+                "max_segment_seconds": 1,
+                "v2v_keyframe_seconds": 0.25,
+            },
+        )
+    )
+    calls = invocations(log)
+    assert len(calls) >= 2
+    for call in calls:
+        assert len(conditioning_of(call)) >= 4
+
+    # Widen the interval and the same passes are anchored more loosely — which
+    # is what proves the count is derived from duration rather than fixed.
+    log.unlink()
+    await collect(
+        restyle_job(
+            workspace, source,
+            execution={
+                "runtime": "ltx",
+                "max_segment_seconds": 1,
+                "v2v_keyframe_seconds": 10.0,
+            },
+        )
+    )
+    for call in invocations(log):
+        # The floor still applies: a pass anchored only at its ends drifts in
+        # the middle regardless of how loose the requested interval was.
+        assert len(conditioning_of(call)) <= 4
 
 
 # ── The optional reference image ─────────────────────────────────────────

@@ -83,7 +83,12 @@ execution:
   # constants: see `_run_restyle` in apps/worker/worker/adapters/ltx.py for
   # what each one does. Omitted keys fall back to the adapter's defaults.
   #
-  #   v2v_keyframes:           source stills shown per pass (default 3)
+  #   v2v_keyframe_seconds:    how much output one source still anchors
+  #                            (default 4.0 — a DENSITY; the count per pass is
+  #                            derived from it, bounded 3..16)
+  #   v2v_keyframes:           fixed count per pass, overriding the density
+  #                            above. For footage where the derived number is
+  #                            wrong; normally leave unset.
   #   v2v_structure_strength:  how hard they pull (default 0.7)
   #   v2v_continuity_strength: the seam between passes (default 0.85)
   #   v2v_reference_strength:  the optional reference image (default 0.3)
