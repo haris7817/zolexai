@@ -20,9 +20,13 @@ import { workflowSchema, type Workflow } from "@zolexai/workflow-contracts";
  *
  * There is still only ONE source of truth. Python validates these files at API
  * startup and TypeScript parses the same files here; two independent readers of
- * one declarative file, which is loose coupling, not duplication. A test
- * asserts both readings are identical (`tests/catalog-parity.spec.ts`), so
- * drift fails the build rather than reaching a client.
+ * one declarative file, which is loose coupling, not duplication. The two
+ * readings are kept identical by construction: `settings` and `capabilities`
+ * pass through whole and the shared zod contract decides what survives, so a
+ * field added to the contract and the YAML flows through without this file
+ * having to learn it. (An earlier revision projected those blocks key by key
+ * and cited a parity test that was never written; the projection silently
+ * dropped `settings.lyrics` and shipped it as `false` to every client.)
  *
  * ## The private block
  *
@@ -110,17 +114,28 @@ function toPublicWorkflow(raw: RawWorkflow): Workflow {
     supported_durations: raw.supported_durations,
     supported_aspect_ratios: raw.supported_aspect_ratios ?? [],
     supported_quality_levels: raw.supported_quality_levels ?? [],
+    // Passed through WHOLE, not key by key. The shared contract is the
+    // allowlist for these two blocks: `workflowSchema` names every public
+    // flag and zod strips anything it does not know, so nothing private can
+    // ride along. A hand-maintained key list here is how `settings.lyrics`
+    // reached every client as `false` while the API said `true` — this file
+    // was the one reader of the YAML that had to be taught the new field,
+    // and it wasn't (17 Aug 2026). The client seeds its query cache from
+    // this catalogue, so the API's correct answer never displaced the bad
+    // seed. Defaults below only cover keys a definition omits entirely.
     settings: {
-      quality: raw.settings?.quality ?? false,
-      motion_strength: raw.settings?.motion_strength ?? false,
-      prompt_adherence: raw.settings?.prompt_adherence ?? false,
-      seed: raw.settings?.seed ?? false,
+      quality: false,
+      motion_strength: false,
+      prompt_adherence: false,
+      seed: false,
+      ...(raw.settings ?? {}),
     },
     capabilities: {
-      download: raw.capabilities?.download ?? true,
-      extend: raw.capabilities?.extend ?? false,
-      reuse_settings: raw.capabilities?.reuse_settings ?? true,
-      variation: raw.capabilities?.variation ?? false,
+      download: true,
+      extend: false,
+      reuse_settings: true,
+      variation: false,
+      ...(raw.capabilities ?? {}),
     },
     ui: { icon: raw.ui.icon, thumb: raw.ui.thumb },
   });
