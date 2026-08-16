@@ -110,7 +110,19 @@ export function GenerationProgress({
 }) {
   return (
     <div className="animate-zx-fade-up w-[max(220px,min(520px,100%-56px,calc((100vh-380px)*1.78)))] text-center">
-      <div className="rounded-zx-md border-zx-border animate-zx-shimmer mb-[22px] aspect-video border bg-[linear-gradient(110deg,var(--zx-surface)_30%,#1E2418_50%,var(--zx-surface)_70%)] bg-[length:200%_100%]" />
+      <div className="rounded-zx-md border-zx-border animate-zx-shimmer relative mb-[22px] aspect-video border bg-[linear-gradient(110deg,var(--zx-surface)_30%,#1E2418_50%,var(--zx-surface)_70%)] bg-[length:200%_100%]">
+        {/* The brand mark, pulsing in the centre while the job runs (client
+            ask, 17 Aug 2026). Decorative — progress is announced by the
+            aria-live stage label below, so this stays aria-hidden. */}
+        <span
+          aria-hidden="true"
+          className="absolute inset-0 flex items-center justify-center"
+        >
+          <span className="text-zx-on-primary animate-pulse flex h-14 w-14 items-center justify-center rounded-[16px] bg-[image:var(--zx-gradient-primary)] text-[26px] font-extrabold shadow-[0_0_40px_rgba(163,230,53,0.35)]">
+            {brand.shortName}
+          </span>
+        </span>
+      </div>
 
       {/* aria-live: a screen reader announces each stage change without the
           user having to go looking for it. */}

@@ -70,6 +70,22 @@ export function ResultActions({
         </ButtonLink>
       ) : null}
 
+      {/* A finished TRACK is a valid source for the audio-driven video
+          workflow, and the hand-off is the same shape as Extend's: the asset
+          travels with the link, nothing is re-uploaded. Gated on the output's
+          KIND — what the file is — mirroring how Extend gates on capability,
+          so a video or image result never grows this button. */}
+      {output?.kind === "audio" ? (
+        <ButtonLink
+          href={`/app/create/music-video?source=${output.asset_id}`}
+          variant="ghost"
+          size="md"
+        >
+          <ActionIcon name="clapper" />
+          Generate Music Video
+        </ButtonLink>
+      ) : null}
+
       {capabilities.reuse_settings ? (
         <Button variant="ghost" size="md" onClick={onReuseSettings}>
           <ActionIcon name="reuse" />

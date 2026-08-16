@@ -199,3 +199,23 @@ export function TextField({
     />
   );
 }
+
+/** Native select styled to match TextField — used where a choice list is too
+ * long for chips (e.g. lyric languages). */
+export function SelectField({
+  className,
+  children,
+  ...rest
+}: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      className={cn(
+        "bg-zx-surface border-zx-border text-zx-text rounded-zx-md focus:border-zx-border-active w-full cursor-pointer appearance-none border px-[13px] py-[10px] text-[13px] outline-none transition-colors duration-150",
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </select>
+  );
+}

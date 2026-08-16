@@ -41,9 +41,39 @@ export interface GenerationFormValues {
   motionStrength: number;
   promptAdherence: number;
   seedLocked: boolean;
+  /** The customer's own lyric sheet — empty when they want them written.
+   *  Only meaningful on workflows whose `settings.lyrics` is true. */
+  lyrics: string;
+  /** null when the workflow has no lyrics support. */
+  lyricsLanguage: string | null;
   /** role → asset id. null while an optional input is unfilled. */
   inputs: Record<string, string | null>;
 }
+
+/**
+ * Languages offered for GENERATED lyrics. The music model sings 50+ languages
+ * natively — a customer's own pasted lyrics can be in any of them and need no
+ * selection at all, because the model follows the sheet's language.
+ */
+export const LYRIC_LANGUAGES = [
+  "English",
+  "Urdu",
+  "Hindi",
+  "Arabic",
+  "Spanish",
+  "French",
+  "German",
+  "Portuguese",
+  "Italian",
+  "Turkish",
+  "Russian",
+  "Japanese",
+  "Korean",
+  "Chinese",
+] as const;
+
+/** Matches the API's GenerationParameters.lyrics max_length. */
+const LYRICS_MAX_LENGTH = 10_000;
 
 /**
  * A value that is either one of `allowed`, or null when the workflow has no
@@ -117,6 +147,22 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
     promptAdherence: z.number().int().min(0).max(100),
     seedLocked: z.boolean(),
 
+    // Same stale-state discipline as choiceOrNull: on a workflow without the
+    // control, anything but the empty/null resting state means values survived
+    // a workflow switch — surfaced, not silently submitted.
+    lyrics: z
+      .string()
+      .max(LYRICS_MAX_LENGTH, "Those lyrics are too long for one song.")
+      .superRefine((value, ctx) => {
+        if (!workflow.settings.lyrics && value.trim().length > 0) {
+          ctx.addIssue({ code: "custom", message: "Not available for this tool." });
+        }
+      }),
+    lyricsLanguage: choiceOrNull(
+      workflow.settings.lyrics ? LYRIC_LANGUAGES : [],
+      "Choose a language.",
+    ),
+
     // Required roles are enforced here, which is what makes Video to Video's
     // OPTIONAL reference image work with no bespoke rule (directive §14).
     inputs: z
@@ -148,6 +194,8 @@ export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
     motionStrength: 60,
     promptAdherence: 75,
     seedLocked: false,
+    lyrics: "",
+    lyricsLanguage: workflow.settings.lyrics ? LYRIC_LANGUAGES[0] : null,
     inputs: Object.fromEntries(workflow.inputs.map((input) => [input.role, null])),
   };
 }
@@ -201,6 +249,15 @@ export function preserveValues(
     motionStrength: previous.motionStrength,
     promptAdherence: previous.promptAdherence,
     seedLocked: previous.seedLocked,
+    // Lyrics travel only between workflows that both have the control —
+    // stale lyrics on a video workflow would trip its own validation.
+    lyrics: workflow.settings.lyrics ? previous.lyrics : defaults.lyrics,
+    lyricsLanguage:
+      workflow.settings.lyrics &&
+      previous.lyricsLanguage &&
+      (LYRIC_LANGUAGES as readonly string[]).includes(previous.lyricsLanguage)
+        ? previous.lyricsLanguage
+        : defaults.lyricsLanguage,
     duration:
       previous.duration !== null && workflow.supported_durations.includes(previous.duration)
         ? previous.duration
@@ -244,6 +301,16 @@ export function toCreateInput(
       ...(workflow.settings.motion_strength ? { motion_strength: values.motionStrength } : {}),
       ...(workflow.settings.prompt_adherence ? { prompt_adherence: values.promptAdherence } : {}),
       ...(workflow.settings.seed && values.seedLocked ? { seed: 123456 } : {}),
+      // The customer's own words are sent exactly as typed (trimmed only at
+      // the ends) — the platform never rewrites a lyric sheet. The language
+      // matters when we write the lyrics, so it is sent whenever the control
+      // exists; the API stores it with the job either way.
+      ...(workflow.settings.lyrics && values.lyrics.trim()
+        ? { lyrics: values.lyrics.trim() }
+        : {}),
+      ...(workflow.settings.lyrics && values.lyricsLanguage
+        ? { lyrics_language: values.lyricsLanguage }
+        : {}),
     },
     ...(Object.keys(inputs).length ? { inputs } : {}),
   };
@@ -283,5 +350,14 @@ export function valuesFromJob(
         ? parameters.prompt_adherence
         : defaults.promptAdherence,
     seedLocked: parameters.seed != null,
+    lyrics:
+      workflow.settings.lyrics && typeof parameters.lyrics === "string"
+        ? parameters.lyrics
+        : defaults.lyrics,
+    lyricsLanguage: pick(
+      parameters.lyrics_language,
+      workflow.settings.lyrics ? LYRIC_LANGUAGES : [],
+      defaults.lyricsLanguage,
+    ),
   };
 }

@@ -12,9 +12,10 @@ import {
   OptionChip,
   SegmentedControl,
   RangeField,
+  SelectField,
   ToggleField,
 } from "@/components/ui/Controls";
-import type { GenerationFormValues } from "@/features/generation/form";
+import { LYRIC_LANGUAGES, type GenerationFormValues } from "@/features/generation/form";
 import {
   autoDurationLabel,
   durationLabel,
@@ -134,6 +135,64 @@ export function GenerationSettingsPanel({
           <p role="alert" className="text-zx-error mb-6 text-[11.5px] font-semibold">
             {errors.prompt.message}
           </p>
+        ) : null}
+
+        {/* ── Lyrics — rendered only when the workflow declares the control.
+            The customer's own words are never rewritten; empty means the
+            platform writes them, and the language choice applies to THAT. */}
+        {workflow.settings.lyrics ? (
+          <>
+            <SectionLabel as="label" htmlFor="zx-lyrics">
+              Lyrics
+              <span className="text-zx-text-muted ml-[6px] font-semibold normal-case">
+                optional
+              </span>
+            </SectionLabel>
+            <textarea
+              id="zx-lyrics"
+              {...form.register("lyrics")}
+              placeholder={
+                "Paste your own lyrics in any language — or leave this empty and we'll write them from your prompt."
+              }
+              rows={4}
+              aria-invalid={Boolean(errors.lyrics)}
+              className={cn(
+                "bg-zx-surface border-zx-border text-zx-text rounded-zx-md focus:border-zx-border-active w-full resize-none border px-[13px] py-3 text-[13px] leading-[1.55] outline-none transition-colors duration-150",
+                errors.lyrics ? "border-zx-error/60 mb-[6px]" : "mb-4",
+              )}
+            />
+            {errors.lyrics ? (
+              <p role="alert" className="text-zx-error mb-4 text-[11.5px] font-semibold">
+                {errors.lyrics.message}
+              </p>
+            ) : null}
+
+            <SectionLabel as="label" htmlFor="zx-lyrics-language">
+              Lyrics language
+            </SectionLabel>
+            <Controller
+              control={form.control}
+              name="lyricsLanguage"
+              render={({ field }) => (
+                <SelectField
+                  id="zx-lyrics-language"
+                  value={field.value ?? LYRIC_LANGUAGES[0]}
+                  onChange={(event) => field.onChange(event.target.value)}
+                  className="mb-[6px]"
+                >
+                  {LYRIC_LANGUAGES.map((language) => (
+                    <option key={language} value={language}>
+                      {language}
+                    </option>
+                  ))}
+                </SelectField>
+              )}
+            />
+            <p className="text-zx-text-muted mb-6 text-[11.5px] leading-[1.5]">
+              Applies when we write the lyrics for you. Your own pasted lyrics
+              can be in any language.
+            </p>
+          </>
         ) : null}
 
         {/* ── Aspect ratio — hidden entirely for audio output ──────── */}
