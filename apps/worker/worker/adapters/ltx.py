@@ -208,32 +208,40 @@ _BAD_FRAME_BANDS: dict[bool, dict[tuple[int, int], list[tuple[int, int, int]]]] 
         (576, 1024): [(233, 247, 248), (714, 735, 736)],
         (768, 768): [(714, 735, 736)],  # 240 passes on 1:1 — measured
     },
-    # conditioned (any --image): the band moves entirely, and it is WIDE.
-    #
-    # This started as (1436, 1520, 1528) — the counts a 60s pass produces,
-    # which is all anyone had measured. Then music video, whose cuts follow
-    # musical onsets, produced a 57.54s pass: 1381 frames, BELOW the band, so
-    # unnudged — and it crashed the decoder twice (2026-08-16). Probed
-    # afterwards on the same card: 1381 FAIL, 1437 FAIL, 1528 PASS.
-    #
-    # The interior of 737..1527 is UNMEASURED, which is not the same as good.
-    # This bug has refuted every rule proposed for it — 1440 fails while 1528
-    # passes, and the two are indistinguishable under every modulus tried — so
-    # the band now runs from the highest count proven safe (736) to the next
-    # one proven safe (1528). A customer's job is the wrong place to discover
-    # which of the counts in between are poisoned.
-    #
-    # THIS COSTS TIME: a 45s conditioned pass (1080 frames) renders as 1528 and
-    # is trimmed back, roughly 40% more compute than it needs. A deliberate
-    # trade — correct now, efficient once the true lower edge is measured with
-    # `scripts/frame_probe.py` and the band narrowed to it.
-    True: {
-        (1024, 576): [(737, 1527, 1528)],
-        (576, 1024): [(737, 1527, 1528)],
-        (768, 768): [(737, 1527, 1528)],
-        (512, 640): [(737, 1527, 1528)],  # extend 4:5 failed via its 16:9 source
-    },
+    # conditioned (any --image): EMPTY, and that is a finding rather than an
+    # omission. Every failure recorded here — 1381, 1437, 1440, 1464 — is a
+    # count that is not 8k+1. Every 8k+1 count probed on the same card and
+    # grid passed: 1289, 1385, 1441. 1440 FAILS and 1441 PASSES, one frame
+    # apart. `_conforming_frames` below now guarantees the input is 8k+1, so
+    # there is nothing left for a band to catch.
+    True: {},
 }
+
+#: The model's native frame convention: counts of the form 8k+1.
+#:
+#: Stated in three places in the pipeline source — `retake.py` REJECTS other
+#: counts outright ("must satisfy 8k+1 (e.g. 97, 193)"), the dubbing pipeline
+#: "silently snaps to the nearest 8k+1", and the trainer's dataset loader
+#: checks `num_frames % 8 != 1`. The entry point this adapter drives does none
+#: of that: it accepts whatever it is given and handles the remainder on a path
+#: where the decoder's batched GEMM casts its dimensions to int32 and dies.
+#:
+#: Which is the whole two-day bug. `round(seconds * 24)` produces 1440 for a
+#: 60s pass and 1381 for one of music video's beat-aligned 57.54s passes;
+#: neither is 8k+1, both crash, and 1441 and 1385 do not. Measured 2026-08-16.
+_FRAME_LATTICE = 8
+
+
+def conforming_frames(frames: int) -> int:
+    """The smallest 8k+1 count at or above `frames`.
+
+    Overshoot is at most 7 frames — under a third of a second — and the caller
+    trims back to the exact requested duration, so this is invisible in the
+    delivered video. Compare the alternative it replaced: a measured table of
+    poisoned counts, and a band wide enough to cost 40% extra compute on every
+    conditioned pass.
+    """
+    return max(1, frames + ((1 - frames) % _FRAME_LATTICE))
 
 
 def safe_frame_count(
@@ -241,19 +249,25 @@ def safe_frame_count(
 ) -> int:
     """The frame count actually sent to the pipeline for this shape.
 
-    Returns `frames` untouched unless it falls inside a measured bad band for
-    this exact (grid, conditioned) pair, in which case it returns the measured
-    safe landing above the band. The caller renders the substitute and trims
-    the output back to the requested duration — the delivered video is exactly
-    the length asked for, in one pass, with no seam.
+    Two steps, in this order:
 
-    Unknown grids return `frames` unchanged: without a measurement there is no
-    landing to prefer, and the pessimistic per-shape ceiling already keeps
-    unmeasured shapes on short passes.
+    1. Snap to the model's native 8k+1 lattice. This is the fix — it is what
+       the pipeline's own sibling entry points do, and every crash on record
+       is a count that skipped it.
+    2. Apply any band still MEASURED to fail at a conforming count. The
+       conditioned set is empty because snapping resolved all of it; the
+       unconditioned bands are kept because they were measured at low counts
+       where nothing has been re-probed since, and a 7-frame nudge is not
+       worth gambling against.
+
+    The caller renders the substitute and trims back to the requested
+    duration, so the delivered video is exactly the length asked for, in one
+    pass, with no seam.
     """
+    frames = conforming_frames(frames)
     for lo, hi, landing in _BAD_FRAME_BANDS[conditioned].get(dimensions, ()):
         if lo <= frames <= hi:
-            return landing
+            return conforming_frames(landing)
     return frames
 
 #: The largest frame measured on this card (1024x576 == 768x768 == 589,824 px).
@@ -1215,7 +1229,17 @@ class LtxAdapter:
             if frames != requested_frames:
                 # BEFORE verification and before any continuity frame is
                 # extracted, so the seam frame sits at the planned timestamp.
-                await self._trim_to(job, step.output, step.seconds)
+                #
+                # Bounded by what WE added, never more. Snapping to the model's
+                # lattice overshoots by at most 7 frames, and trimming exactly
+                # that much is invisible. Trimming an arbitrary amount would
+                # make this a length fixer — and a render that came back
+                # seconds too long is a fault the verification below exists to
+                # catch, not something to quietly cut down to size.
+                overshoot = (frames - requested_frames) / float(settings.ltx_frame_rate)
+                await self._trim_to(
+                    job, step.output, step.seconds, tolerance_seconds=overshoot
+                )
             if require_audio:
                 try:
                     await verify_output(
@@ -1312,14 +1336,44 @@ class LtxAdapter:
             cmd += item.as_args()
         return cmd
 
-    async def _trim_to(self, job: AdapterJob, path: Path, seconds: float) -> None:
+    async def _trim_to(
+        self,
+        job: AdapterJob,
+        path: Path,
+        seconds: float,
+        *,
+        tolerance_seconds: float = 0.0,
+    ) -> None:
         """Cuts a nudged render back to the requested length, in place.
 
         A re-encode rather than a stream copy: `-c copy` can only cut on a
         keyframe, and the whole point is landing on the exact requested
         duration. Settings match the section normalizer so a trimmed pass is
         indistinguishable from an untrimmed one downstream.
+
+        `tolerance_seconds` is how much overshoot this trim is entitled to
+        remove — the amount snapping to the model's frame lattice added, and
+        nothing beyond it. A render that came back materially longer than that
+        did something the caller did not ask for, and the verification that
+        follows is supposed to see it. Cutting it silently would turn this
+        into a length fixer and delete the evidence.
         """
+        if tolerance_seconds > 0:
+            info = await probe_media(path)
+            actual = info.duration_seconds or 0.0
+            # A generous multiple: encoders round durations, and the point is
+            # to catch "five seconds instead of two", not tenths.
+            allowed = seconds + max(0.5, tolerance_seconds * 3)
+            if actual > allowed:
+                logger.warning(
+                    "render_far_longer_than_planned",
+                    extra={
+                        "planned_seconds": round(seconds, 3),
+                        "actual_seconds": round(actual, 3),
+                        "trim_allowance": round(tolerance_seconds, 3),
+                    },
+                )
+                return
         trimmed = path.with_name(path.stem + ".trimmed.mp4")
         try:
             await cancellable(

@@ -145,7 +145,17 @@ async def test_the_scene_plan_covers_the_track_exactly(
 
     measured = await probe_media(track)
     frames = [int(value_of(argv, "--num-frames")) for argv in invocations(log)]
-    assert sum(frames) / 24 == pytest.approx(measured.duration_seconds, abs=0.1)
+
+    # Each pass is snapped up to the model's 8k+1 lattice and trimmed back
+    # afterwards, so the counts sum to the song plus at most 7 frames per pass
+    # rather than to it exactly. What must still hold is that nothing was left
+    # uncovered: a plan one section short ends before the music does.
+    planned = measured.duration_seconds * 24
+    assert all(f % 8 == 1 for f in frames), f"not on the model's lattice: {frames}"
+    assert sum(frames) >= planned - 1, "the plan does not reach the end of the track"
+    assert sum(frames) <= planned + 7 * len(frames) + 1, (
+        f"overshoot beyond the lattice: {sum(frames)} for {planned:.0f} planned"
+    )
 
 
 # ── The audio promise ────────────────────────────────────────────────────

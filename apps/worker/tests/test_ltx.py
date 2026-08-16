@@ -47,6 +47,7 @@ from worker.adapters.ltx import (
     _MARKERS,
     ConditioningFrame,
     LtxAdapter,
+    conforming_frames,
     grid_for_source,
     match_marker,
     output_dimensions,
@@ -314,60 +315,71 @@ def test_the_pass_ceiling_is_a_property_of_the_grid_not_the_product(
 
 
 class TestSafeFrameCount:
-    """The decoder's bad shapes, dodged by rendering past them and trimming.
+    """Frame counts the decoder can actually decode.
 
-    Every number here is a 16 Aug 2026 measurement (CUBLAS_STATUS_INTERNAL_ERROR
-    in the VAE's batched GEMM). The set follows no rule — 240 fails
-    unconditioned where 1440 passes, and WITH a conditioning image it is 1440
-    that fails while 240 passes — so this function must be a lookup into
-    measured bands, never arithmetic.
+    The two-day crash (CUBLAS_STATUS_INTERNAL_ERROR in the VAE's batched GEMM)
+    was never arbitrary, though it looked it for a long time. The model has a
+    native frame convention — counts of the form 8k+1 — stated in three places
+    in the pipeline source: `retake.py` rejects anything else, the dubbing
+    pipeline snaps to it silently, and the trainer's dataset loader checks
+    `num_frames % 8 != 1`. The entry point this adapter drives does neither,
+    and handles the remainder on a path where the GEMM's int32 dimensions
+    overflow.
+
+    Measured on the RTX PRO 6000, 16 Aug 2026, conditioned at 1024x576:
+
+        1440 FAIL   1441 PASS      <- one frame apart
+        1381 FAIL   1385 PASS
+        1437 FAIL   1289 PASS
+
+    Every failure on record is a non-conforming count; every conforming count
+    probed passed.
     """
 
-    def test_measured_bad_counts_land_on_measured_safe_ones(self) -> None:
-        # 10s and 30s at the standard grids: the exact cells the matrix caught.
-        assert safe_frame_count((1024, 576), 240, conditioned=False) == 248
-        assert safe_frame_count((1024, 576), 720, conditioned=False) == 736
-        assert safe_frame_count((576, 1024), 240, conditioned=False) == 248
-        assert safe_frame_count((576, 1024), 720, conditioned=False) == 736
-        assert safe_frame_count((768, 768), 720, conditioned=False) == 736
+    def test_the_measured_failures_all_become_measured_passes(self) -> None:
+        """The whole point, stated as the numbers from the card."""
+        for bad, good in ((1440, 1441), (1381, 1385), (1437, 1441), (1464, 1465)):
+            assert safe_frame_count((1024, 576), bad, conditioned=True) == good
 
-    def test_good_counts_pass_through_untouched(self) -> None:
-        for frames in (120, 232, 248, 360, 736, 1440):
-            assert safe_frame_count((1024, 576), frames, conditioned=False) == frames
-        # 1:1 decodes 240 fine — measured, and the band must not leak across grids.
-        assert safe_frame_count((768, 768), 240, conditioned=False) == 240
+    def test_every_result_is_on_the_models_lattice(self) -> None:
+        for frames in range(1, 2000, 7):
+            for conditioned in (True, False):
+                for grid in ((1024, 576), (576, 1024), (768, 768), (896, 640)):
+                    out = safe_frame_count(grid, frames, conditioned=conditioned)
+                    assert out % 8 == 1, f"{grid} {frames} {conditioned} -> {out}"
 
-    def test_conditioning_moves_the_bad_set_entirely(self) -> None:
-        """The matrix's strangest true result: image-to-video PASSED at 10s and
-        30s where text FAILED, and FAILED at 60s where text passed. Same grids.
-        The bad set is a function of conditioning, so the table must be too."""
-        # conditioned: 240 and 720 are fine, 1440 is not
-        assert safe_frame_count((1024, 576), 240, conditioned=True) == 240
-        assert safe_frame_count((1024, 576), 720, conditioned=True) == 720
-        assert safe_frame_count((1024, 576), 1440, conditioned=True) == 1528
-        # unconditioned: 1440 is fine
-        assert safe_frame_count((1024, 576), 1440, conditioned=False) == 1440
+    def test_a_conforming_count_is_left_alone(self) -> None:
+        for frames in (97, 193, 1289, 1385, 1441):
+            assert safe_frame_count((1024, 576), frames, conditioned=True) == frames
 
-    def test_the_whole_measured_bad_band_is_covered_not_just_the_hits(self) -> None:
-        """1448 and 1464 also failed — the band between measurements must nudge
-        too, because a music-video section can land on any frame count."""
-        for frames in (1440, 1448, 1464, 1500):
-            assert safe_frame_count((1024, 576), frames, conditioned=True) == 1528
+    def test_the_overshoot_is_never_more_than_a_third_of_a_second(self) -> None:
+        """It is rendered and then trimmed away, so it must stay small enough
+        to be invisible in cost. The band this replaced cost 40%."""
+        for frames in range(1, 3000):
+            assert 0 <= conforming_frames(frames) - frames <= 7
 
-    def test_an_unmeasured_grid_is_left_alone(self) -> None:
-        """No measurement, no landing to prefer — and unmeasured grids already
-        run short passes under the pessimistic ceiling."""
-        assert safe_frame_count((896, 640), 240, conditioned=False) == 240
-
-    def test_every_landing_is_at_or_above_the_request(self) -> None:
+    def test_no_result_is_ever_below_the_request(self) -> None:
         """Trimming down is exact; padding up is impossible — a landing below
         the request would deliver a short video."""
-        from worker.adapters.ltx import _BAD_FRAME_BANDS
+        for frames in range(1, 3000):
+            for conditioned in (True, False):
+                assert safe_frame_count(
+                    (1024, 576), frames, conditioned=conditioned
+                ) >= frames
 
-        for table in _BAD_FRAME_BANDS.values():
-            for bands in table.values():
-                for lo, hi, landing in bands:
-                    assert landing > hi >= lo
+    def test_unconditioned_bands_still_apply_over_the_lattice(self) -> None:
+        """Those were measured at low counts and nothing has re-probed them
+        since. A 7-frame nudge is not worth gambling against, so they stay as
+        a backstop on top of the lattice — and their landings conform too."""
+        for frames in (240, 720):
+            out = safe_frame_count((1024, 576), frames, conditioned=False)
+            assert out % 8 == 1
+            assert out > frames
+
+    def test_an_unmeasured_grid_still_gets_a_conforming_count(self) -> None:
+        """No band to consult, but the lattice is a property of the MODEL, not
+        of a grid — so it applies to shapes nobody has probed."""
+        assert safe_frame_count((896, 640), 240, conditioned=False) % 8 == 1
 
 
 def test_an_unmeasured_grid_gets_the_pessimistic_ceiling(workspace: Path) -> None:

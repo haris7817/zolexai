@@ -148,9 +148,21 @@ async def test_an_awkward_length_keeps_its_remainder(
     # What is under test is the plan the model was given: the tail is asked
     # for as a real half-second pass, not dropped and not rounded up to a
     # fourth full one.
+    #
+    # Frame counts are snapped up to the model's 8k+1 lattice and the overshoot
+    # is trimmed off each pass (see `conforming_frames`), so they no longer sum
+    # to the source exactly — they sum to it plus at most 7 per pass. The
+    # guarantee being protected is unchanged: three passes covering 2.5s, none
+    # of them a sliver, nothing rounded away.
+    planned = 60  # 2.5s at 24fps
     frames = [int(value_of(argv, "--num-frames")) for argv in invocations(log)]
-    assert sum(frames) == 60, "the remainder was rounded away — 2.5s at 24fps is 60 frames"
-    assert frames == [20, 20, 20]
+
+    assert len(frames) == 3, "the half-second tail was dropped or absorbed"
+    assert all(f % 8 == 1 for f in frames), f"not on the model's lattice: {frames}"
+    assert planned <= sum(frames) <= planned + 7 * len(frames), (
+        f"the remainder was rounded away — 2.5s at 24fps is {planned} frames "
+        f"plus at most 7 per pass, got {sum(frames)}"
+    )
     assert all(f > 24 // 10 for f in frames), "no pass may be a degenerate sliver"
 
 
