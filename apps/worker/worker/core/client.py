@@ -26,6 +26,39 @@ class ApiUnavailable(RuntimeError):
     """The API could not be reached or returned a server error."""
 
 
+#: Mirrors `JobFailRequest.internal_detail` in the API's internal schema. Over
+#: this and the whole report is rejected — see `fit_detail`.
+MAX_INTERNAL_DETAIL = 2000
+
+#: Same, for `JobFailRequest.user_message`. The API substitutes generic copy
+#: for anything it considers unsuitable, but only after the request validates.
+MAX_USER_MESSAGE = 400
+
+
+def fit_detail(detail: str, limit: int = MAX_INTERNAL_DETAIL) -> str:
+    """Trims a diagnostic to what the API will accept, keeping both ends.
+
+    Load-bearing, and the failure it prevents is worse than losing detail. A
+    CUDA traceback runs to several thousand characters; the API caps this
+    field at 2000 and rejects the whole report with 422. The job is then never
+    marked failed — it sits until its lease expires and is retried, at full
+    GPU cost, with the same input and the same deterministic crash. Observed
+    on 2026-08-16: two identical six-minute music-video failures, neither of
+    which the platform ever recorded as a failure.
+
+    Both ends are kept because they carry different things: the head says
+    which stage failed and with what exit code, the tail carries the actual
+    exception. Cutting either one loses the diagnosis.
+    """
+    if len(detail) <= limit:
+        return detail
+
+    marker = "\n  …[trimmed]…\n"
+    room = max(0, limit - len(marker))
+    head = room * 2 // 5
+    return detail[:head] + marker + detail[len(detail) - (room - head):]
+
+
 class WorkerApiClient:
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._client = client or httpx.AsyncClient(
@@ -169,8 +202,11 @@ class WorkerApiClient:
                 "worker_id": worker_id,
                 "lease_token": lease_token,
                 "error_code": error_code,
-                "user_message": user_message,
-                "internal_detail": internal_detail,
+                # Bounded HERE rather than at each call site: this is the layer
+                # that knows the API's contract, and a report the API refuses
+                # leaves the job unfailed and silently retried.
+                "user_message": user_message[:MAX_USER_MESSAGE],
+                "internal_detail": fit_detail(internal_detail),
                 "retriable": retriable,
             },
         )

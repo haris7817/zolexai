@@ -997,10 +997,47 @@ async def test_a_failing_pipeline_surfaces_its_output_tail(
     with pytest.raises(AdapterError) as raised:
         await collect(make_job(workspace))
 
+    # Out of memory depends on what else held the card, so another attempt can
+    # genuinely succeed. This is the case retries exist for.
     assert raised.value.retriable is True
     assert "exited 3" in raised.value.internal_detail
     assert "CUDA out of memory" in raised.value.internal_detail
     # The customer never sees provider vocabulary.
+    assert "cuda" not in raised.value.user_message.lower()
+
+
+@pytest.mark.parametrize(
+    "crash",
+    [
+        "RuntimeError: CUDA error: CUBLAS_STATUS_INTERNAL_ERROR when calling "
+        "`cublasGemmStridedBatchedEx(handle, opa, opb, (int)m, (int)n, (int)k, ...)`",
+        "RuntimeError: CUDA error: no kernel image is available for execution",
+        "RuntimeError: CUDA error: invalid argument",
+    ],
+)
+async def test_a_shape_crash_is_not_retried(
+    crash: str, workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Some pipeline failures are properties of the input, not of the moment.
+
+    The VAE's batched GEMM casts its dimensions to int32 and fails on
+    particular frame counts — the same count crashes on every attempt. On
+    2026-08-16 a music-video job failed twice with exactly this, six minutes
+    in each time, spending twelve minutes of a card that other customers were
+    queued behind to reach the identical crash.
+
+    Distinct from out-of-memory above, which really does depend on what else
+    was running.
+    """
+    script = tmp_path / "fail.py"
+    script.write_text(f"import sys\nprint({crash!r})\nsys.exit(1)\n")
+    stub_launcher(monkeypatch, script)
+
+    with pytest.raises(AdapterError) as raised:
+        await collect(make_job(workspace))
+
+    assert raised.value.retriable is False, "the same input crashes the same way"
     assert "cuda" not in raised.value.user_message.lower()
 
 

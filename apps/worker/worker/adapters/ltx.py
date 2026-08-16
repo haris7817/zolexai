@@ -1156,17 +1156,27 @@ class LtxAdapter:
             frames = safe_frame_count(
                 dimensions, requested_frames, conditioned=bool(items)
             )
-            if frames != requested_frames:
-                logger.info(
-                    "frame_count_nudged",
-                    extra={
-                        "workflow_id": job.workflow_id,
-                        "grid": list(dimensions),
-                        "requested_frames": requested_frames,
-                        "rendered_frames": frames,
-                        "conditioned": bool(items),
-                    },
-                )
+            # Logged for EVERY pass, not only nudged ones. When a pass crashes
+            # the decoder, its frame count and grid are the whole diagnosis —
+            # and on 2026-08-16 a music-video failure could not be attributed
+            # to a pass at all, because only the one nudged pass in four had
+            # said what it was rendering. A line per pass costs nothing and is
+            # the difference between "a pass failed" and "1381 frames
+            # conditioned at 1024x576 fails".
+            logger.info(
+                "pass_frames",
+                extra={
+                    "workflow_id": job.workflow_id,
+                    "pass_index": step.index,
+                    "passes": step.total,
+                    "grid": list(dimensions),
+                    "seconds": round(step.seconds, 3),
+                    "requested_frames": requested_frames,
+                    "rendered_frames": frames,
+                    "nudged": frames != requested_frames,
+                    "conditioned": bool(items),
+                },
+            )
             await self._execute(
                 job=job,
                 cmd=self._command(
@@ -1411,15 +1421,41 @@ class LtxAdapter:
 
             returncode = await process.wait()
             if returncode != 0:
+                output = " | ".join(tail)
                 raise AdapterError(
                     "This generation could not be completed. Please try again.",
                     internal_detail=(
-                        f"LTX pipeline exited {returncode}; output tail: "
-                        + " | ".join(tail)
+                        f"LTX pipeline exited {returncode}; output tail: {output}"
                     ),
+                    retriable=not _is_deterministic_failure(output),
                 )
         finally:
             await _terminate_render(process)
+
+
+#: Pipeline failures that the SAME input reproduces every time, so a retry
+#: spends the whole render again to reach the identical crash.
+#:
+#: These are shape bugs, not luck: the VAE's batched GEMM casts its dimensions
+#: to int32 and fails on particular frame counts (see `_BAD_FRAME_BANDS`), and
+#: a missing kernel is missing on every attempt. Observed 2026-08-16 — a
+#: music-video job failed twice with CUBLAS_STATUS_INTERNAL_ERROR at the same
+#: point, six minutes in, having burned twelve minutes of a card that other
+#: customers were queued behind.
+#:
+#: OUT OF MEMORY IS DELIBERATELY ABSENT. That one genuinely does depend on what
+#: else held the card at the time, and it is the case a retry exists for.
+_DETERMINISTIC_FAILURES = (
+    "CUBLAS_STATUS_INTERNAL_ERROR",
+    "CUBLAS_STATUS_NOT_SUPPORTED",
+    "CUBLAS_STATUS_INVALID_VALUE",
+    "no kernel image is available",
+    "CUDA error: invalid argument",
+)
+
+
+def _is_deterministic_failure(output: str) -> bool:
+    return any(needle in output for needle in _DETERMINISTIC_FAILURES)
 
 
 def _minutes(seconds: float) -> str:
