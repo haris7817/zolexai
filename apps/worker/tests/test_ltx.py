@@ -50,6 +50,7 @@ from worker.adapters.ltx import (
     match_marker,
     output_dimensions,
 )
+from worker.core.config import settings
 from worker.media import ffmpeg, plan_segments, probe_media
 
 # ── The contract ─────────────────────────────────────────────────────────
@@ -425,9 +426,19 @@ async def test_a_long_image_to_video_conditions_the_first_pass_on_the_still(
     assert result.duration_seconds == pytest.approx(4.0, abs=1.0)
 
 
-async def test_missing_weights_fail_before_any_subprocess(workspace: Path) -> None:
+async def test_missing_weights_fail_before_any_subprocess(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A node without the models is a deployment mistake; the log should name
-    the missing files and the customer should see only generic copy."""
+    the missing files and the customer should see only generic copy.
+
+    The empty root is set explicitly rather than relied upon. This test used to
+    pass only because a development machine happens to have no weights — on the
+    GPU node, where they exist, it failed. A test whose result depends on which
+    machine runs it is not testing what it claims to.
+    """
+    monkeypatch.setattr(settings, "ltx_model_dir", tmp_path / "no-models-here")
+
     with pytest.raises(AdapterError) as raised:
         await collect(make_job(workspace))
 
@@ -531,15 +542,11 @@ async def test_the_full_i2v_run_conditions_on_the_staged_still(
     await ffmpeg(
         ["-f", "lavfi", "-i", "testsrc2=size=896x512:rate=1", "-frames:v", "1", str(still)]
     )
-    fixture = tmp_path / "render.mp4"
-    await ffmpeg(
-        [
-            "-f", "lavfi", "-i", "testsrc2=size=896x512:rate=24",
-            "-t", "5",
-            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-            str(fixture),
-        ]
-    )
+    # WITH audio. The model emits a soundtrack on every pass, and since the
+    # long-form hardening a silent i2v/t2v pass fails validation deliberately —
+    # the client reported missing audio as a defect. A silent fixture is
+    # therefore not a smaller version of a real render, it is an invalid one.
+    fixture = await make_clip(tmp_path / "render.mp4", 5, audio=True, size="896x512")
 
     script = tmp_path / "render.py"
     script.write_text(
@@ -1008,15 +1015,8 @@ async def test_the_full_run_produces_a_verified_result(
 ) -> None:
     """Everything the runner sees from a successful LTX job, with only the
     model swapped out: real flags in, real MP4 out, measured metadata back."""
-    fixture = tmp_path / "render.mp4"
-    await ffmpeg(
-        [
-            "-f", "lavfi", "-i", "testsrc2=size=896x512:rate=24",
-            "-t", "2",
-            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-            str(fixture),
-        ]
-    )
+    # WITH audio — see the i2v twin. A silent pass is rejected on purpose.
+    fixture = await make_clip(tmp_path / "render.mp4", 2, audio=True, size="896x512")
 
     script = tmp_path / "render.py"
     script.write_text(
