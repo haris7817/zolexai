@@ -14,6 +14,7 @@ harness suite.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from pathlib import Path
 
@@ -632,7 +633,10 @@ def extension_stub(
         ((1920, 1080), (1024, 576)),
         ((1080, 1920), (576, 1024)),
         ((720, 720), (768, 768)),
-        ((160, 120), (1024, 768)),  # 4:3 has an exact in-budget grid
+        # 4:3 has no exact grid inside the budget — 1024x768 is 786k px against
+        # a 590k ceiling — so it takes the largest shape within the aspect
+        # tolerance instead.
+        ((160, 120), (896, 640)),
         ((None, None), (1024, 576)),
     ],
 )
@@ -653,8 +657,14 @@ def test_a_source_aspect_keeps_its_shape_even_without_a_measured_ceiling() -> No
     recoverable, a swapped subject is not.
     """
     grid = grid_for_source(160, 120)
-    assert abs(grid[0] / grid[1] - 4 / 3) < 0.05
+    # The same 0.08 log-aspect tolerance `grid_for_source` selects within: close
+    # enough that the crop is invisible, which is the point of allowing it.
+    assert abs(math.log(grid[0] / grid[1]) - math.log(4 / 3)) <= 0.08
     assert grid not in _GRID_CEILINGS, "test is meaningless if this becomes measured"
+
+    adapter = LtxAdapter()
+    ceiling = adapter._per_pass_seconds(make_job(Path(".")), grid)
+    assert ceiling == 10.0, "an unmeasured shape must be chained, not gambled on"
 
 
 def test_every_reachable_grid_is_legal_for_the_model() -> None:
