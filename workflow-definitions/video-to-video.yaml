@@ -21,6 +21,10 @@ inputs:
     required: true
     label: INPUT VIDEO
     drop_hint: a video
+    # Same reasoning as music-video: the result matches the source's length, so
+    # length is what decides the work, and 512 MB permits far more of it than
+    # a job can complete. Worker-side ceiling is LTX_MAX_SOURCE_SECONDS.
+    help: Up to 5 minutes. The result matches your video's length.
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
 

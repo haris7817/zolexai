@@ -21,6 +21,13 @@ inputs:
     required: true
     label: AUDIO
     drop_hint: an audio track
+    # The length limit belongs HERE, before the upload, not in the refusal
+    # afterwards. The video is generated in sections across the whole track, so
+    # length is the single thing that decides how much work the job is — and
+    # the size cap alone permits an hour of audio, which is a job that cannot
+    # finish. Worker-side the ceiling is LTX_MAX_SOURCE_SECONDS; keep the two
+    # in step.
+    help: Up to 5 minutes. The video is generated to match your whole track.
     accept: ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg"]
     max_size_mb: 64
 
