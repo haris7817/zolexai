@@ -220,6 +220,24 @@ class WorkerSettings(BaseSettings):
     ltx_frame_rate: int = 24
     """LTX-2.5's native rate; num_frames = seconds x this."""
 
+    ltx_max_source_seconds: float = 330.0
+    """
+    Longest upload the source-duration workflows will accept.
+
+    Music video and restyle take their length from the file the customer
+    uploads, and nothing bounded it. The upload cap is 64 MB, which at ordinary
+    MP3 bitrates is over an hour of audio — and an hour of audio is roughly 120
+    render passes at a minute or two each. Such a job cannot finish inside its
+    own timeout, so it ran for hours and then failed having produced nothing,
+    holding the card the whole time and blocking every other customer.
+
+    330 seconds is five and a half minutes: the product's own music range tops
+    out at five, and the margin covers a track that probes slightly long. It is
+    a refusal the customer sees IMMEDIATELY, before any compute is spent, with
+    the actual length named — which is the difference between "try a shorter
+    track" and a job that appears to hang.
+    """
+
     # ── Music runtime (M2) ───────────────────────────────────────────────
     #
     # No music model is selected yet (docs/milestones.md tracks it as a pending

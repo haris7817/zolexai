@@ -39,6 +39,7 @@ from tests.conftest import (
 )
 from worker.adapters.base import AdapterError, JobCancelled
 from worker.adapters.ltx import LtxAdapter
+from worker.core.config import settings
 from worker.media import audio_envelope, ffmpeg, plan_segments, probe_media
 
 
@@ -265,7 +266,39 @@ async def test_a_silent_video_uploaded_as_the_track_is_refused(
         await collect(music_video_job(workspace, silent))
 
     assert raised.value.retriable is False
-    assert "not usable audio" in raised.value.internal_detail
+    assert "no audio stream" in raised.value.internal_detail
+    # The customer uploaded a real, readable file; telling them it "could not
+    # be read" sends them to check a file that is fine. Name the actual fault.
+    assert "no sound" in raised.value.user_message.lower()
+
+
+@needs_ffmpeg
+async def test_a_track_longer_than_the_ceiling_is_refused_before_any_render(
+    workspace: Path, fake_models: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing bounded the uploaded length, and the length decides the work.
+
+    The upload cap is 64 MB — over an hour of ordinary MP3 — and an hour of
+    audio is roughly 120 render passes. Such a job cannot finish inside its own
+    timeout: it ran for hours, held the card, and failed having produced
+    nothing, which from the outside is indistinguishable from a hang.
+
+    So the refusal has to come from the PROBE, before a model is ever
+    launched, and it has to say how long the file actually is.
+    """
+    monkeypatch.setattr(settings, "ltx_max_source_seconds", 2.0)
+    track = await make_track(workspace / "song.mp3", 5.0)
+
+    with pytest.raises(AdapterError) as raised:
+        await collect(music_video_job(workspace, track))
+
+    assert raised.value.retriable is False, "a long file is long on every attempt"
+    # Both numbers, in minutes and seconds rather than raw seconds: the message
+    # is asking someone to go and trim a track.
+    assert "5 seconds" in raised.value.user_message
+    assert "2 seconds" in raised.value.user_message
+    assert "trim" in raised.value.user_message.lower()
+    assert "source ceiling" in raised.value.internal_detail
 
 
 @needs_ffmpeg

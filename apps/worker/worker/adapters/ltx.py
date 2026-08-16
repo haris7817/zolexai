@@ -954,6 +954,12 @@ class LtxAdapter:
         minutes and produced nothing" into "that file could not be read",
         before any compute is spent. A corrupt upload is corrupt on every
         attempt, hence `retriable=False`.
+
+        Every refusal below names WHICH thing is wrong. "That audio file could
+        not be read" told a customer who had uploaded a silent video clip, one
+        who had uploaded a nine-minute track, and one whose file was truncated
+        exactly the same thing — and only one of those three is something they
+        can act on by picking a different file.
         """
         item = job.input_for(role)
         if item is None:
@@ -969,16 +975,48 @@ class LtxAdapter:
             info = await probe_media(staged)
         except FfmpegError as exc:
             raise AdapterError(
-                f"That {noun} could not be read. Please try another.",
+                f"That {noun} could not be read — it may be damaged or in an "
+                "unsupported format. Please try another file.",
                 internal_detail=f"probe of {role} failed: {exc}",
                 retriable=False,
             ) from exc
 
-        usable = info.has_video if kind == "video" else info.has_audio
-        if not usable or not info.duration_seconds:
+        # The file opened, but does it contain the stream this workflow needs?
+        # A video with no sound reaching music-video is the common case, and it
+        # is a completely different mistake from a corrupt file.
+        if kind == "video" and not info.has_video:
             raise AdapterError(
-                f"That {noun} could not be read. Please try another.",
-                internal_detail=f"{role} is not usable {kind}: {info}",
+                "That file has no video in it. Please upload a video.",
+                internal_detail=f"{role} has no video stream: {info}",
+                retriable=False,
+            )
+        if kind == "audio" and not info.has_audio:
+            raise AdapterError(
+                "That file has no sound in it. Please upload an audio track, "
+                "or a video that has sound.",
+                internal_detail=f"{role} has no audio stream: {info}",
+                retriable=False,
+            )
+
+        if not info.duration_seconds:
+            raise AdapterError(
+                f"That {noun} appears to be empty. Please try another file.",
+                internal_detail=f"{role} has no measurable duration: {info}",
+                retriable=False,
+            )
+
+        # The bound that stops a job running for hours. Nothing capped this,
+        # so an hour-long upload became ~120 render passes: it could not finish
+        # inside its own timeout, and it held the card until it failed.
+        limit = float(settings.ltx_max_source_seconds)
+        if info.duration_seconds > limit:
+            raise AdapterError(
+                f"That {noun} is {_minutes(info.duration_seconds)} long, and "
+                f"the limit is {_minutes(limit)}. Please trim it and try again.",
+                internal_detail=(
+                    f"{role} is {info.duration_seconds:.1f}s, over the "
+                    f"{limit:.0f}s source ceiling"
+                ),
                 retriable=False,
             )
         return staged, info
@@ -1382,6 +1420,21 @@ class LtxAdapter:
                 )
         finally:
             await _terminate_render(process)
+
+
+def _minutes(seconds: float) -> str:
+    """A duration a customer can compare against their own file.
+
+    "9 minutes 12 seconds", not "552.3s" — the refusal it appears in is asking
+    someone to go and trim a track, and seconds are the wrong unit for that.
+    """
+    whole = int(round(seconds))
+    minutes, remainder = divmod(whole, 60)
+    if not minutes:
+        return f"{remainder} seconds"
+    if not remainder:
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    return f"{minutes} minute{'s' if minutes != 1 else ''} {remainder} seconds"
 
 
 #: How long to wait for a killed render — the whole process group — to be gone

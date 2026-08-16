@@ -472,7 +472,8 @@ async def test_an_audio_only_upload_is_refused(
         await collect(restyle_job(workspace, track))
 
     assert raised.value.retriable is False
-    assert "not usable video" in raised.value.internal_detail
+    assert "no video stream" in raised.value.internal_detail
+    assert "no video" in raised.value.user_message.lower()
 
 
 @needs_ffmpeg
