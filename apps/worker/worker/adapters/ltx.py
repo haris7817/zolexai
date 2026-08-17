@@ -447,6 +447,20 @@ _AUDIO_PASS_SECONDS = 20.0
 #: `_audio_window_seconds`.
 _AUDIO_WINDOW_PAD_SECONDS = 0.04
 
+#: The transform engine's measured single-pass length, in seconds.
+#:
+#: `ic_lora` decodes on its own path and the distilled tier's 60s grid ceilings
+#: carry no evidence about it — the first production transform job proved that
+#: at a cost: a single 15s portrait pass crashed the decoder at 360 AND 361
+#: frames, two counts the distilled tables call safe or landable. What IS
+#: measured on this path, 17 Aug 2026, unquantized + cpu offload + Union
+#: Control: 97 frames (512x320), 193 frames landscape (1024x576, 62s), and 193
+#: frames portrait (576x1024, 67s — probed the same evening the production job
+#: died). 8.0s keeps every pass at or under the 193-frame cell on either
+#: orientation. Raising this is a measurement, not an opinion;
+#: `execution.transform_pass_seconds` is where the measurement lands.
+_TRANSFORM_PASS_SECONDS = 8.0
+
 #: Video-to-video conditioning defaults. Every one is overridable per workflow
 #: through the private `execution` block, because the right values are a
 #: quality judgement made against real footage on a real GPU, and baking them
@@ -674,6 +688,39 @@ class LtxPipeline:
     extra_weights: tuple[str, ...] = ()
     """Optional weights keys this pipeline cannot run without."""
 
+    conforming_only: bool = False
+    """Snap frame counts to the model's 8k+1 lattice and go no further.
+
+    `safe_frame_count`'s measured-safe counts and bad-frame bands are
+    measurements OF THE DISTILLED TIER'S DECODE PATH, one (grid, count, crash)
+    cell at a time. The other entry points decode elsewhere — `ic_lora` decodes
+    stage-1 latents at half the requested grid with reference tokens appended,
+    `a2vid` decodes with an audio stream attached — and the tables carry no
+    evidence about those paths in either direction.
+
+    Applying them anyway broke production twice in one day, 17 Aug 2026, in
+    opposite ways: the "measured-safe" 360 crashed ic_lora's decoder on a
+    portrait source (the measurement was distilled-tier), and the (361,719,720)
+    band would push an audio pass from its MEASURED 481 up to an unmeasured
+    720. So the non-default tiers take the one rule the pipeline family states
+    about itself — `retake` rejects non-8k+1 counts outright, `dubit` silently
+    snaps to 8k+1 — and their pass CEILINGS stay at lengths actually measured
+    on their own path, which is what keeps the counts small enough to have
+    been measured at all."""
+
+    measured_landings: tuple[int, ...] = ()
+    """Frame counts PROVEN on this pipeline's own decode path, ascending.
+
+    When non-empty, every pass lands on the smallest of these at or above its
+    conforming count and is trimmed back after the render — so an unmeasured
+    count can never reach the decoder at all. This is stricter than the
+    lattice, deliberately: the chain's overlap arithmetic emits counts like 185
+    that conform perfectly and have never been run, and the decoder's failure
+    set is non-monotonic — 181 and 193 both passing says NOTHING about 185.
+    A request above the largest landing falls back to the plain lattice (it can
+    only happen when a workflow override raised the pass ceiling, which is
+    itself a claim of new measurement)."""
+
     stage_1_only: bool = False
     """Render stage 1 only, at DOUBLE the requested grid.
 
@@ -703,6 +750,15 @@ _IC_LORA = LtxPipeline(
     offload_cpu=True,
     extra_weights=("union_control_lora",),
     stage_1_only=True,
+    conforming_only=True,
+    # 193 is the ONE count measured on this path at BOTH product orientations —
+    # 1024x576 landscape (62s, twice) and 576x1024 portrait (67s, probed the
+    # evening the first production job died there). Other passing cells exist
+    # (97 at 512x320, 181 portrait) but each was run at one grid only, and
+    # putting a count measured at one grid into a table consulted for another
+    # is precisely the mistake this field exists to end. 361 portrait is a
+    # measured FAIL — the production crash — and is unreachable from here.
+    measured_landings=(193,),
 )
 
 #: Audio-conditioned generation: the model hears the track while it draws.
@@ -715,6 +771,7 @@ _A2VID = LtxPipeline(
     quantize=False,
     offload_cpu=True,
     extra_weights=("transformer_dev", "distilled_lora"),
+    conforming_only=True,
 )
 
 
@@ -1158,10 +1215,21 @@ class LtxAdapter:
             )
             return ControlConditioning(path, strength)
 
+        # The tighter of the grid's distilled ceiling and the transform tier's
+        # own measured pass length. The former exists so an unmeasured grid
+        # still gets its pessimistic 10s; the latter is the binding one on the
+        # product grids, where the distilled 60s says nothing about ic_lora.
+        per_pass = min(
+            self._per_pass_seconds(job, grid),
+            max(1.0, job.execution_float(
+                "transform_pass_seconds", _TRANSFORM_PASS_SECONDS
+            )),
+        )
+
         rendered = await render_chain(
             job,
             target_seconds,
-            per_pass_seconds=self._per_pass_seconds(job, grid),
+            per_pass_seconds=per_pass,
             render=self._renderer(
                 job, reporter, dimensions=grid,
                 conditioning=conditioning,
@@ -1737,9 +1805,21 @@ class LtxAdapter:
             # never hit it only because its stills happened to keep the flag
             # True.
             conditioned = bool(items) or control is not None or audio is not None
-            frames = safe_frame_count(
-                dimensions, requested_frames, conditioned=conditioned
-            )
+            if pipeline.conforming_only:
+                # The measured tables below are distilled-decoder evidence and
+                # say nothing about this pipeline's decode path — see
+                # `LtxPipeline.conforming_only` for the two production failures
+                # that proved it in opposite directions.
+                frames = conforming_frames(requested_frames)
+                landing = next(
+                    (c for c in pipeline.measured_landings if c >= frames), None
+                )
+                if landing is not None:
+                    frames = landing
+            else:
+                frames = safe_frame_count(
+                    dimensions, requested_frames, conditioned=conditioned
+                )
             # Logged for EVERY pass, not only nudged ones. When a pass crashes
             # the decoder, its frame count and grid are the whole diagnosis —
             # and on 2026-08-16 a music-video failure could not be attributed
