@@ -106,6 +106,22 @@ VALID = """
 """
 
 
+def test_video_to_video_ships_the_transform_engine() -> None:
+    """The SHIPPED definition selects the structure-conditioned engine.
+
+    Everything else about the transform engine is proven in the worker suite,
+    but the worker's tests build their own execution blocks — so none of them
+    would notice if this key were dropped from the YAML. The customer-visible
+    effect of dropping it is silent: video-to-video keeps working and quietly
+    goes back to the weak restyle the client complained about, which is exactly
+    the kind of regression nothing else here would catch.
+    """
+    registry = load_registry(Path(__file__).resolve().parents[3] / "workflow-definitions")
+    execution = registry.get("video-to-video").execution
+
+    assert getattr(execution, "v2v_engine", None) == "transform"
+
+
 def test_valid_definition_loads(tmp_path: Path) -> None:
     _write(tmp_path, "sample.yaml", VALID)
     registry = load_registry(tmp_path)

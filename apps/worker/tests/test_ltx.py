@@ -1275,7 +1275,9 @@ async def test_a_missing_ltx_environment_is_a_configuration_error(
     """`uv` absent / wrong repo dir — a mis-deployed node must fail its first
     job with the launch failure named, not retry into the same wall."""
     monkeypatch.setattr(
-        LtxAdapter, "_launcher", lambda self: ["definitely-not-a-real-binary-7817"]
+        LtxAdapter,
+        "_launcher",
+        lambda self, module=None: ["definitely-not-a-real-binary-7817"],
     )
     with pytest.raises(AdapterError) as raised:
         await collect(make_job(workspace))

@@ -20,8 +20,10 @@ import pytest
 from worker.media import (
     FfmpegError,
     concat_segments,
+    extract_edge_control,
     extract_final_frame,
     ffmpeg,
+    ffmpeg_stdout,
     normalize_clip,
     plan_segments,
     probe_media,
@@ -353,3 +355,180 @@ async def test_normalization_strips_audio_when_told_to(tmp_path: Path) -> None:
     )
     info = await probe_media(normalized)
     assert info.has_audio is False
+
+
+# ── What a source measures: the shared probe every workflow reads ────────
+
+
+@needs_ffmpeg
+async def test_probe_reports_the_frame_count_and_audio_shape(tmp_path: Path) -> None:
+    """The rest of what an uploaded file has to be able to say about itself.
+
+    Frame count is READ, never derived: `duration * fps` disagrees with the real
+    count on variable-rate sources and anything the encoder padded, and a
+    control signal built from a wrong count desynchronises from the footage it
+    describes.
+    """
+    clip = tmp_path / "clip.mp4"
+    await ffmpeg(
+        [
+            "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=24",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+            "-t", "2.0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-ar", "44100", "-ac", "2",
+            str(clip),
+        ]
+    )
+    info = await probe_media(clip)
+
+    assert info.frame_count == 48
+    assert info.audio_sample_rate == 44100
+    assert info.audio_channels == 2
+
+
+@needs_ffmpeg
+async def test_a_file_that_states_no_frame_count_says_so(tmp_path: Path) -> None:
+    """`None`, not a guess. A caller that needs an exact count has to be able to
+    tell "the container did not say" from "the container said 48"."""
+    track = tmp_path / "song.mp3"
+    await ffmpeg(
+        [
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+            "-t", "1.0", "-c:a", "libmp3lame", str(track),
+        ]
+    )
+    info = await probe_media(track)
+
+    assert info.frame_count is None
+    assert info.has_video is False
+    assert info.audio_channels == 1
+
+
+# ── Control signals ──────────────────────────────────────────────────────
+
+
+@needs_ffmpeg
+async def test_a_control_clip_is_produced_at_the_requested_shape(tmp_path: Path) -> None:
+    """Grid, rate and frame count are the contract.
+
+    Union Control conditions on an ALIGNED control video. A clip at a different
+    length or shape than the pass it feeds is not a weaker signal, it is a
+    misaligned one — and the output tracks nothing while still looking like a
+    plausible video.
+    """
+    source = tmp_path / "source.mp4"
+    await ffmpeg(
+        [
+            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
+            "-t", "4.0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            str(source),
+        ]
+    )
+    control = await extract_edge_control(
+        source,
+        tmp_path / "control.mp4",
+        start_seconds=1.0,
+        duration_seconds=2.0,
+        width=128,
+        height=64,
+        fps=24,
+        frames=49,
+    )
+    info = await probe_media(control)
+
+    assert (info.width, info.height) == (128, 64)
+    assert info.frame_count == 49
+    assert info.has_audio is False
+
+
+@needs_ffmpeg
+async def test_a_window_running_past_the_end_still_yields_a_full_control_clip(
+    tmp_path: Path,
+) -> None:
+    """The last pass of a source is the one whose window overruns.
+
+    Failing there would refuse the whole job over the final fraction of a
+    second, so the last picture is held instead — and the clip is still exactly
+    as long as the pass that consumes it.
+    """
+    source = tmp_path / "short.mp4"
+    await ffmpeg(
+        [
+            "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=24",
+            "-t", "1.0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            str(source),
+        ]
+    )
+    control = await extract_edge_control(
+        source,
+        tmp_path / "control.mp4",
+        start_seconds=0.5,
+        duration_seconds=2.0,
+        width=160,
+        height=120,
+        fps=24,
+        frames=41,
+    )
+    info = await probe_media(control)
+
+    assert info.frame_count == 41
+
+
+@needs_ffmpeg
+async def test_a_control_clip_discards_colour_and_keeps_geometry(tmp_path: Path) -> None:
+    """The whole point of the signal, measured rather than asserted.
+
+    A flat crimson field has plenty of colour and no edges; its control clip
+    must be nearly black. If this ever produces a bright frame the extractor is
+    passing the source's LOOK through, which is exactly what the transform
+    engine exists to strip.
+    """
+    flat = tmp_path / "flat.mp4"
+    await ffmpeg(
+        [
+            "-f", "lavfi", "-i", "color=c=crimson:size=160x120:rate=24",
+            "-t", "1.0",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            str(flat),
+        ]
+    )
+    control = await extract_edge_control(
+        flat,
+        tmp_path / "control.mp4",
+        start_seconds=0.0,
+        duration_seconds=1.0,
+        width=160,
+        height=120,
+        fps=24,
+        frames=9,
+    )
+
+    mean = await ffmpeg_stdout(
+        [
+            "-i", str(control),
+            "-vf", "scale=1:1",
+            "-f", "rawvideo", "-pix_fmt", "gray", "-",
+        ]
+    )
+    assert max(mean) < 32, "the control clip carried the source's colour through"
+
+
+def test_a_control_clip_of_no_frames_is_a_programming_error(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="at least one frame"):
+        import asyncio
+
+        asyncio.run(
+            extract_edge_control(
+                tmp_path / "missing.mp4",
+                tmp_path / "out.mp4",
+                start_seconds=0.0,
+                duration_seconds=1.0,
+                width=64,
+                height=64,
+                fps=24,
+                frames=0,
+            )
+        )

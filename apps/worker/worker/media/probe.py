@@ -35,6 +35,25 @@ class MediaInfo:
     audio_stream_count: int = 0
     audio_duration_seconds: float | None = None
 
+    frame_count: int | None = None
+    """Frames in the video stream, when the container states one.
+
+    Read rather than derived: `duration * fps` disagrees with the real count on
+    variable-rate sources and on anything the encoder padded, and a conditioning
+    signal built from a wrong count desynchronises from the footage it is meant
+    to describe. `None` means the container did not say — callers must fall back
+    to duration, never to a guess dressed up as a measurement.
+    """
+
+    audio_sample_rate: int | None = None
+    audio_channels: int | None = None
+    """Sample rate and channel count of the first audio stream.
+
+    Mono conditioning audio is a known trap in the reference engine, so a path
+    that feeds a track to a model needs to be able to see the channel count
+    rather than assume stereo.
+    """
+
     @property
     def aspect_ratio(self) -> float | None:
         if not self.width or not self.height:
@@ -68,7 +87,25 @@ async def probe_media(path: Path) -> MediaInfo:
         video_stream_count=sum(1 for stream in streams if stream.get("codec_type") == "video"),
         audio_stream_count=sum(1 for stream in streams if stream.get("codec_type") == "audio"),
         audio_duration_seconds=_stream_duration(payload, audio) if audio else None,
+        frame_count=_frame_count_of(video) if video else None,
+        audio_sample_rate=_int_or_none(audio.get("sample_rate")) if audio else None,
+        audio_channels=_int_or_none(audio.get("channels")) if audio else None,
     )
+
+
+def _frame_count_of(video: dict[str, Any]) -> int | None:
+    """The stream's stated frame count, or None.
+
+    MP4 fills in `nb_frames`; the Matroska family usually does not and offers
+    `nb_read_frames` only after a counting pass nobody wants to pay for on a
+    five-minute upload. A zero or negative value is treated as absent — some
+    muxers write 0 rather than omitting the field.
+    """
+    for key in ("nb_frames", "nb_read_frames"):
+        value = _int_or_none(video.get(key))
+        if value is not None and value > 0:
+            return value
+    return None
 
 
 def _stream_duration(payload: dict[str, Any], stream: dict[str, Any]) -> float | None:

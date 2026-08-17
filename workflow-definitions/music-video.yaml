@@ -81,6 +81,39 @@ execution:
   # sections. See worker/longform/timing.py.
   align_cuts_to_audio: true
 
+  # ── Audio conditioning (opt-in) ──────────────────────────────────────────
+  #
+  # By default the MODEL NEVER HEARS THE SONG. The track decides the length and
+  # where the cuts land; the picture is drawn from the prompt alone and the song
+  # is laid over the finished result. That is why a singer in the output does
+  # not move their mouth in time with the vocal — it is structural, not a
+  # prompting problem, and no wording fixes it.
+  #
+  # `audio_conditioning: true` renders each section on the audio tier instead,
+  # handing it the master track seeked to that section's own moment in the song
+  # (the pipeline takes an offset, so the master is never sliced or re-encoded).
+  # This is the same mechanism the client's reference engine uses, and it is
+  # what makes audio-driven performance possible at all.
+  #
+  #   audio_conditioning: true
+  #
+  # WHAT IT COSTS. Measured on the RTX PRO 6000, 17 Aug 2026, at 1024x576:
+  # roughly 10.5x real time (20s of video per 211s), against roughly 2.5x for
+  # the default tier — about four times the compute. A 3-minute song is ~32
+  # minutes of GPU, which fits the 2-hour budget above but changes the unit cost
+  # of the workflow. That is a pricing decision, which is why this is not simply
+  # switched on.
+  #
+  # WHAT IT DELIVERS, honestly: visuals that move with the music, and a
+  # performer whose mouth follows the vocal. It is NOT verified phoneme-accurate
+  # lip-sync — that claim needs a sync-offset measurement nobody has run yet.
+  #
+  #   audio_pass_seconds:  section length on the audio tier (default 20.0 — the
+  #                        longest pass MEASURED at the production grid; the
+  #                        distilled tier's 60s does not transfer)
+  #
+  # Requires the dev transformer and the distilled LoRA on the node.
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the

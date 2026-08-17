@@ -98,6 +98,37 @@ execution:
   #   v2v_continuity_strength: the seam between passes (default 0.85)
   #   v2v_reference_strength:  the optional reference image (default 0.3)
 
+  # ── The transform engine (opt-in) ────────────────────────────────────────
+  #
+  # `v2v_engine: transform` swaps the still-conditioned restyle above for
+  # structure conditioning: an edge map of the source drives the IC-LoRA Union
+  # Control adapter, and the prompt supplies all content.
+  #
+  # This is the answer to "the source survives but the requested restyling is
+  # too weak". Stills carry the source's colour, light and material along with
+  # its geometry, so the prompt spends itself fighting them; an edge map carries
+  # geometry alone. Verified on the RTX PRO 6000 on 17 Aug 2026 — a daylight
+  # desert plate returned as a rain-soaked neon street with the subject's pose,
+  # the car's position and the road's perspective unchanged.
+  #
+  # ENABLED 17 Aug 2026. The still-conditioned restyle remains in the adapter
+  # and is one line away — delete this key and it is back, unchanged. Keeping
+  # the old path rather than deleting it is deliberate: this is a different
+  # product behaviour, and reverting must not require a code change.
+  v2v_engine: transform
+  #
+  # Its own knobs, all with adapter defaults:
+  #   v2v_control_strength:    how hard the edge map pulls (default 1.0 — full,
+  #                            unlike the restyle's stills; lowering it does not
+  #                            transform harder, it stops tracking the footage)
+  #   v2v_lora_strength:       Union Control adapter strength (default 1.0)
+  #   v2v_edge_low/_high:      canny thresholds (defaults 0.1 / 0.4 — raise on
+  #                            grainy footage that turns into speckle)
+  #
+  # Requires `loras/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors` on the
+  # node; a node without it refuses these jobs before spending any GPU time
+  # rather than rendering an unconditioned pass nobody asked for.
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the

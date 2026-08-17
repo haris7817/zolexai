@@ -45,6 +45,30 @@ Video-to-video and music video take their length from the uploaded file, never
 from a request field — that is the client's automatic-duration requirement, and
 it is enforced by reading the probe rather than by trusting a parameter.
 
+## Three entry points, two of them opt-in
+
+The table above describes the DEFAULT tier, `ltx_pipelines.distilled`, which is
+the only one that has served production. Two others are reachable, each behind
+a private `execution` key, because each is a different quality/cost trade rather
+than a strictly better version of the default:
+
+  * **`v2v_engine: transform`** — `ltx_pipelines.ic_lora` plus the Union Control
+    IC-LoRA, conditioned on an EDGE MAP of the source rather than on stills of
+    it. Stills carry the source's colour and light along with its geometry,
+    which is why the default restyle preserves strongly and transforms weakly —
+    the client's actual complaint. An edge map carries geometry alone, so the
+    prompt owns the look outright.
+  * **`audio_conditioning: true`** on music video — `ltx_pipelines.a2vid_two_stage`,
+    which is handed the master track seeked to each pass's own moment in the
+    song. The default never shows the model the music at all, so no amount of
+    prompting can make a performer's mouth follow a vocal.
+
+Both load a LoRA, and **a LoRA means quantization is dropped entirely and the
+unquantized model is fitted with `--offload cpu` instead** — see `LtxPipeline`.
+That is not a tuning preference; it is the difference between a render and a
+crash, and it is what dissolved this project's supposed audio-tier resolution
+ceiling on 17 Aug 2026.
+
 ## The prompt
 
 The user's prompt reaches the model **verbatim**. It is passed as a single
@@ -104,6 +128,8 @@ from worker.longform import (
     structure_prompt,
 )
 from worker.media import (
+    DEFAULT_EDGE_HIGH,
+    DEFAULT_EDGE_LOW,
     AudioMode,
     FfmpegError,
     MediaInfo,
@@ -111,6 +137,7 @@ from worker.media import (
     audio_onsets,
     concat_segments,
     duration_tolerance,
+    extract_edge_control,
     extract_final_frame,
     extract_frames_at,
     ffmpeg,
@@ -134,6 +161,24 @@ _MODEL_FILES: dict[str, str] = {
     "spatial_upsampler": (
         "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
     ),
+}
+
+#: Weights only the non-default entry points need. Kept OUT of `_MODEL_FILES`
+#: because that table is what `_require_models` insists on before any render:
+#: a node that only ever serves text-to-video must not be told it is broken
+#: because it lacks the audio tier's dev checkpoint. Each optional pipeline
+#: checks for its own files, when it is actually selected.
+_OPTIONAL_MODEL_FILES: dict[str, str] = {
+    # The full (non-distilled) transformer. `a2vid_two_stage` is a GUIDED tier
+    # and needs it, plus the distilled LoRA below to keep the step count sane.
+    "transformer_dev": "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors",
+    "distilled_lora": "loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors",
+    # IC-LoRA Union Control. Trained for 2.3 and loads against the 2.5
+    # distilled transformer — verified on the RTX PRO 6000 on 17 Aug 2026, a
+    # 97-frame render in 36s, which is what unblocked structure-conditioned
+    # video-to-video. It consumes canny / depth / pose control videos, NOT
+    # ordinary RGB (see `worker.media.control`).
+    "union_control_lora": "loras/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
 }
 
 #: LTX's two-stage pipeline requires dimensions divisible by 64 — 480x848 was
@@ -379,6 +424,29 @@ _PIXEL_BUDGET = 1024 * 576
 _MAX_OUTPUT_LONG_SIDE = 1920
 _MAX_OUTPUT_SHORT_SIDE = 1080
 
+#: The audio tier's measured single-pass length, in seconds.
+#:
+#: Measured on the RTX PRO 6000, 17 Aug 2026, at 1024x576 — dev transformer +
+#: distilled LoRA, unquantized, `--offload cpu`, image-conditioned:
+#:
+#:   | frames | video  | wall | wall per second of video |
+#:   |--------|--------|------|--------------------------|
+#:   | 193    | 8.04s  | 147s | 18.3x                    |
+#:   | 241    | 10.04s | 141s | 14.0x                    |
+#:   | 481    | 20.04s | 211s | 10.5x                    |
+#:
+#: Longer passes are CHEAPER per second, not dearer: each pass reloads a 22B
+#: transformer from host RAM, and that fixed cost is most of a short pass. So
+#: the ceiling is set at the longest length actually measured rather than at the
+#: shortest one that works — a 3-minute song is 9 passes and ~32 minutes here,
+#: against 22 passes and ~54 minutes at 8s. Nothing beyond 481 frames has been
+#: run at this grid, so nothing beyond it is assumed.
+_AUDIO_PASS_SECONDS = 20.0
+
+#: One audio latent of headroom on every conditioning window. See
+#: `_audio_window_seconds`.
+_AUDIO_WINDOW_PAD_SECONDS = 0.04
+
 #: Video-to-video conditioning defaults. Every one is overridable per workflow
 #: through the private `execution` block, because the right values are a
 #: quality judgement made against real footage on a real GPU, and baking them
@@ -430,6 +498,20 @@ _V2V_REFERENCE_STRENGTH = 0.3
 the contract the customer reads says it "guides the look", and a strength that
 made it the opening frame would be replacing the source's intent with it.
 Setting this to 0 in a workflow drops reference conditioning entirely."""
+
+_V2V_CONTROL_STRENGTH = 1.0
+"""How hard the edge map pulls, on the `transform` engine.
+
+Full strength, unlike the restyle's 0.45 stills, and for the opposite reason.
+A still at full strength would pin the source's LOOK; an edge map at full
+strength pins only its GEOMETRY, and geometry is the entire thing this engine
+is asked to preserve. Lowering it does not make the transformation stronger —
+it makes the result stop tracking the footage."""
+
+_V2V_LORA_STRENGTH = 1.0
+"""Union Control adapter strength. The value the adapter was trained at and the
+value the reference engine ships; below it the control signal is progressively
+ignored rather than progressively softened."""
 
 
 def grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
@@ -501,6 +583,139 @@ class ConditioningFrame:
         # documentation writes full strength as "1.0", and "1" is a different
         # token to argument parsers that type-check positionally.
         return ["--image", str(self.path), str(self.frame_index), str(round(self.strength, 3))]
+
+
+@dataclass(frozen=True)
+class ControlConditioning:
+    """One `--video-conditioning PATH STRENGTH` pair, for the IC-LoRA tier.
+
+    The path is a CONTROL SIGNAL (see `worker.media.control`), not the source
+    footage. Passing raw RGB here is accepted by the CLI and produces a weak
+    style hint rather than structural control, which is the failure mode this
+    type exists to make unmistakable at the call site.
+    """
+
+    path: Path
+    strength: float
+
+    def as_args(self) -> list[str]:
+        return ["--video-conditioning", str(self.path), str(round(self.strength, 3))]
+
+
+@dataclass(frozen=True)
+class AudioConditioning:
+    """A window of a track the model generates *against*, not a soundtrack.
+
+    `path` is the WHOLE master file and `start_seconds` selects this pass's
+    window inside it. That is the entire reason the model can be given section
+    seventeen of a song without the song being cut into seventeen files: the
+    pipeline seeks, so the master is never sliced, re-encoded or re-timed, and
+    the audio the model hears at 2:31 is bit-for-bit the audio the finished
+    video plays at 2:31.
+
+    Nothing here reaches the delivered soundtrack. The generated parts are
+    assembled silent and the user's original file is muxed over the result
+    once, at the end — see `_run_music_video`.
+    """
+
+    path: Path
+    start_seconds: float
+    max_duration_seconds: float
+
+    def as_args(self) -> list[str]:
+        return [
+            "--audio-path", str(self.path),
+            "--audio-start-time", f"{self.start_seconds:.3f}",
+            "--audio-max-duration", f"{self.max_duration_seconds:.3f}",
+        ]
+
+
+@dataclass(frozen=True)
+class LoraSpec:
+    """One `--lora PATH STRENGTH` pair."""
+
+    path: Path
+    strength: float = 1.0
+
+    def as_args(self) -> list[str]:
+        return ["--lora", str(self.path), str(round(self.strength, 3))]
+
+
+@dataclass(frozen=True)
+class LtxPipeline:
+    """An LTX entry point plus the weights and runtime rules it requires.
+
+    Three entry points are reachable from this adapter and they differ in more
+    than a module name — a wrong transformer or a stray `--quantization` is a
+    crash, not a quality difference — so the combination is named once here
+    rather than assembled at each call site.
+
+    **The quantization rule is not a preference.** Whenever a LoRA is loaded,
+    quantization is dropped entirely and the unquantized model is fitted with
+    `--offload cpu` instead. LoRA + FP8/NVFP4 fusion reaches Triton kernels that
+    do not exist for these shapes; the client's own reference engine forces
+    quantization to none on exactly this condition, and every unexplained
+    "resolution ceiling" this project chased in the audio tier turned out to be
+    this clash rather than a limit of the card. Measured 17 Aug 2026: 1024x576
+    audio-conditioned, which had never once completed quantized, renders clean.
+    """
+
+    module: str
+    transformer_key: str | None
+    """Weights key for `--transformer-path`. `None` means "whichever the
+    configured quantization selects", which is the default tier's behaviour."""
+
+    distilled_lora: bool = False
+    """Pass `--distilled-lora`. The guided tiers need it to run a short sigma
+    schedule against the full checkpoint."""
+
+    quantize: bool = True
+    offload_cpu: bool = False
+    extra_weights: tuple[str, ...] = ()
+    """Optional weights keys this pipeline cannot run without."""
+
+    stage_1_only: bool = False
+    """Render stage 1 only, at DOUBLE the requested grid.
+
+    Stage 2 upscales in latent space by halving a latent grid, so it needs both
+    latent dimensions to be even. The product's 16:9 grid is 1024x576, and
+    576/64 = 9 is odd: the two-stage IC-LoRA path dies in a VAE `rearrange`
+    ("can't divide axis of length 9 in chunks of 2"), measured 17 Aug 2026.
+    Padding the grid to a multiple of 128 would change the customer's aspect
+    ratio, which is worse than the problem.
+
+    Stage 1 already renders at half the requested size, so asking for 2x and
+    stopping there delivers the target grid exactly — with the control adapter
+    active in the final-resolution output rather than in a half-size draft that
+    stage 2 would then re-imagine. This is what the client's own reference
+    engine does for the same reason. Measured: 1024x576, 193 frames, 62s."""
+
+
+#: The default tier. Fastest, and the only one that has ever served production.
+_DISTILLED = LtxPipeline(module="ltx_pipelines.distilled", transformer_key=None)
+
+#: Structure-conditioned video-to-video. Distilled checkpoint (the pipeline
+#: refuses anything else) plus an IC-LoRA, hence unquantized + CPU offload.
+_IC_LORA = LtxPipeline(
+    module="ltx_pipelines.ic_lora",
+    transformer_key="transformer_bf16",
+    quantize=False,
+    offload_cpu=True,
+    extra_weights=("union_control_lora",),
+    stage_1_only=True,
+)
+
+#: Audio-conditioned generation: the model hears the track while it draws.
+#: Guided tier — dev transformer + distilled LoRA — so unlike the default it
+#: also has CFG and a negative prompt available.
+_A2VID = LtxPipeline(
+    module="ltx_pipelines.a2vid_two_stage",
+    transformer_key="transformer_dev",
+    distilled_lora=True,
+    quantize=False,
+    offload_cpu=True,
+    extra_weights=("transformer_dev", "distilled_lora"),
+)
 
 
 #: Ordered milestones matched against the pipeline's log output. Matching is
@@ -791,6 +1006,11 @@ class LtxAdapter:
         reference = await self._conditioning_image(job, "reference_image")
         grid = grid_for_source(source.width, source.height)
 
+        if str(job.execution.get("v2v_engine") or "").strip() == "transform":
+            return await self._run_transform(
+                job, reporter, staged, source, target_seconds, reference, grid
+            )
+
         # An explicit count still wins — it is how a workflow pins conditioning
         # for footage where the derived density is wrong — but the default is
         # derived per pass from the duration it actually has to cover.
@@ -860,6 +1080,119 @@ class LtxAdapter:
             prefix="restyled",
         )
 
+        return await self._deliver_restyle(
+            job, reporter, rendered, staged, source, target_seconds
+        )
+
+    async def _run_transform(
+        self,
+        job: AdapterJob,
+        reporter: StageReporter,
+        staged: Path,
+        source: MediaInfo,
+        target_seconds: float,
+        reference: Path | None,
+        grid: tuple[int, int],
+    ) -> AdapterResult:
+        """Restyle by CONTROL SIGNAL rather than by stills — the strong path.
+
+        The restyle above shows the model photographs of the source and asks it
+        to draw something similar. That preserves the shot well and transforms
+        it weakly, which is exactly the complaint: the source's colour, light
+        and material come along with its geometry, and the prompt is left
+        fighting them.
+
+        This path separates the two. An edge map of the source window carries
+        the geometry — subject outline, placement, camera motion, scene layout —
+        and carries nothing else, so the prompt owns every pixel of the look
+        with nothing to fight. Measured 17 Aug 2026: a daylight desert plate
+        returned as a rain-soaked neon street with the subject's pose, the car's
+        position and the road's perspective unchanged.
+
+        Everything the restyle guarantees still holds, because it is the same
+        chain: the length is the SOURCE's, the seams are the previous pass's
+        final frame, and the source's own audio goes back on whole at the end.
+        """
+        await reporter.probing("Reading your video…")
+        strength = job.execution_float("v2v_control_strength", _V2V_CONTROL_STRENGTH)
+        lora_strength = job.execution_float("v2v_lora_strength", _V2V_LORA_STRENGTH)
+        continuity = job.execution_float("v2v_continuity_strength", _V2V_CONTINUITY_STRENGTH)
+        reference_strength = job.execution_float(
+            "v2v_reference_strength", _V2V_REFERENCE_STRENGTH
+        )
+        low = job.execution_float("v2v_edge_low", DEFAULT_EDGE_LOW)
+        high = job.execution_float("v2v_edge_high", DEFAULT_EDGE_HIGH)
+
+        lora = LoraSpec(
+            settings.ltx_models_root / self._optional_weight("union_control_lora"),
+            lora_strength,
+        )
+
+        def conditioning(step: ChainStep) -> list[ConditioningFrame]:
+            # Frame 0 only. The control clip already states where everything is
+            # for the whole window, so source stills would be a second, weaker
+            # copy of the same instruction — and a redundant one that reasserts
+            # the source's LOOK, which is the very thing this path exists to
+            # discard.
+            if step.previous_frame is not None:
+                return [ConditioningFrame(step.previous_frame, 0, continuity)]
+            if reference is not None and reference_strength > 0:
+                return [ConditioningFrame(reference, 0, reference_strength)]
+            return []
+
+        async def control(step: ChainStep, frames: int) -> ControlConditioning:
+            path = await cancellable(
+                job,
+                extract_edge_control(
+                    staged,
+                    job.workspace / f"control-{step.index:04d}.mp4",
+                    start_seconds=step.segment.start_seconds,
+                    duration_seconds=step.seconds,
+                    width=grid[0],
+                    height=grid[1],
+                    fps=float(settings.ltx_frame_rate),
+                    frames=frames,
+                    low=low,
+                    high=high,
+                ),
+            )
+            return ControlConditioning(path, strength)
+
+        rendered = await render_chain(
+            job,
+            target_seconds,
+            per_pass_seconds=self._per_pass_seconds(job, grid),
+            render=self._renderer(
+                job, reporter, dimensions=grid,
+                conditioning=conditioning,
+                pipeline=_IC_LORA,
+                loras=(lora,),
+                control=control,
+            ),
+            reporter=reporter,
+            prefix="transformed",
+        )
+
+        return await self._deliver_restyle(
+            job, reporter, rendered, staged, source, target_seconds
+        )
+
+    async def _deliver_restyle(
+        self,
+        job: AdapterJob,
+        reporter: StageReporter,
+        rendered: list[Path],
+        staged: Path,
+        source: MediaInfo,
+        target_seconds: float,
+    ) -> AdapterResult:
+        """Assemble, restore the source's audio once, verify, hand back.
+
+        Shared by both video-to-video engines because none of it is engine
+        specific — and because "the source's audio survives exactly once" and
+        "the result is the source's length" are promises that must not be able
+        to hold on one path and quietly not on the other.
+        """
         await reporter.stitching()
         width, height = output_dimensions(source.width, source.height)
         fps = _delivery_fps(source)
@@ -917,6 +1250,15 @@ class LtxAdapter:
         restarting per visual section. That shape is enforced structurally —
         the chain produces silent picture, and `mux_audio` attaches the user's
         original file exactly once, at the end, as the only soundtrack.
+
+        **Whether the MODEL hears the song is a separate question from whether
+        the viewer does**, and the two were conflated for a long time. By
+        default the picture is drawn from the text prompt alone: the song
+        decides the length and where the cuts land, and nothing else. Under
+        `execution.audio_conditioning` the audio tier renders instead, and each
+        pass is given the master track seeked to its own moment in the song, so
+        the model is drawing *to* the music it is about to be played under —
+        which is what makes a performer's mouth follow a vocal at all.
         """
         staged, track = await self._staged_source(job, "source_audio", kind="audio")
         await reporter.probing("Listening to your track…")
@@ -924,7 +1266,12 @@ class LtxAdapter:
         target_seconds = track.duration_seconds or 0.0
         self._record_audio_mode(job, AudioMode.SOURCE_AUDIO)
         dimensions = self._requested_dimensions(job)
-        per_pass = self._per_pass_seconds(job, dimensions)
+        audio_conditioned = bool(job.execution.get("audio_conditioning"))
+        per_pass = (
+            self._audio_pass_seconds(job)
+            if audio_conditioned
+            else self._per_pass_seconds(job, dimensions)
+        )
         prompt_plan: list[str] | None = None
 
         def prompt_for_step(step: ChainStep) -> str:
@@ -943,13 +1290,30 @@ class LtxAdapter:
             frame = step.previous_frame
             return [ConditioningFrame(frame, 0, 1.0)] if frame else []
 
+        def audio_window(step: ChainStep, frames: int) -> AudioConditioning:
+            # The MASTER file, seeked — never a slice. Cutting the track into
+            # per-section files would re-encode it N times and put a codec
+            # boundary at every seam of the thing the model is synchronising
+            # to. The window is measured from the frame count actually being
+            # rendered, so a pass the shape tables nudged still gets audio that
+            # covers it.
+            return AudioConditioning(
+                path=staged,
+                start_seconds=step.segment.start_seconds,
+                max_duration_seconds=self._audio_window_seconds(frames),
+            )
+
         rendered = await render_chain(
             job,
             target_seconds,
             per_pass_seconds=per_pass,
-            render=self._renderer(job, reporter, dimensions=dimensions,
-                                  conditioning=conditioning,
-                                  prompt_for_step=prompt_for_step),
+            render=self._renderer(
+                job, reporter, dimensions=dimensions,
+                conditioning=conditioning,
+                prompt_for_step=prompt_for_step,
+                pipeline=_A2VID if audio_conditioned else _DISTILLED,
+                audio=audio_window if audio_conditioned else None,
+            ),
             reporter=reporter,
             prefix="scene",
             boundaries=boundaries,
@@ -1287,6 +1651,35 @@ class LtxAdapter:
         # quietly removed by making the ceiling per-shape.
         return max(1.0, min(requested, float(settings.ltx_max_seconds), measured))
 
+    def _audio_pass_seconds(self, job: AdapterJob) -> float:
+        """The pass ceiling for the AUDIO tier, which is its own measurement.
+
+        `_GRID_CEILINGS` records what the distilled tier survives and none of it
+        transfers: the audio tier runs a different checkpoint, carries a LoRA,
+        runs unquantized and streams its weights from host RAM. The longest pass
+        actually measured for it at the production grid is 481 frames — 20.04s
+        at 1024x576, 17 Aug 2026 — so that, and not the distilled tier's 60s, is
+        what a pass may ask for.
+
+        Deliberately overridable: raising it is a measurement, not an opinion,
+        and `execution.audio_pass_seconds` is where the measurement lands once
+        someone has made it.
+        """
+        requested = job.execution_float("audio_pass_seconds", _AUDIO_PASS_SECONDS)
+        return max(1.0, min(requested, float(settings.ltx_max_seconds)))
+
+    @staticmethod
+    def _audio_window_seconds(frames: int) -> float:
+        """How much track a pass rendering `frames` frames must be given.
+
+        Slightly MORE than the video covers, never less. The audio latent grid
+        is coarser than the frame grid, so a window cut to exactly the video's
+        length can land one latent short and the pipeline then reads past the
+        end of what it was handed. The reference engine pads by one audio latent
+        for the same reason; this is that pad.
+        """
+        return frames / float(settings.ltx_frame_rate) + _AUDIO_WINDOW_PAD_SECONDS
+
     def _frame_count(self, seconds: float) -> int:
         return max(1, round(seconds * settings.ltx_frame_rate))
 
@@ -1301,12 +1694,24 @@ class LtxAdapter:
         conditioning,
         prompt_for_step: Callable[[ChainStep], str] | None = None,
         require_audio: bool = False,
+        pipeline: LtxPipeline = _DISTILLED,
+        loras: Sequence[LoraSpec] = (),
+        control=None,
+        audio=None,
+        skip_stage_2: bool = False,
     ) -> RenderStep:
         """Binds this job's fixed choices into the callable the chain drives.
 
         `conditioning` may be sync or async — building a restyle's conditioning
         means extracting stills from the source, which is I/O, while a
         text-to-video's is a one-line decision.
+
+        `control` and `audio` are called with `(step, frames)` rather than just
+        the step, and that is not incidental: both have to match the frame count
+        the pass will ACTUALLY render, which is the measured-safe substitute
+        rather than the requested one. A control clip or audio window built
+        against the requested count drifts out of alignment on every pass the
+        shape tables nudge.
         """
 
         async def render(step: ChainStep) -> None:
@@ -1341,6 +1746,13 @@ class LtxAdapter:
                     "conditioned": bool(items),
                 },
             )
+            control_item = control(step, frames) if control else None
+            if asyncio.iscoroutine(control_item):
+                control_item = await control_item
+            audio_item = audio(step, frames) if audio else None
+            if asyncio.iscoroutine(audio_item):
+                audio_item = await audio_item
+
             await self._execute(
                 job=job,
                 cmd=self._command(
@@ -1354,6 +1766,11 @@ class LtxAdapter:
                     # same noise; still deterministic so a retry reproduces.
                     seed=self._seed_for_step(job, step.index),
                     num_frames=frames,
+                    pipeline=pipeline,
+                    loras=loras,
+                    control=control_item,
+                    audio=audio_item,
+                    skip_stage_2=skip_stage_2,
                 ),
                 reporter=reporter,
                 band=step.band,
@@ -1400,13 +1817,14 @@ class LtxAdapter:
         key = "transformer_nvfp4" if "nvfp4" in settings.ltx_quantization else "transformer_bf16"
         return _MODEL_FILES[key]
 
-    def _launcher(self) -> list[str]:
+    def _launcher(self, module: str = _DISTILLED.module) -> list[str]:
         """The argv prefix that reaches the LTX environment.
 
         A separate seam so tests can substitute a plain Python stub and still
-        exercise every real flag `_command` produces.
+        exercise every real flag `_command` produces. The module is a parameter
+        because the three tiers are three entry points in the same environment.
         """
-        return ["uv", "run", "python", "-m", "ltx_pipelines.distilled"]
+        return ["uv", "run", "python", "-m", module]
 
     def _command(
         self,
@@ -1419,6 +1837,11 @@ class LtxAdapter:
         seed: int | None = None,
         prompt: str | None = None,
         num_frames: int | None = None,
+        pipeline: LtxPipeline = _DISTILLED,
+        loras: Sequence[LoraSpec] = (),
+        control: ControlConditioning | None = None,
+        audio: AudioConditioning | None = None,
+        skip_stage_2: bool = False,
     ) -> list[str]:
         root = settings.ltx_models_root
         # Explicit dimensions (extension and restyle: the source's aspect
@@ -1435,15 +1858,41 @@ class LtxAdapter:
             # across jobs.
             seed = zlib.crc32(job.job_id.encode())
 
+        transformer = (
+            self._transformer_file()
+            if pipeline.transformer_key is None
+            else self._optional_weight(pipeline.transformer_key)
+        )
+        if pipeline.stage_1_only:
+            # Ask for twice the target and stop after stage 1, which renders at
+            # half — so the delivered grid is exactly `width x height`. See
+            # `LtxPipeline.stage_1_only`.
+            width, height = width * 2, height * 2
+            skip_stage_2 = True
+
         cmd = [
-            *self._launcher(),
-            "--transformer-path", str(root / self._transformer_file()),
+            *self._launcher(pipeline.module),
+            "--transformer-path", str(root / transformer),
             "--text-encoder-path", str(root / _MODEL_FILES["text_encoder"]),
             "--video-vae-path", str(root / _MODEL_FILES["video_vae"]),
             "--audio-vae-path", str(root / _MODEL_FILES["audio_vae"]),
             "--duration-head-path", str(root / _MODEL_FILES["duration_head"]),
             "--spatial-upsampler-path", str(root / _MODEL_FILES["spatial_upsampler"]),
-            "--quantization", settings.ltx_quantization,
+        ]
+        if pipeline.quantize:
+            cmd += ["--quantization", settings.ltx_quantization]
+        if pipeline.offload_cpu:
+            # The other half of dropping quantization: the unquantized 22B
+            # transformer is fitted by streaming weights from host RAM.
+            cmd += ["--offload", "cpu"]
+        if pipeline.distilled_lora:
+            cmd += [
+                "--distilled-lora",
+                str(root / self._optional_weight("distilled_lora")),
+                "1.0",
+            ]
+
+        cmd += [
             # Exactly what the user typed, as one argv element: no quoting,
             # escaping, truncation or rewriting between the text field and
             # the model. Pinned by test_the_users_prompt_reaches_the_model_verbatim.
@@ -1467,7 +1916,40 @@ class LtxAdapter:
             # in ascending frame order so the pipeline reads them as a timeline
             # rather than as an unordered set.
             cmd += item.as_args()
+        for lora in loras:
+            cmd += lora.as_args()
+        if control is not None:
+            cmd += control.as_args()
+        if audio is not None:
+            cmd += audio.as_args()
+        if skip_stage_2:
+            cmd.append("--skip-stage-2")
         return cmd
+
+    def _optional_weight(self, key: str) -> str:
+        """A named weights file, verified present, or a refusal naming it.
+
+        Resolves against both tables: a non-default tier may need a file every
+        tier needs (the IC-LoRA path runs the same distilled transformer as the
+        default) as well as one only it needs.
+
+        Existence is checked HERE rather than only in `_require_models` because
+        those weights are checked once per job on the assumption every render
+        needs them, while these are checked only on the path that selected them.
+        A node without the audio tier's dev checkpoint still serves
+        text-to-video perfectly, and must not be told it is broken.
+        """
+        relative = _OPTIONAL_MODEL_FILES.get(key) or _MODEL_FILES[key]
+        if not (settings.ltx_models_root / relative).exists():
+            raise AdapterError(
+                "This tool is temporarily unavailable.",
+                internal_detail=(
+                    f"LTX weights missing for '{key}': "
+                    f"{settings.ltx_models_root / relative}"
+                ),
+                retriable=False,
+            )
+        return relative
 
     async def _trim_to(
         self,

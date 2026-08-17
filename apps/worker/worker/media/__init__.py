@@ -20,6 +20,11 @@ from worker.media.audio import (
     mux_audio,
     overlap_cost_seconds,
 )
+from worker.media.control import (
+    DEFAULT_EDGE_HIGH,
+    DEFAULT_EDGE_LOW,
+    extract_edge_control,
+)
 from worker.media.ffmpeg import (
     FfmpegError,
     ffmpeg,
@@ -42,6 +47,8 @@ from worker.media.validate import (
 )
 
 __all__ = [
+    "DEFAULT_EDGE_HIGH",
+    "DEFAULT_EDGE_LOW",
     "AudioMode",
     "FfmpegError",
     "MediaInfo",
@@ -53,6 +60,7 @@ __all__ = [
     "crossfade_concat",
     "detect_onsets",
     "duration_tolerance",
+    "extract_edge_control",
     "extract_final_frame",
     "extract_frames_at",
     "ffmpeg",

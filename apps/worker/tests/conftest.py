@@ -101,11 +101,16 @@ def workspace(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fake_models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A weights directory that passes the existence check without 85 GB."""
-    from worker.adapters.ltx import _MODEL_FILES
+    """A weights directory that passes the existence check without 85 GB.
+
+    Includes the optional tiers' files: a test exercising the audio or
+    control-conditioned path needs them present, and a test asserting they are
+    NOT required for text-to-video asserts that against `_MODEL_FILES` directly.
+    """
+    from worker.adapters.ltx import _MODEL_FILES, _OPTIONAL_MODEL_FILES
 
     root = tmp_path / "models"
-    for relative in _MODEL_FILES.values():
+    for relative in (*_MODEL_FILES.values(), *_OPTIONAL_MODEL_FILES.values()):
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.touch()
@@ -126,8 +131,15 @@ def stub_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def stub_launcher(monkeypatch: pytest.MonkeyPatch, script: Path) -> None:
-    """Routes `_launcher()` to a local script; every real flag still lands."""
-    monkeypatch.setattr(LtxAdapter, "_launcher", lambda self: [sys.executable, str(script)])
+    """Routes `_launcher()` to a local script; every real flag still lands.
+
+    The module argument is accepted and ignored: one stub stands in for every
+    LTX entry point, and which one a path selected is asserted from the recorded
+    argv rather than from which binary ran.
+    """
+    monkeypatch.setattr(
+        LtxAdapter, "_launcher", lambda self, module=None: [sys.executable, str(script)]
+    )
 
 
 def render_stub(
