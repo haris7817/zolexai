@@ -349,6 +349,45 @@ class TestSafeFrameCount:
         for frames in (120, 240, 360, 720, 1289, 1385, 1441, 1528):
             assert safe_frame_count((1024, 576), frames, conditioned=True) == frames
 
+    def test_the_production_regression_359_conditioned_lands_on_360(self) -> None:
+        """The second incident, pinned. A 14.976s upload is 359 frames; the
+        lattice carries it to 361, and 361 conditioned crashed three
+        video-to-video jobs on 16 Aug 2026. The 15.018s file beside it asked for
+        360, passed through, and worked — so the fix is to land on the
+        measurement rather than reach over it."""
+        for grid in ((1024, 576), (576, 1024), (768, 768)):
+            assert safe_frame_count(grid, 359, conditioned=True) == 360
+
+    def test_361_conditioned_is_never_emitted(self) -> None:
+        """It is measured-FAIL, so no request may produce it — including a
+        request for exactly 361, which the lattice would otherwise pass
+        straight through."""
+        for frames in range(353, 366):
+            for grid in ((1024, 576), (576, 1024), (768, 768)):
+                assert safe_frame_count(grid, frames, conditioned=True) != 361
+
+    def test_721_conditioned_is_never_emitted_either(self) -> None:
+        """The first incident's count, guarded the same way — 719 snaps to 721
+        on the lattice, which is what made a 29.96s source a crash."""
+        for frames in range(714, 726):
+            for grid in ((1024, 576), (576, 1024), (768, 768)):
+                assert safe_frame_count(grid, frames, conditioned=True) != 721
+
+    def test_no_conditioned_count_measured_to_fail_is_ever_emitted(self) -> None:
+        """The whole invariant, swept. Every count this table records as a
+        conditioned failure must be unreachable from any request."""
+        measured_fail = (361, 721, 1381, 1437, 1440, 1464)
+        for frames in range(1, 2000):
+            out = safe_frame_count((1024, 576), frames, conditioned=True)
+            assert out not in measured_fail, f"{frames} -> {out}, a measured failure"
+
+    def test_the_production_conditioned_passes_are_reproduced_exactly(self) -> None:
+        """Counts the GPU actually decoded on 16 Aug, conditioned, in customer
+        jobs. Whatever the table says, these must keep coming out unchanged —
+        they are the only conditioned evidence between 121 and 1289."""
+        for frames in (81, 121, 360, 720, 1441):
+            assert safe_frame_count((1024, 576), frames, conditioned=True) == frames
+
     def test_the_measured_failures_all_become_measured_passes(self) -> None:
         """Every conditioned count measured to FAIL maps to one measured to
         PASS — never to an interpolation."""
