@@ -311,8 +311,12 @@ Repository:
 Current checkout:
 
 ```text
-516b455
+924e1de   (17 Aug 2026 — see §38)
 ```
+
+> The `516b455` recorded elsewhere in this document was already stale before
+> that deploy: the box was actually on `38d70de`. Only this line was verified
+> against the box, so treat the others as historical until someone checks them.
 
 ---
 
@@ -1500,3 +1504,47 @@ Verified 14 Aug 2026 by killing the worker and music service: both returned to
 entrypoint and already manages base-image services, so it should come back — but
 the honest test is stopping and starting the instance from the Vast console, and
 that has not been done.
+
+---
+
+## 38. Deploy: worker side of V2V transform + audio conditioning (17 Aug 2026)
+
+`38d70de` → `924e1de` on the GPU node only. The VPS was **not** touched.
+
+```bash
+cd /workspace/zolexai && git pull --ff-only
+supervisorctl restart zolexai-worker
+```
+
+**This deploy changes nothing a customer can see, by design.** The new
+video-to-video engine is selected by `execution.v2v_engine`, which lives in the
+workflow YAML — and the API serves workflow definitions **baked into its image**
+(§14). Until that image is rebuilt, production claims carry no such key and the
+worker takes the same still-conditioned restyle path it always has. Deploying
+the worker first is what makes the activation step reversible: the code is
+already proven on the node before anything starts routing to it.
+
+Verified after restart:
+
+- `worker_draining` reported `active_jobs: 0` — nothing was interrupted.
+- `worker_ready`: `ltx-6000-1`, runtimes `["ltx", "music"]`, all six workflows.
+- New modules import in `.venv-worker`; all three optional weight files
+  (`transformer_dev`, `distilled_lora`, `union_control_lora`) are present.
+- **End-to-end through the real adapter on the real GPU**: a `video-to-video`
+  job with `v2v_engine: transform` built its control clip, rendered on
+  `ltx_pipelines.ic_lora`, restored the source audio and validated — 1024x576,
+  8.0s against an 8.0s source, 737 KiB, **61s**. This was the last untested
+  join: the model invocation and the surrounding pipeline had only ever been
+  proven separately.
+
+Rollback is the previous commit plus a restart:
+
+```bash
+cd /workspace/zolexai && git checkout 38d70de
+supervisorctl restart zolexai-worker
+```
+
+**Not yet done — the activation half.** Rebuilding the API image ships
+`v2v_engine: transform` and switches every video-to-video job onto the new
+engine. `audio_conditioning` for music video stays off in the YAML regardless;
+it is ~4x the compute and is a pricing decision.
