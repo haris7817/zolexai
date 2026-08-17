@@ -1589,21 +1589,36 @@ push touches two of those same files with comment blocks — a bare
 `git pull --ff-only` will refuse. The sequence that preserves the routing:
 
 ```bash
-cd <vps zolexai checkout>
-git stash
-git pull --ff-only          # → dad546b (or later)
-git stash pop               # re-applies the runtime flips; the new comments
-                            #   don't touch the runtime line, so it merges clean
-git status                  # expect the same three YAMLs modified, nothing else
+cd /opt/zolexai
+runuser -u zolexai -- git stash
+runuser -u zolexai -- git pull --ff-only   # → 92f23e8 (or later)
+runuser -u zolexai -- git stash pop        # re-applies the runtime flips; the
+                                           #   new comments don't touch the
+                                           #   runtime line, so it merges clean
+runuser -u zolexai -- git status           # expect the same three YAMLs
+                                           #   modified, nothing else
 ```
 
-Then the §14 image rebuild, because the API bakes `workflow-definitions/` in:
+Then the §14 image rebuild, because the API bakes `workflow-definitions/` in
+(canonical invocation from §14; migrations are not needed — this release has
+no schema changes):
 
 ```bash
-docker compose -f docker-compose.prod.yml build api
-docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate api
-docker exec zolexai-prod-api-1 grep -A6 '^execution:' \
+cd /opt/zolexai
+COMPOSE="docker compose \
+  --env-file /opt/zolexai/.env \
+  -f infrastructure/compose/docker-compose.prod.yml"
+
+$COMPOSE build api
+$COMPOSE up -d --no-deps --force-recreate api
+sleep 8
+$COMPOSE ps api
+curl -sS http://127.0.0.1:8100/api/v1/health
+
+docker exec zolexai-prod-api-1 grep -n -A6 '^execution:' \
   /workflow-definitions/video-to-video.yaml   # must show v2v_engine: transform
+docker exec zolexai-prod-api-1 grep -n -A2 '^execution:' \
+  /workflow-definitions/text-to-video.yaml    # must still show runtime: ltx
 ```
 
 What that rebuild activates: **video-to-video switches to the transform
