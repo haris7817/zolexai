@@ -1548,3 +1548,68 @@ supervisorctl restart zolexai-worker
 `v2v_engine: transform` and switches every video-to-video job onto the new
 engine. `audio_conditioning` for music video stays off in the YAML regardless;
 it is ~4x the compute and is a pricing decision.
+
+## 39. Deploy: worker side of the guided tier (18 Aug 2026)
+
+`1fe0fa2` → `dad546b` on the GPU node only, same shape as §38: the new code is
+unreachable until a workflow YAML sets `execution.generation_engine: guided`,
+and no shipped YAML does — the tier is documented commented-out in
+`text-to-video.yaml` / `image-to-video.yaml`. Deploying the worker first keeps
+the eventual activation reversible.
+
+Procedure was §38's:
+
+```bash
+cd /workspace/zolexai && git pull --ff-only
+supervisorctl restart zolexai-worker
+```
+
+Verified after restart:
+
+- `worker_draining` reported `active_jobs: 0` — nothing interrupted.
+- `worker_ready`: `ltx-6000-1`, runtimes `["ltx", "music"]`, all six workflows.
+- `_GUIDED` imports in the worker venv: `ltx_pipelines.ti2vid_two_stages`,
+  landings `(121,)`, pass ceiling 5.0s.
+- **End-to-end through the real adapter on the real GPU**: a text-to-video job
+  with `generation_engine: guided` rendered on the dev transformer +
+  distilled LoRA, validated video+audio — 1024x576, 5.013s, 667 KiB,
+  **130.6s wall**. The default path's argv is byte-identical and stays pinned
+  by the suite (540 passed on this commit).
+
+Rollback is the previous commit plus a restart:
+
+```bash
+cd /workspace/zolexai && git checkout 1fe0fa2
+supervisorctl restart zolexai-worker
+```
+
+**The VPS half (owner-performed).** The VPS checkout carries deliberate
+uncommitted YAML edits (`runtime: mock` → `ltx` on three workflows), and this
+push touches two of those same files with comment blocks — a bare
+`git pull --ff-only` will refuse. The sequence that preserves the routing:
+
+```bash
+cd <vps zolexai checkout>
+git stash
+git pull --ff-only          # → dad546b (or later)
+git stash pop               # re-applies the runtime flips; the new comments
+                            #   don't touch the runtime line, so it merges clean
+git status                  # expect the same three YAMLs modified, nothing else
+```
+
+Then the §14 image rebuild, because the API bakes `workflow-definitions/` in:
+
+```bash
+docker compose -f docker-compose.prod.yml build api
+docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate api
+docker exec zolexai-prod-api-1 grep -A6 '^execution:' \
+  /workflow-definitions/video-to-video.yaml   # must show v2v_engine: transform
+```
+
+What that rebuild activates: **video-to-video switches to the transform
+engine** (`v2v_engine: transform` is committed in the repo YAML). Music-video
+`audio_conditioning` and the guided tier stay OFF — both are commented in the
+YAML and each is a separate pricing/quality decision. The worker at `dad546b`
+already serves all three paths, so later activations are YAML-only. Gate after
+the rebuild: one real video-to-video job through zolexai.com, eyes on the
+result.
