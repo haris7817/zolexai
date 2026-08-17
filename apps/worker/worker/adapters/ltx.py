@@ -461,6 +461,20 @@ _AUDIO_WINDOW_PAD_SECONDS = 0.04
 #: `execution.transform_pass_seconds` is where the measurement lands.
 _TRANSFORM_PASS_SECONDS = 8.0
 
+#: The guided tier's measured single-pass length, in seconds.
+#:
+#: `ti2vid_two_stages` decodes on its own path, and neither the distilled
+#: tier's grid ceilings nor the audio tier's 481-frame cell transfer to it —
+#: proven the day this tier was added, 17 Aug 2026: 241 frames at 1024x576, a
+#: count the audio tier renders happily at this grid, died in this pipeline's
+#: decoder with an illegal memory access, while 121 passed clean. What IS
+#: measured on this path (dev transformer + distilled LoRA, unquantized,
+#: `--offload cpu`): 121 frames at 1024x576 — 146s, ~29x real time, 39.3 GB
+#: peak alongside the resident music service. Raising this is a measurement,
+#: not an opinion; `execution.guided_pass_seconds` is where the measurement
+#: lands, together with a new entry in `_GUIDED.measured_landings`.
+_GUIDED_PASS_SECONDS = 5.0
+
 #: Video-to-video conditioning defaults. Every one is overridable per workflow
 #: through the private `execution` block, because the right values are a
 #: quality judgement made against real footage on a real GPU, and baking them
@@ -774,6 +788,36 @@ _A2VID = LtxPipeline(
     conforming_only=True,
 )
 
+#: The quality tier for text- and image-to-video: the guided two-stage
+#: pipeline, which is what "follows the prompt" means upstream — CFG (official
+#: default 3.0), spatio-temporal guidance and a negative prompt are all active
+#: here, and none of them exist on the distilled entry point. The client's own
+#: reference engine measures adherence against exactly this pipeline family,
+#: never against distilled. Dev transformer plus the distilled LoRA — the
+#: pipeline requires both — so the LoRA/quantization rule applies: unquantized,
+#: CPU offload. Measured 17 Aug 2026 at 1024x576, 121 frames: 146s against the
+#: distilled tier's 34s for the same clip — ~4.3x, not the ~10x the step-count
+#: arithmetic predicted, because the distilled LoRA keeps the short schedule
+#: while the guiders run against the dev weights.
+_GUIDED = LtxPipeline(
+    module="ltx_pipelines.ti2vid_two_stages",
+    transformer_key="transformer_dev",
+    distilled_lora=True,
+    quantize=False,
+    offload_cpu=True,
+    extra_weights=("transformer_dev", "distilled_lora"),
+    conforming_only=True,
+    # 121 is the ONE count measured on this pipeline's own decode path, and it
+    # was measured at ALL FOUR product grids on 17 Aug 2026: 1024x576 (146s,
+    # video AND audio streams verified in the output), 576x1024 (138s),
+    # 768x768 (149s), 512x640 (145s). 241 at 1024x576 — safe on distilled,
+    # measured on a2vid — is a reproduced FAIL here (illegal memory access in
+    # the decoder, confirmed by an isolated retry), which is the whole
+    # argument for per-pipeline landings restated by the newest pipeline on
+    # the box.
+    measured_landings=(121,),
+)
+
 
 #: Ordered milestones matched against the pipeline's log output. Matching is
 #: forward-only (an index walks down this list), which is what makes the twice-
@@ -857,6 +901,12 @@ class LtxAdapter:
         seconds = self._requested_seconds(job)
         still = await self._conditioning_image(job, "source_image")
         dimensions = self._requested_dimensions(job)
+        # `execution.generation_engine: guided` swaps the distilled entry point
+        # for the guided two-stage pipeline — CFG, STG and a negative prompt
+        # active, ~4.3x the render time. Off unless a workflow says so, exactly
+        # like the transform engine and audio conditioning before it: a cost
+        # and behaviour change is a product decision, never a silent default.
+        guided = job.execution.get("generation_engine") == "guided"
         self._record_audio_mode(job, AudioMode.GENERATED_PER_SECTION_AUDIO)
         prompt_plan: list[str] | None = None
 
@@ -890,11 +940,16 @@ class LtxAdapter:
         rendered = await render_chain(
             job,
             seconds,
-            per_pass_seconds=self._per_pass_seconds(job, dimensions),
+            per_pass_seconds=(
+                self._guided_pass_seconds(job)
+                if guided
+                else self._per_pass_seconds(job, dimensions)
+            ),
             render=self._renderer(job, reporter, dimensions=dimensions,
                                   conditioning=conditioning,
                                   prompt_for_step=prompt_for_step,
-                                  require_audio=True),
+                                  require_audio=True,
+                                  pipeline=_GUIDED if guided else _DISTILLED),
             reporter=reporter,
         )
 
@@ -1734,6 +1789,18 @@ class LtxAdapter:
         someone has made it.
         """
         requested = job.execution_float("audio_pass_seconds", _AUDIO_PASS_SECONDS)
+        return max(1.0, min(requested, float(settings.ltx_max_seconds)))
+
+    def _guided_pass_seconds(self, job: AdapterJob) -> float:
+        """The pass ceiling for the GUIDED tier — its own measurement, again.
+
+        See `_GUIDED_PASS_SECONDS` for the 241-frame failure that keeps this
+        at one measured landing. Deliberately overridable downward, and upward
+        only alongside a new measurement: `execution.guided_pass_seconds` is
+        where that lands, and `_GUIDED.measured_landings` is what actually
+        keeps unmeasured counts away from the decoder in the meantime.
+        """
+        requested = job.execution_float("guided_pass_seconds", _GUIDED_PASS_SECONDS)
         return max(1.0, min(requested, float(settings.ltx_max_seconds)))
 
     @staticmethod

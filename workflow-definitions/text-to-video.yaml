@@ -68,6 +68,24 @@ execution:
   # apps/worker/worker/longform/enhance.py.
   prompt_structuring: true
 
+  # ── Guided quality tier (OFF — enabling is a product/pricing decision) ──
+  #
+  # generation_engine: guided
+  #
+  # Swaps the distilled entry point for the guided two-stage pipeline (dev
+  # transformer + distilled LoRA, unquantized, CPU offload). This is the tier
+  # with CFG, spatio-temporal guidance and a negative prompt — the adherence
+  # levers the distilled runtime structurally lacks — and the tier the
+  # client's own reference engine measures "follows the prompt" against.
+  # Measured 17 Aug 2026 (RTX PRO 6000, 1024x576, 121 frames): 146s vs the
+  # distilled tier's 34s for the same clip — ~4.3x the render time — with
+  # video AND audio verified in the output. Passes are capped at one measured
+  # landing (121 frames / 5s); 241 frames is a reproduced decoder FAIL on
+  # this pipeline, so raising the cap requires a new measurement, not an
+  # opinion:
+  #
+  # guided_pass_seconds: 5.0
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the

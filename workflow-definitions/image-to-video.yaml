@@ -57,6 +57,18 @@ execution:
   # note and apps/worker/worker/longform/enhance.py for the rules.
   prompt_structuring: true
 
+  # ── Guided quality tier (OFF — a product/pricing decision) ──
+  #
+  # generation_engine: guided
+  # guided_pass_seconds: 5.0
+  #
+  # Same switch and same measured costs as text-to-video.yaml (see the full
+  # note there): guided two-stage pipeline, CFG + STG + negative prompt,
+  # ~4.3x the render time, passes capped at the one measured 121-frame
+  # landing. I2V conditioning (`--image` stills, including the low-strength
+  # identity reference on later passes) rides along unchanged — the guided
+  # pipeline takes the same conditioning flags the distilled one does.
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the
