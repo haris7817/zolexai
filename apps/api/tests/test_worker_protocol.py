@@ -8,10 +8,15 @@ with two.
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import parse_qs, urlparse
 
 from httpx import AsyncClient
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.v1.internal import output_upload_ttl
+from app.core.config import settings
+from app.services.workflow_registry import get_registry, init_registry
 
 WORKFLOWS = [
     "text-to-video",
@@ -127,6 +132,53 @@ async def test_a_claim_carries_everything_the_worker_needs(
     # The private execution block DOES cross this boundary — to an
     # authenticated worker on the private network, and nowhere else.
     assert job["execution"]["runtime"] == "mock"
+
+
+async def test_every_workflows_upload_url_outlives_the_render_it_waits_on() -> None:
+    """The invariant behind a whole discarded render.
+
+    The output PUT is signed when the job is claimed and used when the render
+    finishes. If a workflow may render for longer than its URL is valid, the
+    signature dies mid-render and the finished video is lost to a 403 — which is
+    exactly what happened to a 5-minute music video on 2026-08-16, because
+    `music-video` allows 7200s of rendering and the URL was signed for 900.
+
+    Checked against the REAL definitions, so raising any workflow's
+    `timeout_seconds` past its upload window fails here rather than in
+    production, after the GPU time is already spent.
+    """
+    # Loaded here rather than via `get_registry()`: this test needs no HTTP, and
+    # leaning on another test's fixture to have initialised the registry is the
+    # order-dependence this suite already suffers from.
+    registry = init_registry()
+    for workflow_id in registry.ids():
+        execution = registry.get(workflow_id).execution
+        ceiling = execution.timeout_seconds or settings.job_default_timeout_seconds
+        assert output_upload_ttl(execution) > ceiling, (
+            f"{workflow_id} may render for {ceiling}s but its upload URL expires "
+            f"after {output_upload_ttl(execution)}s — a finished render would 403"
+        )
+
+
+async def test_a_claimed_jobs_upload_url_is_signed_for_the_whole_render(
+    client: AsyncClient, worker_headers: dict, text_to_video_request: dict
+) -> None:
+    """The signature the worker actually receives, not just the derivation."""
+    await client.post("/api/v1/generations", json=text_to_video_request)
+    worker_id = await register(client, worker_headers)
+
+    job = await claim(client, worker_headers, worker_id)
+    assert job is not None
+
+    query = parse_qs(urlparse(job["output_upload_url"]).query)
+    signed_for = int(query["X-Amz-Expires"][0])
+
+    execution = get_registry().get("text-to-video").execution
+    ceiling = execution.timeout_seconds or settings.job_default_timeout_seconds
+    assert signed_for > ceiling
+    # And it is genuinely longer than the browser-upload window that caused the
+    # bug — otherwise this passes for a workflow that simply renders fast.
+    assert signed_for > settings.storage_presign_expiry_seconds
 
 
 async def test_two_workers_never_receive_the_same_job(

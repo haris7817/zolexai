@@ -48,8 +48,21 @@ class ObjectStorage(Protocol):
     nothing else — no service, route or model imports a storage SDK directly."""
 
     def presign_upload(
-        self, key: str, *, content_type: str, max_size_bytes: int
-    ) -> PresignedUpload: ...
+        self,
+        key: str,
+        *,
+        content_type: str,
+        max_size_bytes: int,
+        expires_in: int | None = None,
+    ) -> PresignedUpload:
+        """`expires_in` overrides the provider's configured window.
+
+        Browser uploads start immediately and the default is sized for them. A
+        WORKER's upload URL is signed when the job is claimed and used only once
+        the render is done, which may be hours later — it needs its own window,
+        and the caller is the only one that knows how long the render may run.
+        """
+        ...
 
     def presign_download(self, key: str, *, filename: str | None = None) -> str: ...
 

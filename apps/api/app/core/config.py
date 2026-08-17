@@ -87,6 +87,20 @@ class Settings(BaseSettings):
     job_lease_seconds: int = 120
     """How long a claim is valid before another worker may take the job."""
     job_max_attempts: int = 3
+    job_default_timeout_seconds: int = 1800
+    """
+    Render ceiling assumed for a workflow that declares no
+    `execution.timeout_seconds`. Mirrors the worker's own default
+    (`worker.core.config.job_timeout_seconds`); the API needs it only to sign the
+    output upload URL for long enough, so the duplication is deliberate and
+    harmless — signing generously costs nothing, signing short loses renders.
+    """
+    worker_upload_grace_seconds: int = 900
+    """
+    How much longer than the render ceiling the worker's output upload URL stays
+    valid. Covers staging inputs, validating the result and streaming it up — the
+    worker allows `upload_timeout_seconds` (900s) for that last part alone.
+    """
 
     # ── Limits (foundation only — full enforcement is M3 billing) ────────
     default_user_concurrency_limit: int = 3

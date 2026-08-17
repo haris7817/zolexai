@@ -40,6 +40,7 @@ from app.schemas.internal import (
     WorkerRegisterRequest,
     WorkerRegisterResponse,
 )
+from app.schemas.workflow import ExecutionSpec
 from app.services import queue
 from app.services.generation import GenerationService
 from app.services.storage import output_key
@@ -59,6 +60,29 @@ router = APIRouter(
 _OUTPUT_CONTENT_TYPE = {"video": "video/mp4", "audio": "audio/mpeg", "image": "image/png"}
 
 _HEARTBEAT_INTERVAL = 30
+
+
+def output_upload_ttl(execution: ExecutionSpec) -> int:
+    """How long the worker's presigned output PUT stays valid.
+
+    This URL is signed at CLAIM time and used only once the render has finished,
+    so it must outlive the RENDER — not the request that issued it. The shared
+    browser-upload window did not: on 2026-08-16 a finished 5-minute music video
+    (six passes, 18 minutes of GPU time, validated at 69.5 MB) was thrown away
+    when the PUT came back 403 three minutes after the signature died. Nothing
+    was wrong with the video. `music-video` declares `timeout_seconds: 7200`, so
+    a 900-second signature was never going to hold.
+
+    Derived from the workflow's own render ceiling — the same number the worker
+    enforces as its wall-clock budget in `runner._execute` — plus grace for
+    staging inputs, validating the result and streaming it up. Never shorter than
+    the shared default, so short workflows are unaffected.
+    """
+    ceiling = execution.timeout_seconds or settings.job_default_timeout_seconds
+    return max(
+        settings.storage_presign_expiry_seconds,
+        ceiling + settings.worker_upload_grace_seconds,
+    )
 
 
 # ── Worker lifecycle ─────────────────────────────────────────────────────
@@ -207,7 +231,11 @@ async def claim_job(
     # Presigning is local HMAC, but it is CPU work per input; off-thread so a
     # burst of claims cannot stall the event loop.
     upload = await asyncio.to_thread(
-        storage.presign_upload, out_key, content_type=content_type, max_size_bytes=0
+        storage.presign_upload,
+        out_key,
+        content_type=content_type,
+        max_size_bytes=0,
+        expires_in=output_upload_ttl(definition.execution),
     )
 
     inputs: list[ClaimedInput] = []

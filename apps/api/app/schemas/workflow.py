@@ -147,6 +147,17 @@ class ExecutionSpec(BaseModel):
     output_kind: Literal["video", "image", "audio"] | None = None
     """Asset kind for what the runtime produces. Pairs with the field above."""
 
+    timeout_seconds: int | None = None
+    """
+    Wall-clock ceiling for one render of this workflow, enforced by the worker
+    (`worker.jobs.runner._execute`). None means the worker's own default.
+
+    Declared here — rather than left to `extra="allow"` — because the API reads
+    it too: the output upload URL is signed at claim time and used only after the
+    render finishes, so its validity is derived from this number. A workflow that
+    raises its render ceiling must not silently outlive its own upload window.
+    """
+
 
 class WorkflowDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")

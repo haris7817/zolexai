@@ -77,12 +77,18 @@ class S3ObjectStorage:
     # ── Presigning (local computation, no I/O) ───────────────────────────
 
     def presign_upload(
-        self, key: str, *, content_type: str, max_size_bytes: int
+        self,
+        key: str,
+        *,
+        content_type: str,
+        max_size_bytes: int,
+        expires_in: int | None = None,
     ) -> PresignedUpload:
+        expiry = expires_in or self._presign_expiry
         url = self._public_client.generate_presigned_url(
             ClientMethod="put_object",
             Params={"Bucket": self._bucket, "Key": key, "ContentType": content_type},
-            ExpiresIn=self._presign_expiry,
+            ExpiresIn=expiry,
             HttpMethod="PUT",
         )
         # Content-Type is signed, so the browser must send exactly this value or
@@ -92,7 +98,7 @@ class S3ObjectStorage:
             url=url,
             method="PUT",
             headers={"Content-Type": content_type},
-            expires_in=self._presign_expiry,
+            expires_in=expiry,
         )
 
     def presign_download(self, key: str, *, filename: str | None = None) -> str:
