@@ -1722,8 +1722,23 @@ class LtxAdapter:
             # frames where the exact count would crash the VAE, then trim back
             # so the delivered pass is exactly the planned length.
             requested_frames = self._frame_count(step.seconds)
+            # A pass is "conditioned" for shape purposes if it carries ANY
+            # conditioning, not only `--image`. A control video and an audio
+            # window are conditioning too, and the decoder's bad-shape set
+            # differs between the two classes.
+            #
+            # This cost a production job. The transform engine deliberately
+            # drops the source stills the old restyle passed, so its first pass
+            # — the common case, with no reference image — carried no `--image`
+            # at all. `conditioned` flipped to False, the lattice snapped a
+            # 14.976s source's 359 frames up to 361 instead of landing on the
+            # measured-safe 360, and 361 is a count this decoder is already
+            # documented to die on (see `_CONDITIONED_BANDS`). The old engine
+            # never hit it only because its stills happened to keep the flag
+            # True.
+            conditioned = bool(items) or control is not None or audio is not None
             frames = safe_frame_count(
-                dimensions, requested_frames, conditioned=bool(items)
+                dimensions, requested_frames, conditioned=conditioned
             )
             # Logged for EVERY pass, not only nudged ones. When a pass crashes
             # the decoder, its frame count and grid are the whole diagnosis —
@@ -1743,7 +1758,13 @@ class LtxAdapter:
                     "requested_frames": requested_frames,
                     "rendered_frames": frames,
                     "nudged": frames != requested_frames,
-                    "conditioned": bool(items),
+                    # The value the shape tables were consulted with, so the log
+                    # explains the frame count it sits next to. Logging
+                    # `bool(items)` here instead is what made the 361 crash read
+                    # as "unconditioned" when the pass was carrying a control
+                    # video the whole time.
+                    "conditioned": conditioned,
+                    "images": len(items),
                 },
             )
             control_item = control(step, frames) if control else None

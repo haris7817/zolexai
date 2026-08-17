@@ -182,6 +182,39 @@ async def test_the_transform_pass_asks_for_double_and_stops_at_stage_one(
     assert "--skip-stage-2" in argv
 
 
+@needs_ffmpeg
+async def test_a_control_only_pass_still_counts_as_conditioned(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pass carrying a control video but no `--image` must use the CONDITIONED
+    shape tables. This is a production failure, reproduced.
+
+    A 14.976s upload asks for 359 frames. With the conditioned tables it lands
+    on the measured-safe 360; without them the lattice snaps it to 361, which
+    this decoder is documented to die on — `_CONDITIONED_BANDS` exists because
+    three video-to-video jobs died on exactly 361 on 16 Aug 2026.
+
+    The old restyle never reached that state because it always passed source
+    stills. The transform engine drops them on purpose, so its first pass
+    carries no image at all unless the customer supplied a reference — and the
+    common case is that they did not. Job 2f4a22b9 died this way, at 361, on
+    the first real production job after the engine shipped.
+    """
+    # 16:9 so the source lands on a MEASURED grid with a 60s ceiling and the
+    # whole 14.976s is one pass — the shape the production job had. A grid with
+    # no measured ceiling would be split into two passes and never reach 359.
+    source = await make_clip(workspace / "source.mp4", 14.976, size="160x90")
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 14.976))
+
+    await collect(transform_job(workspace, source))
+
+    argv = invocations(log)[0]
+    assert conditioning_of(argv) == [], "this test is meaningless if a still crept in"
+    assert control_of(argv) is not None
+    assert int(value_of(argv, "--num-frames")) == 360
+
+
 # ── Alignment: the control clip must match the pass that consumes it ─────
 
 

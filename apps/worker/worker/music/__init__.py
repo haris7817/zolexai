@@ -7,6 +7,13 @@ and stay useful after one is replaced — which is why they live here rather tha
 inside an adapter.
 """
 
+from worker.music.language import (
+    ENGLISH,
+    Language,
+    UnknownLanguage,
+    offered,
+    resolve_language,
+)
 from worker.music.lyrics import (
     LyricBrief,
     LyricFit,
@@ -15,6 +22,7 @@ from worker.music.lyrics import (
     LyricsWriter,
     Section,
     SongPlan,
+    UnsupportedLyricLanguage,
     check_lyric_fit,
     detect_genre,
     line_budget,
@@ -38,6 +46,8 @@ from worker.music.provider import (
 from worker.music.writer import TemplateLyricsWriter, detect_mood, extract_subject
 
 __all__ = [
+    "ENGLISH",
+    "Language",
     "LyricBrief",
     "LyricFit",
     "LyricIssue",
@@ -52,15 +62,19 @@ __all__ = [
     "Section",
     "SongPlan",
     "TemplateLyricsWriter",
+    "UnknownLanguage",
+    "UnsupportedLyricLanguage",
     "check_lyric_fit",
     "detect_genre",
     "detect_mood",
     "extract_subject",
     "line_budget",
     "lines_rhyme",
+    "offered",
     "parse_sections",
     "plan_song",
     "polish_lyrics",
+    "resolve_language",
     "review_lyrics",
     "rhyme_key",
     "salient_details",

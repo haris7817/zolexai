@@ -43,7 +43,12 @@ import re
 import zlib
 
 from worker.core.logging import get_logger
-from worker.music.lyrics import _GENRE_WORDS, LyricBrief, SongPlan
+from worker.music.lyrics import (
+    _GENRE_WORDS,
+    LyricBrief,
+    SongPlan,
+    UnsupportedLyricLanguage,
+)
 
 logger = get_logger(__name__)
 
@@ -242,6 +247,18 @@ class TemplateLyricsWriter:
     draft rather than the same one resubmitted.
     """
 
+    supported_languages = frozenset({"en"})
+    """
+    English, and only English — every couplet in the bank above is English.
+
+    This is the writer admitting its own limit so the adapter can refuse a
+    request it cannot honour. It replaces a warning that was logged and then
+    ignored: the old code noticed it had been asked for Urdu, said so in the
+    log, and returned English anyway. Nobody reads a log line that the customer
+    never sees, and the resulting song was in the wrong language with nothing
+    in the product to indicate it.
+    """
+
     async def write(
         self, brief: LyricBrief, plan: SongPlan, notes: list[str] | None = None
     ) -> str:
@@ -250,14 +267,14 @@ class TemplateLyricsWriter:
         )
         rng = random.Random(seed)
 
-        if brief.language.strip().lower() not in ("", "english", "en"):
-            # The music model sings whatever language the sheet is written in,
-            # but this writer's bank is English. Saying so beats silently
-            # singing English at someone who asked for Urdu — and the log line
-            # is the evidence for prioritising the multilingual (LLM) writer.
-            logger.warning(
-                "lyrics_language_not_supported_by_template_writer",
-                extra={"requested": brief.language, "writing": "English"},
+        # The adapter checks `supported_languages` before it ever gets here, so
+        # this is a backstop against a future caller that forgets. It raises
+        # rather than warns: returning English from a call that asked for
+        # Spanish is the bug, not the recovery.
+        requested = brief.language.strip().lower()
+        if requested and requested not in self.supported_languages:
+            raise UnsupportedLyricLanguage(
+                f"the template writer's bank is English; it cannot write {requested!r}"
             )
 
         mood = detect_mood(brief.topic)

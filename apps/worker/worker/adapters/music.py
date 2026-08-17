@@ -60,6 +60,7 @@ from worker.media import (
     verify_output,
 )
 from worker.music import (
+    Language,
     LyricBrief,
     LyricsWriter,
     MusicGenerationProvider,
@@ -68,8 +69,10 @@ from worker.music import (
     ProviderGenerationError,
     ProviderUnavailable,
     SongPlan,
+    UnknownLanguage,
     check_lyric_fit,
     plan_song,
+    resolve_language,
     write_lyrics,
 )
 
@@ -122,9 +125,9 @@ class MusicAdapter:
 
         # ── Plan the song before asking for a note of it ─────────────
         brief = LyricBrief.from_prompt(job.prompt)
-        requested_language = str(job.parameters.get("lyrics_language") or "").strip()
-        if requested_language:
-            brief = dataclasses.replace(brief, language=requested_language)
+        language = self._language_for(job)
+        if language is not None:
+            brief = dataclasses.replace(brief, language=language.code)
         plan = plan_song(total_seconds, genre=brief.genre)
         logger.info(
             "music_planned",
@@ -134,6 +137,11 @@ class MusicAdapter:
                 "total_seconds": round(total_seconds, 1),
                 "line_budget": plan.line_budget,
                 "outline": plan.outline,
+                # The selection, and what it became. Both, because the whole
+                # failure this replaced was a value that looked present at
+                # every stage and meant nothing at the last one.
+                "language_selected": job.parameters.get("lyrics_language"),
+                "language_code": language.code if language else None,
             },
         )
 
@@ -144,7 +152,7 @@ class MusicAdapter:
         fade = max(0.0, float(settings.music_crossfade_seconds))
         sections = self._plan_sections(job, provider, total_seconds, fade)
         rendered = await self._render_sections(
-            job, reporter, provider, sections, plan, lyrics
+            job, reporter, provider, sections, plan, lyrics, language
         )
 
         # ── Assemble ─────────────────────────────────────────────────
@@ -233,6 +241,29 @@ class MusicAdapter:
             )
         return self._writer
 
+    # ── Language ─────────────────────────────────────────────────────────
+
+    def _language_for(self, job: AdapterJob) -> Language | None:
+        """The requested language as a canonical code, resolved exactly once.
+
+        Resolved here, at the top of the run, rather than at each of the two
+        places that need it — the lyric writer and the provider — because
+        those two disagreeing about what "Spanish" means is the failure mode
+        this whole path is being repaired for.
+        """
+        requested = job.parameters.get("lyrics_language")
+        try:
+            return resolve_language(str(requested) if requested is not None else None)
+        except UnknownLanguage as exc:
+            # A closed dropdown cannot produce this, so it is a client bug.
+            # Failing names it; defaulting to English hides it and produces
+            # exactly the song the customer complained about.
+            raise AdapterError(
+                "This track could not be started.",
+                internal_detail=str(exc),
+                retriable=False,
+            ) from exc
+
     # ── Lyrics ───────────────────────────────────────────────────────────
 
     async def _lyrics_for(
@@ -270,7 +301,10 @@ class MusicAdapter:
         if job.parameters.get("instrumental"):
             return None
 
-        written = await write_lyrics(brief, plan, self._resolve_writer())
+        writer = self._resolve_writer()
+        self._refuse_a_language_the_writer_cannot_write(writer, brief, plan)
+
+        written = await write_lyrics(brief, plan, writer)
         if written is None:
             # Only two ways here: the plan is wordless (ambient/instrumental
             # genres) or the writer is deliberately disabled. Returning None
@@ -281,15 +315,54 @@ class MusicAdapter:
 
         text, review = written
         (job.workspace / "lyrics.txt").write_text(text, encoding="utf-8")
+        # Not decoration: it is the difference between "we wrote Spanish
+        # lyrics" and "we wrote English lyrics and labelled them Spanish",
+        # which is indistinguishable from the outside until someone listens.
         logger.info(
             "lyrics_ready",
             extra={
                 "rhyme_rate": round(review.rhyme_rate, 2),
                 "unique_rate": round(review.unique_rate, 2),
                 "unresolved_issues": len(review.issues),
+                "language": brief.language,
             },
         )
         return text
+
+    def _refuse_a_language_the_writer_cannot_write(
+        self, writer: LyricsWriter | None, brief: LyricBrief, plan: SongPlan
+    ) -> None:
+        """Stops before writing English words for a customer who asked for Urdu.
+
+        This only ever fires on the AUTOMATIC lyric path. A customer's own
+        lyrics are already in the language they wrote them in and are passed
+        through untouched — the selection then only tells the model how to
+        pronounce them, which every offered language supports. An instrumental
+        has no words to be in any language at all.
+
+        Refusing is the instruction, not a preference: a writer that cannot
+        work in the requested language must not quietly substitute one it can.
+        The message says what to do instead, because the paste-your-own-lyrics
+        path genuinely does work in every language offered.
+        """
+        if writer is None or not plan.has_lyrics:
+            return
+
+        supported: frozenset[str] = getattr(writer, "supported_languages", frozenset())
+        # An empty set means "any" — a language model has no list to give.
+        if not supported or brief.language in supported:
+            return
+
+        raise AdapterError(
+            "We can only write lyrics for you in English at the moment. "
+            "Add your own lyrics in the language you picked and we will sing "
+            "those instead.",
+            internal_detail=(
+                f"lyrics writer cannot write {brief.language!r}; "
+                f"it supports {sorted(supported)}"
+            ),
+            retriable=False,
+        )
 
     # ── Planning ─────────────────────────────────────────────────────────
 
@@ -363,6 +436,7 @@ class MusicAdapter:
         sections: list[Segment],
         plan: SongPlan,
         lyrics: str | None,
+        language: Language | None,
     ) -> list[Path]:
         total = len(sections)
         rendered: list[Path] = []
@@ -383,6 +457,11 @@ class MusicAdapter:
                 prompt=self._caption_for(job, plan, section, total),
                 duration_seconds=section.duration_seconds,
                 lyrics=lyrics,
+                # The words and the accent to sing them with are two decisions.
+                # Passing only the words is what let a Spanish sheet be sung in
+                # English — the provider defaults the language when nobody
+                # states it, and "nobody stated it" was the whole bug.
+                language=language.code if language else None,
                 bpm=_optional_int(job.parameters.get("bpm")),
                 key=_optional_str(job.parameters.get("key")),
                 # Deterministic per section: a retried job reproduces its own

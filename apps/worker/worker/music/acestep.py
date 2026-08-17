@@ -72,6 +72,32 @@ logger = get_logger(__name__)
 #: for logging and early failure rather than as the completion test.
 _STATUS_FAILED = {-1, 2, 3}
 
+#: Language codes this model can sing, read from the source of the exact build
+#: we run: ACE-Step 1.5 at commit `6d467e4`, `acestep/constants.py`
+#: (`VALID_LANGUAGES`). Copied rather than imported because the model lives
+#: behind an HTTP boundary on the GPU box and is not a Python dependency here.
+#:
+#: Two things about this list are load-bearing and were verified in that source
+#: rather than assumed from documentation:
+#:
+#:   * the service takes an ISO 639-1 **code** — `es`, not "Spanish", not
+#:     "es-ES". `release_task_param_parser.py` accepts the field under
+#:     `vocal_language`, `vocalLanguage` or `language`, and
+#:     `release_task_request_builder.py` reads it with a plain
+#:     `parser.str("vocal_language", "en")`;
+#:   * **nothing validates it.** An unrecognised value is not rejected — it is
+#:     interpolated straight into the lyric encoder's prompt header
+#:     (`# Languages\n{language}\n\n# Lyric\n…`, `prompt_utils._format_lyrics`),
+#:     where the model has no token for it. So sending "Spanish" does not fail;
+#:     it quietly degrades. Checking the value is therefore OUR job, and that
+#:     is why this list exists here instead of a comment saying "any code".
+_VOCAL_LANGUAGES = frozenset(
+    """
+    ar az bg bn ca cs da de el en es fa fi fr he hi hr ht hu id is it ja ko la
+    lt ms ne nl no pa pl pt ro ru sa sk sr sv sw ta te th tl tr uk ur vi yue zh
+    """.split()
+)
+
 
 class AceStepProvider:
     name = "acestep"
@@ -168,6 +194,14 @@ class AceStepProvider:
             "audio_duration": float(request.duration_seconds),
         }
 
+        # Which language to SING in — distinct from the words themselves, and
+        # omitted entirely for an instrumental because there are no vocals for
+        # it to describe. Left unsent the service applies `en`, so a Spanish
+        # lyric sheet came back sung with English phonetics; that default is
+        # the whole reason this field is here.
+        if not request.instrumental and request.language:
+            payload["vocal_language"] = self._vocal_language(request.language)
+
         if request.bpm is not None:
             payload["bpm"] = int(request.bpm)
         if request.key:
@@ -186,6 +220,25 @@ class AceStepProvider:
             payload["reference_audio"] = str(request.reference_audio)
 
         return payload
+
+    def _vocal_language(self, code: str) -> str:
+        """The platform's canonical language code, as this model names it.
+
+        An identity mapping today — the model speaks ISO 639-1 and so does the
+        platform — but it is still a *translation*, and it is the point where a
+        language the product offers and the model cannot sing has to stop.
+        Refusing is deliberate: the alternative is sending a code the model
+        does not know, which does not fail, it just sings English. A caller who
+        asked for Urdu is better served by an error naming the problem than by
+        a song in the wrong language and no indication anything went wrong.
+        """
+        normalized = code.strip().lower()
+        if normalized not in _VOCAL_LANGUAGES:
+            raise ProviderGenerationError(
+                f"this music model cannot sing {code!r}; it supports "
+                f"{len(_VOCAL_LANGUAGES)} languages and that is not one of them"
+            )
+        return normalized
 
     # ── HTTP ─────────────────────────────────────────────────────────────
 

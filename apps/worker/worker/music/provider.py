@@ -59,6 +59,20 @@ class MusicRequest:
     than a flag that can contradict the lyrics beside it.
     """
 
+    language: str | None = None
+    """
+    Canonical ISO 639-1 code for the language the vocals should be sung in.
+
+    Not a hint about the words — `lyrics` already carries those, in whatever
+    language they are written. This tells the model which *phonetics* to sing
+    them with, which is a separate decision it will otherwise make wrongly:
+    given a Spanish sheet and no language, the current provider defaults to
+    English and sings Spanish words with an English accent.
+
+    `None` means the caller expressed no preference and the provider's own
+    default applies. It never means English.
+    """
+
     bpm: int | None = None
     key: str | None = None
     """Musical key/scale, e.g. "C Major", "Am". None lets the model choose."""

@@ -294,7 +294,10 @@ class LyricBrief:
     topic: str
     genre: str
     mood: str = ""
-    language: str = "English"
+    language: str = "en"
+    """Canonical ISO 639-1 code — see `worker/music/language.py`. Never a
+    display name: the writer compares it against what it can write, and
+    "Spanish" vs "es" is exactly the mismatch that comparison must not have."""
     perspective: str = ""
     must_keep: list[str] = field(default_factory=list)
 
@@ -625,6 +628,15 @@ def polish_lyrics(text: str, plan: SongPlan) -> str:
 # ── The writer seam ──────────────────────────────────────────────────────
 
 
+class UnsupportedLyricLanguage(RuntimeError):
+    """A writer was asked for a language it cannot write.
+
+    Deliberately not a soft failure. The caller's options are to pick a writer
+    that can, or to tell the customer — and both need to know it happened,
+    which a returned sheet of English words does not communicate.
+    """
+
+
 class LyricsWriter(Protocol):
     """Whatever actually writes words.
 
@@ -633,6 +645,18 @@ class LyricsWriter(Protocol):
     of them should require changing anything above this line. `notes` carries
     the previous review's complaints, so a second pass is a targeted revision
     rather than a fresh roll of the dice.
+    """
+
+    supported_languages: frozenset[str]
+    """
+    Canonical language codes this writer can actually write in. Empty means
+    "any" — a language model does not need to enumerate them.
+
+    This exists because the honest answer to "write me a chorus in Urdu" from a
+    writer with an English phrasebook is *no*, and the caller needs to be able
+    to ask before it has a sheet of English words in its hand. A writer that
+    answered by writing English anyway is what made the language selector look
+    connected while changing nothing about the song.
     """
 
     async def write(
