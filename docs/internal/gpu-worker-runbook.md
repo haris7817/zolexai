@@ -1807,3 +1807,111 @@ Rollback of the VPS half is a YAML edit, not a redeploy: set
 `settings.prompt_modes: false` in `text-to-video.yaml`, rebuild `api` and
 `web`. The toggle disappears and every in-flight director job still completes,
 because the worker keeps serving the parameter it was already given.
+
+---
+
+## 42. Deploy: automatic lyrics in the customer's language (19 Aug 2026)
+
+`725fcc5` → `6f3c60c` on the GPU node. **Worker-only — the VPS needs nothing.**
+Unlike §39 and §41 there is no second half: no workflow YAML changes, no API or
+web rebuild, no new public `settings` flag. Music is already routed to this box
+(§12), so the release is live the moment the worker restarts.
+
+### 42.1 What it fixes, and how often it was firing
+
+Blank lyrics plus any language but English **failed the job outright**. Not a
+missing feature — a deliberate refusal in `MusicAdapter`, correct in intent
+(English lyrics labelled Spanish is worse than an error) but with nothing
+multilingual behind it.
+
+This was not theoretical. Every non-English music job on this box had failed:
+
+```text
+2026-08-17T14:39:54   lyrics writer cannot write 'es'
+2026-08-17T15:08:58   lyrics writer cannot write 'es'
+2026-08-17T15:21:22   lyrics writer cannot write 'es'
+2026-08-18T12:04:14   lyrics writer cannot write 'es'
+```
+
+Of the music jobs that reached `music_planned`, **six selected Spanish and one
+English**. The feature was failing for the large majority of the people using
+it.
+
+### 42.2 The deploy
+
+```bash
+# key first — the release is inert without it, and adding it after the restart
+# means a second restart
+cp /workspace/zolexai/.env.gpu-worker{,.bak-$(date +%Y%m%d-%H%M%S)}
+printf '\nCEREBRAS_API_KEY=%s\n' "$KEY" >> /workspace/zolexai/.env.gpu-worker
+chmod 600 /workspace/zolexai/.env.gpu-worker
+
+cd /workspace/zolexai && git pull --ff-only
+supervisorctl restart zolexai-worker
+```
+
+Verified after restart:
+
+- `worker_draining` reported `active_jobs: 0` — nothing interrupted.
+- `worker_ready`: `ltx-6000-1`, runtimes `["ltx", "music"]`, all six workflows.
+- The chain resolves in `.venv-worker` as `['cerebras', 'template']`,
+  `available: True`, supported languages **ANY** (empty set = a language model
+  has no list to give). Before the key it was `['en']`.
+- All fourteen offered languages written from the deployed checkout against the
+  live API — `scripts/lyrics_smoke.py`, 0 problems, ~1.5 s median.
+
+Rollback is the previous commit plus a restart; the key can stay, it is inert
+without the code:
+
+```bash
+cd /workspace/zolexai && git checkout 725fcc5
+supervisorctl restart zolexai-worker
+```
+
+### 42.3 `CEREBRAS_API_KEY` is a per-node prerequisite
+
+A node without it does not fail — it **silently reverts to the old behaviour**:
+the chain reports the hosted writer unavailable, falls back to the English-only
+template bank, and refuses every other language exactly as before. That is the
+designed degradation, and it is also the trap: the release looks deployed and
+changes nothing. Check it directly rather than inferring it from the commit:
+
+```bash
+grep -c '^CEREBRAS_API_KEY=.' /workspace/zolexai/.env.gpu-worker   # must be 1
+```
+
+The key is worker-only. It never reaches the browser, job parameters, job
+metadata, or the logs — the logs record latency, token counts and the model
+name, none of which identify the credential.
+
+### 42.4 Two things measured here that documentation would not have told us
+
+**Reasoning tokens are billed against `max_completion_tokens`.** Cerebras serves
+exactly two public models. Both write all fourteen languages — but
+`gpt-oss-120b` spent 386–696 tokens on a hidden reasoning channel against a
+540-token budget and returned **empty content with `finish_reason: stop` and no
+error of any kind**. Nine of fourteen languages "failed" with no diagnosable
+cause until the raw response was dumped. `_REASONING_HEADROOM` in
+`worker/music/cerebras.py` reserves for it. Any reasoning model on any
+OpenAI-shaped API has this trap; the symptom is silence, not an error.
+
+The default is `gemma-4-31b` — it reaches the same result without needing the
+reserve. `CEREBRAS_LYRICS_MODEL` overrides it (`CEREBRAS_AI_MODEL` is accepted
+as an alias, because a deployment already used that name and config that is
+silently ignored is worse than config that is rejected).
+
+**A capitalised word is not a proper noun.** `salient_details` collects every
+capitalised token as a must-keep detail, so "Two people falling in love" made
+`Two` mandatory and the model wedged it verbatim into a Spanish chorus —
+`estamos Two en un baile fiel`. Only visible in a real song; every mocked test
+passed. `singable_details` filters genre words, style words and English number
+words, applied once in the adapter so the writer and the reviewer agree on what
+a detail is.
+
+### 42.5 Gate before telling anyone
+
+One real Music job through zolexai.com with **Lyrics blank** and **Lyrics
+language: Spanish** — ears on it, confirm it sings Spanish. Then one with
+pasted lyrics and one instrumental as the regression checks: neither may call
+the lyrics service at all, and `grep -c cerebras_lyrics_attempt` over that
+window must be `0` for both.
