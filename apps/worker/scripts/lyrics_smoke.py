@@ -47,6 +47,8 @@ from worker.music import (  # noqa: E402
     parse_sections,
     plan_song,
     resolve_language,
+    singable_details,
+    target_lines,
     write_lyrics,
     written_in,
 )
@@ -93,8 +95,17 @@ async def main() -> int:
             failures += 1
             continue
 
+        # Built exactly as `MusicAdapter.run` builds it, filter included. A
+        # smoke test that constructs its brief slightly differently from the
+        # adapter is worse than none: this script reported "Latin" and
+        # "Romantic" wedged into Spanish lyrics that the real path had already
+        # filtered out, which is a bug report about the harness.
         brief = LyricBrief.from_prompt(prompt)
-        brief = dataclasses.replace(brief, language=language.code)
+        brief = dataclasses.replace(
+            brief,
+            language=language.code,
+            must_keep=singable_details(brief.must_keep),
+        )
         plan = plan_song(seconds, genre=brief.genre)
 
         started = time.monotonic()
@@ -127,7 +138,10 @@ async def main() -> int:
             failures += 1
 
         used = getattr(writer, "last_writer", "") or writer_name(writer)
-        note = f"budget {plan.line_budget}, issues {len(review.issues)}"
+        note = (
+            f"target {target_lines(plan)}, budget {plan.line_budget}, "
+            f"{seconds / max(1, lines):.0f}s/line, issues {len(review.issues)}"
+        )
         print(
             f"{language.code:<6} {used:<10} {mark:<8} {lines:<7} {elapsed:<7.0f} {note}"
         )

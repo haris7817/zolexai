@@ -79,6 +79,7 @@ from worker.music.lyrics import (
     LyricBrief,
     LyricsWriteFailed,
     SongPlan,
+    target_lines,
 )
 from worker.music.writer import detect_mood, extract_subject, singable_details
 
@@ -180,6 +181,7 @@ def _user_prompt(brief: LyricBrief, plan: SongPlan, notes: list[str] | None) -> 
     # music model repeats a chorus by itself (observed at 240s on the GPU), so
     # writing it twice would spend the line budget twice for the same words.
     tags = list(dict.fromkeys(s.kind for s in plan.sections if s.carries_words))
+    target = target_lines(plan)
 
     lines = [
         f"LANGUAGE: {language_name}",
@@ -195,11 +197,22 @@ def _user_prompt(brief: LyricBrief, plan: SongPlan, notes: list[str] | None) -> 
         f"MOOD: {brief.mood or detect_mood(brief.topic)}",
         f"SONG LENGTH: {plan.total_seconds:.0f} seconds",
         f"SECTION TAGS, in this order: {' '.join(f'[{tag}]' for tag in tags)}",
-        # The hard ceiling. `review_lyrics` blocks a sheet that exceeds it,
-        # because the music model silently drops the excess rather than
-        # compressing it — the customer's verses simply do not get sung.
-        f"TOTAL SUNG LINES: at most {plan.line_budget} across the whole song",
-        f"LINES PER SECTION: about {plan.lines_per_section}",
+        # A TARGET and a ceiling, not a ceiling alone. Given only "at most 9"
+        # and "about 2 per section", a model multiplies the two smallest
+        # numbers it was given and stops — three sections, six lines, and a
+        # two-minute song that is mostly instrumental. Observed in production
+        # on the first real Spanish track (job 08f7c37d, 2026-08-19): budget 9,
+        # sheet 6 lines, which is one line per 20s and sits in the band the GPU
+        # measured as "82-second instrumental intro plus wordless padding".
+        #
+        # The ceiling still matters in the other direction — `review_lyrics`
+        # blocks a sheet that exceeds it, because the music model drops the
+        # excess silently rather than compressing it.
+        f"TOTAL SUNG LINES: write {target} lines across the whole song. "
+        f"Not fewer than {max(2, target - 1)}, and never more than "
+        f"{plan.line_budget}.",
+        f"LINES PER SECTION: at least 2. Spread the {target} lines across the "
+        f"{len(tags)} sections above, giving the chorus the most.",
     ]
     if brief.perspective:
         lines.append(f"PERSPECTIVE: {brief.perspective}")

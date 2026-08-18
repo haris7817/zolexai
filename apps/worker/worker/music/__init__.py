@@ -37,6 +37,7 @@ from worker.music.lyrics import (
     review_lyrics,
     rhyme_key,
     salient_details,
+    target_lines,
     write_lyrics,
 )
 from worker.music.provider import (
@@ -91,6 +92,7 @@ __all__ = [
     "rhyme_key",
     "salient_details",
     "singable_details",
+    "target_lines",
     "write_lyrics",
     "written_in",
 ]

@@ -31,6 +31,7 @@ from worker.music import (
     LyricsWriteFailed,
     NoLyricsWriterAvailable,
     plan_song,
+    target_lines,
 )
 from worker.music.cerebras import CerebrasLyricsWriter
 from worker.music.fallback import FallbackLyricsWriter
@@ -514,8 +515,31 @@ async def test_the_line_budget_the_model_is_given_tracks_the_songs_length(
     await writer(cerebras(seen=seen)).write(brief, plan)
 
     user = seen["requests"][0]["messages"][1]["content"]
-    assert f"at most {plan.line_budget}" in user
+    # A target AND a ceiling. The ceiling alone is what produced a six-line
+    # two-minute song in production: given only a maximum and a per-section
+    # minimum, the model multiplies the two smallest numbers it was handed.
+    assert f"write {target_lines(plan)} lines" in user
+    assert f"never more than {plan.line_budget}" in user
     assert f"{seconds:.0f} seconds" in user
+
+
+@pytest.mark.parametrize("seconds", [60.0, 120.0, 180.0, 300.0])
+async def test_the_target_sits_inside_the_measured_density_band(
+    seconds: float,
+) -> None:
+    """The band is bounded on both sides, and both bounds were paid for.
+
+    Too many lines and the music model drops some without saying which; too
+    few and it pads with instrumental, which a customer hears as "there are no
+    lyrics". 13s/line is the ceiling, and one line per 20s was measured as
+    wordless padding — so the target has to land between them.
+    """
+    _, plan = brief_and_plan("es", seconds)
+    target = target_lines(plan)
+
+    assert target <= plan.line_budget, "never denser than the model will sing"
+    assert seconds / target <= 20.0, "sparser than this pads with instrumental"
+    assert target >= 4, "fewer lines than this is a loop, not a song"
 
 
 async def test_a_longer_song_is_asked_for_more_words_than_a_short_one() -> None:

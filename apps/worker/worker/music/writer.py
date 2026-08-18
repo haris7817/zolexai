@@ -48,6 +48,7 @@ from worker.music.lyrics import (
     LyricBrief,
     SongPlan,
     UnsupportedLyricLanguage,
+    target_lines,
 )
 
 logger = get_logger(__name__)
@@ -124,7 +125,9 @@ _STYLE_WORDS = frozenset(
     techno trance dubstep drill grime afro amapiano bollywood qawwali ghazal
     orchestral symphonic classical baroque opera choir anthem ballad
     christmas holiday lofi chillhop trap hardstyle
-    one two three four five six seven eight nine ten"""
+    one two three four five six seven eight nine ten
+    warm cool husky raspy breathy sultry silky airy crisp punchy lush mellow
+    groovy atmospheric minimal vintage retro layered polished raw"""
     .split()
 )
 
@@ -414,8 +417,13 @@ class TemplateLyricsWriter:
         return sheet
 
     def _target_lines(self, plan: SongPlan) -> int:
-        by_density = round(plan.total_seconds / _TARGET_SECONDS_PER_LINE)
-        return min(plan.line_budget, max(_MINIMUM_LINES, by_density))
+        """Delegates, so this writer and the hosted one aim at one number.
+
+        The figure moved to `lyrics.py` when the hosted writer needed it too:
+        two writers deriving "how long should this song's words be" from two
+        constants is how they drift apart.
+        """
+        return target_lines(plan)
 
     # ── Details ──────────────────────────────────────────────────────────
 

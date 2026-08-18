@@ -153,6 +153,32 @@ def line_budget(total_seconds: float, seconds_per_line: float | None = None) -> 
     return max(2, int(total_seconds / max(1.0, per_line)))
 
 
+#: The density a writer should AIM for, as seconds of song per sung line.
+#:
+#: Distinct from `_SECONDS_PER_LINE` above, and both are needed. That one is the
+#: ceiling — the densest sheet the model will sing without silently dropping
+#: lines. This one is the target, and it exists because the band is bounded on
+#: BOTH sides: at 120s, 9 lines sang everything, and 5 lines produced an
+#: 82-second instrumental intro. A writer told only "at most 9" writes 6 and
+#: the song is half wordless, which reads to a customer as "lyrics not present"
+#: just as surely as no lyrics at all.
+_TARGET_SECONDS_PER_LINE = 16.0
+
+#: Fewer lines than this is a loop, not a song, whatever the duration.
+_MINIMUM_LINES = 4
+
+
+def target_lines(plan: SongPlan) -> int:
+    """How many sung lines a writer should actually aim to produce.
+
+    Sits inside the measured band from both directions: dense enough that
+    vocals arrive early and the song does not pad, sparse enough that nothing
+    gets dropped. Never exceeds the plan's own ceiling.
+    """
+    by_density = round(plan.total_seconds / _TARGET_SECONDS_PER_LINE)
+    return min(plan.line_budget, max(_MINIMUM_LINES, by_density))
+
+
 @dataclass(frozen=True)
 class LyricFit:
     """Whether a lyric sheet fits the time available."""
