@@ -33,6 +33,13 @@ from worker.media.ffmpeg import (
     tools_available,
 )
 from worker.media.frames import extract_final_frame, extract_frames_at, normalize_clip
+from worker.media.masks import (
+    BACKGROUND_ATTENTION,
+    build_attention_mask,
+    build_hybrid_control,
+    build_person_matte,
+    extract_source_window,
+)
 from worker.media.probe import MediaInfo, probe_media
 from worker.media.segments import (
     Segment,
@@ -47,6 +54,7 @@ from worker.media.validate import (
 )
 
 __all__ = [
+    "BACKGROUND_ATTENTION",
     "DEFAULT_EDGE_HIGH",
     "DEFAULT_EDGE_LOW",
     "AudioMode",
@@ -56,6 +64,9 @@ __all__ = [
     "Segment",
     "audio_envelope",
     "audio_onsets",
+    "build_attention_mask",
+    "build_hybrid_control",
+    "build_person_matte",
     "concat_segments",
     "crossfade_concat",
     "detect_onsets",
@@ -63,6 +74,7 @@ __all__ = [
     "extract_edge_control",
     "extract_final_frame",
     "extract_frames_at",
+    "extract_source_window",
     "ffmpeg",
     "ffmpeg_stdout",
     "ffprobe_json",

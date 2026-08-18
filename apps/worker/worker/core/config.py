@@ -12,6 +12,7 @@ key.
 
 from __future__ import annotations
 
+import shlex
 import tempfile
 from functools import lru_cache
 from pathlib import Path
@@ -188,6 +189,19 @@ class WorkerSettings(BaseSettings):
 
     ltx_model_dir: Path | None = None
     """Model weights root. Defaults to `<ltx_repo_dir>/models/ltx-2.5`."""
+
+    person_matte_command: str = ""
+    """
+    How to invoke person matting, which produces the mask behind
+    `execution.v2v_person_lock`. Empty means "the script shipped in this
+    checkout, run in the LTX environment" — see `person_matte_argv`.
+
+    A command rather than an import for the same reason the pipelines are: the
+    matting model needs torch and CUDA, and this worker deliberately has
+    neither. It runs in the LTX environment (`ltx_repo_dir` is the working
+    directory) and speaks a small, stable CLI, so the segmentation model behind
+    it can be replaced without touching a line of worker code.
+    """
 
     ltx_quantization: str = "nvfp4-prequant"
     """
@@ -370,6 +384,22 @@ class WorkerSettings(BaseSettings):
     @property
     def ltx_models_root(self) -> Path:
         return self.ltx_model_dir or self.ltx_repo_dir / "models" / "ltx-2.5"
+
+    @property
+    def person_matte_argv(self) -> list[str]:
+        """The matting command, as argv.
+
+        Defaults to the script shipped beside this package, invoked through the
+        LTX environment's interpreter. Resolving the path from the worker's own
+        location rather than naming an installed module is deliberate: the
+        script travels with this checkout, so a node that has pulled the worker
+        has the matter, and enabling person lock needs no separate file to be
+        copied anywhere. Overridable for a node that keeps it elsewhere.
+        """
+        if self.person_matte_command:
+            return shlex.split(self.person_matte_command)
+        script = Path(__file__).resolve().parents[2] / "scripts" / "person_matte.py"
+        return ["uv", "run", "python", str(script)]
 
 
 @lru_cache(maxsize=1)

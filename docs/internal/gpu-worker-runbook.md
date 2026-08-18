@@ -1628,3 +1628,50 @@ YAML and each is a separate pricing/quality decision. The worker at `dad546b`
 already serves all three paths, so later activations are YAML-only. Gate after
 the rebuild: one real video-to-video job through zolexai.com, eyes on the
 result.
+
+## 40. Person lock: what a GPU node needs before the flag can be enabled
+
+`execution.v2v_person_lock` (video-to-video) mattes the people in each pass and
+carries their own pixels through the restyle, so a customer's subject stops
+coming back with a different face and a different skin tone. The worker code
+ships with the checkout; the **model environment needs three packages**, once
+per node:
+
+```bash
+cd /workspace/ltx2-benchmark
+uv pip install kornia timm transformers
+```
+
+`transformers` pulls the matting model (`ZhengPeng7/BiRefNet`, MIT) from
+HuggingFace on first use and caches it; `kornia` and `timm` are its own
+imports and it fails on them at load time without them. Verify the whole path
+without touching a workflow — this is the matter's CLI, run exactly the way the
+worker runs it:
+
+```bash
+cd /workspace/ltx2-benchmark
+uv run python /workspace/zolexai/apps/worker/scripts/person_matte.py \
+  --source <any clip>.mp4 --dest /tmp/matte.mp4 \
+  --start-seconds 0 --duration-seconds 8.04 \
+  --width 1024 --height 576 --fps 24 --frames 193
+ffprobe -v error -show_entries stream=width,height,nb_frames \
+  -of csv=p=0 /tmp/matte.mp4     # must be exactly 1024,576,193
+```
+
+Those three numbers are the whole contract: the matte is merged with the edge
+map frame for frame, so a matte of a different size or length protects the
+wrong pixels rather than simply protecting fewer.
+
+**No file needs copying anywhere.** The worker resolves the script from its own
+checkout (`settings.person_matte_argv`), so a node that has pulled the worker
+already has the matter. `PERSON_MATTE_COMMAND` overrides it for a node that
+keeps the script elsewhere.
+
+**Cost, measured 18 Aug 2026** at 1024x576, 193-frame pass: 61s against the
+edge-only path's ~54, plus the matting pass itself (~40s on this card for 193
+frames). Call it a third more wall-clock per section.
+
+**Still to prove before enabling it in a workflow:** the whole path has been
+verified on ONE 8-second window. A chained multi-pass job, several people in
+frame, occlusion and fast motion are all unmeasured, and the matter's behaviour
+in those cases decides whether the seam is invisible or obvious.

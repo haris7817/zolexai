@@ -128,6 +128,7 @@ from worker.longform import (
     structure_prompt,
 )
 from worker.media import (
+    BACKGROUND_ATTENTION,
     DEFAULT_EDGE_HIGH,
     DEFAULT_EDGE_LOW,
     AudioMode,
@@ -135,11 +136,15 @@ from worker.media import (
     MediaInfo,
     OutputExpectation,
     audio_onsets,
+    build_attention_mask,
+    build_hybrid_control,
+    build_person_matte,
     concat_segments,
     duration_tolerance,
     extract_edge_control,
     extract_final_frame,
     extract_frames_at,
+    extract_source_window,
     ffmpeg,
     mux_audio,
     normalize_clip,
@@ -628,6 +633,26 @@ class ControlConditioning:
 
     def as_args(self) -> list[str]:
         return ["--video-conditioning", str(self.path), str(round(self.strength, 3))]
+
+
+@dataclass(frozen=True)
+class MaskConditioning:
+    """One `--conditioning-attention-mask PATH STRENGTH` pair.
+
+    A per-region weight on the control signal: white follows it fully, black
+    ignores it. This is how a restyle is told to reproduce the subject from
+    their own pixels while leaving the scene free — see `worker.media.masks`.
+    """
+
+    path: Path
+    strength: float
+
+    def as_args(self) -> list[str]:
+        return [
+            "--conditioning-attention-mask",
+            str(self.path),
+            str(round(self.strength, 3)),
+        ]
 
 
 @dataclass(frozen=True)
@@ -1226,6 +1251,12 @@ class LtxAdapter:
         final frame, and the source's own audio goes back on whole at the end.
         """
         await reporter.probing("Reading your video…")
+        # `execution.v2v_person_lock` carries the subject's OWN pixels inside a
+        # tracked matte, so a restyle stops inventing a new face and a new skin
+        # tone for a person the prompt never asked to change. Off unless a
+        # workflow says otherwise: it adds a matting pass per section, and the
+        # existing engine is what has been serving customers.
+        person_lock = bool(job.execution.get("v2v_person_lock"))
         strength = job.execution_float("v2v_control_strength", _V2V_CONTROL_STRENGTH)
         lora_strength = job.execution_float("v2v_lora_strength", _V2V_LORA_STRENGTH)
         continuity = job.execution_float("v2v_continuity_strength", _V2V_CONTINUITY_STRENGTH)
@@ -1268,7 +1299,37 @@ class LtxAdapter:
                     high=high,
                 ),
             )
+            if not person_lock:
+                return ControlConditioning(path, strength)
+            path = await self._person_locked_control(
+                job, staged, path, step=step, frames=frames, grid=grid
+            )
             return ControlConditioning(path, strength)
+
+        async def attention(step: ChainStep, frames: int) -> MaskConditioning | None:
+            """Weight the subject's region above the rest of the frame.
+
+            Only reachable under person lock: without a matte there is no
+            region to weight, and a mask of all one value is a slower way of
+            saying nothing.
+            """
+            if not person_lock:
+                return None
+            matte = job.workspace / f"matte-{step.index:04d}.mp4"
+            if not matte.exists():
+                return None
+            weights = await cancellable(
+                job,
+                build_attention_mask(
+                    matte,
+                    job.workspace / f"attention-{step.index:04d}.mp4",
+                    frames=frames,
+                    background=job.execution_float(
+                        "v2v_background_attention", BACKGROUND_ATTENTION
+                    ),
+                ),
+            )
+            return MaskConditioning(weights, 1.0)
 
         # The tighter of the grid's distilled ceiling and the transform tier's
         # own measured pass length. The former exists so an unmeasured grid
@@ -1291,6 +1352,7 @@ class LtxAdapter:
                 pipeline=_IC_LORA,
                 loras=(lora,),
                 control=control,
+                mask=attention,
             ),
             reporter=reporter,
             prefix="transformed",
@@ -1774,6 +1836,75 @@ class LtxAdapter:
         # quietly removed by making the ceiling per-shape.
         return max(1.0, min(requested, float(settings.ltx_max_seconds), measured))
 
+    async def _person_locked_control(
+        self,
+        job: AdapterJob,
+        staged: Path,
+        edges: Path,
+        *,
+        step: ChainStep,
+        frames: int,
+        grid: tuple[int, int],
+    ) -> Path:
+        """An edge map carrying the subject's real pixels inside their matte.
+
+        The transform engine's whole premise is that edges keep the geometry
+        and discard the look — which is right for the scene and wrong for the
+        person standing in it, because a face and a skin tone are exactly the
+        "look" a customer expects to survive a change of weather.
+
+        So the person is cut back in: matte the window, take the source's own
+        pixels for it, and merge them into the edge map where the matte says
+        the subject is. Everything outside stays an outline and is re-imagined
+        as before. Measured 2026-08-18 — the same man, relit for the new scene,
+        for about seven seconds of extra work per pass.
+
+        Every clip here is built at the pass's grid, rate and ACTUAL frame
+        count, because the merge is frame-for-frame and a misalignment would
+        protect the wrong pixels rather than simply protect less.
+        """
+        index = step.index
+        matte = await cancellable(
+            job,
+            build_person_matte(
+                staged,
+                job.workspace / f"matte-{index:04d}.mp4",
+                start_seconds=step.segment.start_seconds,
+                duration_seconds=step.seconds,
+                width=grid[0],
+                height=grid[1],
+                fps=float(settings.ltx_frame_rate),
+                frames=frames,
+            ),
+        )
+        footage = await cancellable(
+            job,
+            extract_source_window(
+                staged,
+                job.workspace / f"window-{index:04d}.mp4",
+                start_seconds=step.segment.start_seconds,
+                duration_seconds=step.seconds,
+                width=grid[0],
+                height=grid[1],
+                fps=float(settings.ltx_frame_rate),
+                frames=frames,
+            ),
+        )
+        return await cancellable(
+            job,
+            build_hybrid_control(
+                edges,
+                footage,
+                matte,
+                job.workspace / f"hybrid-{index:04d}.mp4",
+                frames=frames,
+                # False keeps the PERSON. Inverting keeps the scene and frees
+                # the subject's region, which is what a future person
+                # REPLACEMENT needs — the same builder, the other side.
+                invert=False,
+            ),
+        )
+
     def _audio_pass_seconds(self, job: AdapterJob) -> float:
         """The pass ceiling for the AUDIO tier, which is its own measurement.
 
@@ -1832,6 +1963,7 @@ class LtxAdapter:
         pipeline: LtxPipeline = _DISTILLED,
         loras: Sequence[LoraSpec] = (),
         control=None,
+        mask=None,
         audio=None,
         skip_stage_2: bool = False,
     ) -> RenderStep:
@@ -1917,6 +2049,12 @@ class LtxAdapter:
             control_item = control(step, frames) if control else None
             if asyncio.iscoroutine(control_item):
                 control_item = await control_item
+            # After the control clip, never before: the mask is built from the
+            # same matte that control step produced, and asking for it first
+            # would race a file that does not exist yet.
+            mask_item = mask(step, frames) if mask else None
+            if asyncio.iscoroutine(mask_item):
+                mask_item = await mask_item
             audio_item = audio(step, frames) if audio else None
             if asyncio.iscoroutine(audio_item):
                 audio_item = await audio_item
@@ -1937,6 +2075,7 @@ class LtxAdapter:
                     pipeline=pipeline,
                     loras=loras,
                     control=control_item,
+                    mask=mask_item,
                     audio=audio_item,
                     skip_stage_2=skip_stage_2,
                 ),
@@ -2008,6 +2147,7 @@ class LtxAdapter:
         pipeline: LtxPipeline = _DISTILLED,
         loras: Sequence[LoraSpec] = (),
         control: ControlConditioning | None = None,
+        mask: MaskConditioning | None = None,
         audio: AudioConditioning | None = None,
         skip_stage_2: bool = False,
     ) -> list[str]:
@@ -2088,6 +2228,8 @@ class LtxAdapter:
             cmd += lora.as_args()
         if control is not None:
             cmd += control.as_args()
+        if mask is not None:
+            cmd += mask.as_args()
         if audio is not None:
             cmd += audio.as_args()
         if skip_stage_2:

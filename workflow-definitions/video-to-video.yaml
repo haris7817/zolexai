@@ -129,6 +129,39 @@ execution:
   # node; a node without it refuses these jobs before spending any GPU time
   # rather than rendering an unconditioned pass nobody asked for.
 
+  # ── Person lock (OFF — awaiting a full-length validation) ───────────────
+  #
+  # v2v_person_lock: true
+  #
+  # An edge map says WHERE a face is and nothing about whose it is, so a
+  # restyle invents a new one — different features, a different skin tone —
+  # even when the prompt never asked for a different person. Reported as
+  # "the person looks slightly changed from the source video", and it is not
+  # a tuning problem: continuity strength was swept at 0.85 / 0.95 / 1.0 on
+  # 18 Aug 2026 and all three drifted identically, because appearance is not
+  # what that dial controls.
+  #
+  # With this on, each pass mattes the people in its own window (BiRefNet,
+  # MIT-licensed, run in the GPU environment), carries THEIR OWN PIXELS
+  # inside the matte and keeps the edge map everywhere else, and weights the
+  # subject's region above the rest with the pipeline's native attention
+  # mask. The model then reproduces the person from their own appearance and
+  # relights them for the new scene.
+  #
+  # Measured 18 Aug 2026, 8s window at 1024x576: face, skin tone, hair, beard
+  # and the bird's real plumage all survived a dusk blizzard — 61s against the
+  # edge-only path's ~54, so roughly 13% more compute for the pass plus the
+  # matting itself.
+  #
+  #   v2v_background_attention:  how much the edge map still steers everything
+  #                              that is not the subject (default 0.5 — toward
+  #                              0 restyles harder and loses the camera,
+  #                              toward 1 re-imposes the source everywhere)
+  #
+  # Requires the matting model on the node. NOT YET ENABLED: proven on one
+  # 8-second window, not across a chained multi-pass job, and the matte's
+  # behaviour on several people, occlusion and fast motion is unmeasured.
+
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines
   # describe what the current runtime actually writes, and the API signs the
