@@ -1675,3 +1675,135 @@ frames). Call it a third more wall-clock per section.
 verified on ONE 8-second window. A chained multi-pass job, several people in
 frame, occlusion and fast motion are all unmeasured, and the matter's behaviour
 in those cases decides whether the seam is invisible or obvious.
+
+## 41. Deploy: Director / Idea mode for Text to Video (18 Aug 2026)
+
+`201a0de` → `0a1025f` on the GPU node. Same two-half shape as §38 and §39,
+with one difference worth stating plainly: **this release's activation switch
+is a public `settings` flag, not a private `execution` key.** The worker half
+is inert without it — the API refuses `prompt_mode` on any workflow whose
+served definition lacks `settings.prompt_modes`, so until the image is
+rebuilt the feature is not merely unrouted, it is unreachable and invisible.
+
+Research and every measurement behind it:
+[`research-2026-08-18-director-idea-mode.md`](./research-2026-08-18-director-idea-mode.md).
+
+### 41.1 The GPU half (done)
+
+```bash
+cd /workspace/zolexai && git pull --ff-only
+supervisorctl restart zolexai-worker
+```
+
+Verified after restart:
+
+- `worker_draining` reported `active_jobs: 0` — nothing interrupted. (A
+  customer image-to-video job had completed nine minutes earlier; this node
+  is serving real traffic, so the drain check is not a formality.)
+- `worker_ready`: `ltx-6000-1`, runtimes `["ltx", "music"]`, all six workflows.
+- `worker.director` imports in `.venv-worker`; `settings.director_gemma_root`
+  resolves to an existing directory.
+- **End-to-end through the real adapter on the real GPU**, from the deployed
+  checkout: a text-to-video job with `prompt_mode: director` planned a scene
+  locally and rendered it with spoken dialogue — see §41.3.
+
+Rollback is the previous commit plus a restart:
+
+```bash
+cd /workspace/zolexai && git checkout 201a0de
+supervisorctl restart zolexai-worker
+```
+
+### 41.2 The planner checkpoint is a per-node prerequisite
+
+Director mode plans with a **generative** Gemma instruct checkpoint — the one
+LTX 2.5 names as its own prompt enhancer, Apache 2.0, so one download serves
+both roles. It is NOT part of the LTX weight set fetched in §34.1 and a node
+without it fails every director job (and only director jobs):
+
+```bash
+export HF_XET_HIGH_PERFORMANCE=1
+hf download google/gemma-4-e2b-it \
+  --local-dir /workspace/ltx2-benchmark/models/gemma-4-e2b-it   # ~10 GB
+```
+
+`DIRECTOR_GEMMA_DIR` overrides the location; `DIRECTOR_PLANNER_COMMAND`
+overrides the whole invocation. The planner runs in the LTX environment
+(`transformers` + `torch` already live there — nothing new to install) and
+exits before the render starts, so its ~10.3 GB never stacks on a render peak.
+
+### 41.3 Measured on this node
+
+| | |
+|---|---|
+| Planning (subprocess, incl. model load) | ~35–45 s per job |
+| Planner peak VRAM | 10.3 GB, released before rendering |
+| 20 s director video, end to end | ~78 s |
+| 30 s | ~112 s |
+| 60 s (two chained sections) | ~203 s |
+
+All on the distilled tier — **the guided tier is not involved and must not be
+enabled for this feature**; its 5 s pass ceiling would chop a conversation
+into twelve seams.
+
+### 41.4 The VPS half (owner-performed) — what actually turns it on
+
+The VPS checkout carries the deliberate uncommitted `runtime: mock` → `ltx`
+edits (§16), and this push touches `text-to-video.yaml`, so a bare
+`git pull --ff-only` will refuse. The sequence that preserves the routing is
+§39's:
+
+```bash
+cd /opt/zolexai
+runuser -u zolexai -- git stash
+runuser -u zolexai -- git pull --ff-only    # → 0a1025f (or later)
+runuser -u zolexai -- git stash pop         # re-applies the runtime flips;
+                                            #   this release only ADDS a
+                                            #   settings key, so it merges clean
+runuser -u zolexai -- git status            # expect the same three YAMLs
+                                            #   modified, nothing else
+```
+
+Then the §14 image rebuild, because the API bakes `workflow-definitions/` in
+(no migrations — this release has no schema changes):
+
+```bash
+cd /opt/zolexai
+COMPOSE="docker compose \
+  --env-file /opt/zolexai/.env \
+  -f infrastructure/compose/docker-compose.prod.yml"
+
+$COMPOSE build api web
+$COMPOSE up -d --no-deps --force-recreate api web
+sleep 8
+$COMPOSE ps api web
+curl -sS http://127.0.0.1:8100/api/v1/health
+```
+
+**`web` is rebuilt too, and that is not optional here.** The frontend renders
+the mode toggle from its own build-time read of the YAML
+(`catalog.server.ts`), and it seeds the client query cache from that read — a
+web image built before this commit would ship `prompt_modes: false` to every
+browser and the API's correct answer would never displace the stale seed.
+That is exactly how `settings.lyrics` shipped wrong on 17 Aug.
+
+Verify the switch actually flipped — inside the container, not on disk:
+
+```bash
+docker exec zolexai-prod-api-1 grep -n -A8 '^settings:' \
+  /workflow-definitions/text-to-video.yaml     # must show prompt_modes: true
+
+curl -sS http://127.0.0.1:8100/api/v1/workflows \
+  | python3 -c 'import json,sys; print([w["settings"] for w in json.load(sys.stdin)["workflows"] if w["id"]=="text-to-video"])'
+                                               # must contain prompt_modes: True
+```
+
+Gate before telling anyone: one real Text to Video job through zolexai.com in
+**Idea (Director)** mode, and one in **Standard** — with sound on, eyes and
+ears on both. Standard is the regression check; its request is byte-identical
+to what it was before this release.
+
+Rollback of the VPS half is a YAML edit, not a redeploy: set
+`settings.prompt_modes: false` in `text-to-video.yaml`, rebuild `api` and
+`web`. The toggle disappears and every in-flight director job still completes,
+because the worker keeps serving the parameter it was already given.
