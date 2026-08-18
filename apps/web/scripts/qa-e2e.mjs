@@ -194,10 +194,10 @@ try {
   // upload box and the user had to download their own generation and upload
   // it back — which a missing file extension also made impossible.
   console.log("\n8b. Extend receives the result as its source");
-  const media = await (await fetch(`${API}/api/v1/media?kind=video&source=generated&limit=1`, {
+  const library = await (await fetch(`${API}/api/v1/media?kind=video&source=generated&limit=1`, {
     headers: { cookie: (await context.cookies()).map((c) => `${c.name}=${c.value}`).join("; ") },
   })).json();
-  const sourceAsset = media.items?.[0];
+  const sourceAsset = library.items?.[0];
   if (!sourceAsset) {
     check("a generated video exists to extend", false, "no generated video in the library");
   } else {
