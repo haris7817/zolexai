@@ -253,9 +253,15 @@ def _camera_sentence(camera: str) -> str:
     return f"{article} {shot} frames the moment as the camera {move}."
 
 
+#: A move phrase that already has its own verb needs no "makes a" in front of
+#: it. An optional leading adverb is part of the match because planners write
+#: sequenced moves ("then cuts to a medium shot"), and treating one of those as
+#: a noun phrase produced "as the camera makes a then cuts to…" (TC3, 18 Aug).
 _MOVE_VERBS = re.compile(
-    r"^(?:pans?|pushes|pulls?|tilts?|tracks?|dollies|zooms?|moves?|drifts?|"
-    r"glides?|circles?|rises?|descends?|follows?|holds?|remains?|stays?)\b",
+    r"^(?:(?:and\s+|then\s+|slowly\s+|briefly\s+|before\s+)*)"
+    r"(?:pans?|pushes|pulls?|tilts?|tracks?|dollies|zooms?|moves?|drifts?|"
+    r"glides?|circles?|rises?|descends?|follows?|holds?|remains?|stays?|"
+    r"cuts?|switches|shifts?|settles?|reframes?)\b",
     re.IGNORECASE,
 )
 

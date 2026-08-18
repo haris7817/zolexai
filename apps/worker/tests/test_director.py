@@ -300,6 +300,19 @@ def test_an_empty_section_holds_the_scene_without_inventing_events() -> None:
     assert "no one speaks" in second
 
 
+def test_a_move_phrase_that_already_has_a_verb_keeps_it() -> None:
+    """Planners write moves both ways. A noun phrase gets a verb supplied; a
+    phrase that already has one — including a sequenced "then cuts to …" —
+    must not collect a second ("makes a then cuts to a medium shot")."""
+    events = raw_plan()["timeline"]
+    events[0]["camera"] = "medium shot, subtle push-in"
+    events[1]["camera"] = "close-up, then cuts to a medium shot of both"
+    [caption] = compile_section_prompts(parsed(timeline=events), 1, total_seconds=12.0)
+    assert "camera makes a subtle push-in" in caption
+    assert "camera then cuts to a medium shot of both" in caption
+    assert "makes a then" not in caption
+
+
 def test_character_ids_leaking_into_prose_are_humanised() -> None:
     events = raw_plan()["timeline"]
     events[1]["camera"] = "close-up on chief, static"
