@@ -637,6 +637,34 @@ class UnsupportedLyricLanguage(RuntimeError):
     """
 
 
+class LyricsWriteFailed(RuntimeError):
+    """A writer ran and could not produce a usable sheet.
+
+    Distinct from `UnsupportedLyricLanguage`, which is a writer declining
+    before it starts. This one means it tried: the service was unreachable,
+    rate-limited, badly configured, or it answered in the wrong language.
+
+    `retriable` records which kind, and it is for the *writer's own* retry
+    budget rather than the job's — a chain of writers moves on to the next one
+    either way. It exists so that a revoked API key is not retried three times
+    before the fallback is reached.
+    """
+
+    def __init__(self, detail: str, *, retriable: bool = True) -> None:
+        self.retriable = retriable
+        super().__init__(detail)
+
+
+class NoLyricsWriterAvailable(RuntimeError):
+    """Every configured writer refused or failed.
+
+    The end of the chain, and deliberately not a quiet return of `None`: an
+    empty sheet is how the music model is told to make an instrumental, so
+    silently returning nothing here would deliver a wordless track to someone
+    who asked for a song with words.
+    """
+
+
 class LyricsWriter(Protocol):
     """Whatever actually writes words.
 

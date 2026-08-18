@@ -23,6 +23,8 @@ Usage:
     python scripts/music_smoke.py an upbeat pop song about summer
     DURATION=3m python scripts/music_smoke.py a slow piano ballad about leaving
     LYRICS=/path/to/lyrics.txt python scripts/music_smoke.py …
+    LYRICS_LANGUAGE=Spanish python scripts/music_smoke.py romantic latin pop …
+    INSTRUMENTAL=1 python scripts/music_smoke.py a calm lo-fi study beat
     ACESTEP_BASE_URL=http://127.0.0.1:8001 python scripts/music_smoke.py …
     MAX_SEGMENT_SECONDS=30 python scripts/music_smoke.py …   # force sectioning
 
@@ -61,6 +63,11 @@ async def main() -> int:
             parameters[key] = os.environ[name]
     if os.getenv("INSTRUMENTAL"):
         parameters["instrumental"] = True
+    # The language the vocals are SUNG in, and — when the lyrics box is left
+    # empty — the language they are WRITTEN in. Accepts either representation
+    # the platform speaks, a display name ("Spanish") or a code ("es").
+    if os.getenv("LYRICS_LANGUAGE"):
+        parameters["lyrics_language"] = os.environ["LYRICS_LANGUAGE"]
 
     lyrics_file = os.getenv("LYRICS")
     if lyrics_file:

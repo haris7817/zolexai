@@ -66,21 +66,40 @@ from worker.music import (
     MusicGenerationProvider,
     MusicRequest,
     MusicTake,
+    NoLyricsWriterAvailable,
     ProviderGenerationError,
     ProviderUnavailable,
     SongPlan,
     UnknownLanguage,
+    UnsupportedLyricLanguage,
     check_lyric_fit,
+    offered,
     plan_song,
     resolve_language,
+    singable_details,
     write_lyrics,
 )
+from worker.music.fallback import is_available
 
 logger = get_logger(__name__)
 
 #: Sections are compared by content hash. Two identical sections mean the
 #: provider ignored its per-section input, and the result would be a loop.
 _DUPLICATE_CHECK_MINIMUM_SECTIONS = 2
+
+
+#: Display names for the codes a writer reports it can handle, so a refusal
+#: names "English" rather than "en". Sourced from the language catalogue rather
+#: than written out again, because two lists of language names is how they
+#: start disagreeing.
+_LANGUAGE_NAMES = {language.code: language.name for language in offered()}
+
+
+def _english_list(items: list[str]) -> str:
+    """"a", "a and b", "a, b and c" — for a sentence a customer reads."""
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
 class MusicAdapter:
@@ -125,6 +144,15 @@ class MusicAdapter:
 
         # ── Plan the song before asking for a note of it ─────────────
         brief = LyricBrief.from_prompt(job.prompt)
+        # Applied HERE, once, so the writer and the reviewer agree on what a
+        # detail is. `salient_details` collects every capitalised word, which
+        # includes the sentence's first — "Two people falling in love" yields
+        # "Two", and a writer told to keep it verbatim wedges an English word
+        # into a Spanish chorus. Filtering in only one of the two places would
+        # instead have the reviewer demand a word the writer was told to drop.
+        brief = dataclasses.replace(
+            brief, must_keep=singable_details(brief.must_keep)
+        )
         language = self._language_for(job)
         if language is not None:
             brief = dataclasses.replace(brief, language=language.code)
@@ -229,16 +257,35 @@ class MusicAdapter:
         if self._writer is not None:
             return self._writer
 
-        choice = (settings.music_lyrics_writer or "").strip().lower()
-        if choice == "template":
-            from worker.music.writer import TemplateLyricsWriter
+        from worker.music.fallback import FallbackLyricsWriter
 
-            self._writer = TemplateLyricsWriter()
-        elif choice:
-            logger.warning(
-                "unknown_lyrics_writer",
-                extra={"configured": choice, "known": ["template"]},
-            )
+        names = [
+            name.strip().lower()
+            for name in (settings.music_lyrics_writer or "").split(",")
+            if name.strip()
+        ]
+        writers: list[LyricsWriter] = []
+        for name in names:
+            if name == "template":
+                from worker.music.writer import TemplateLyricsWriter
+
+                writers.append(TemplateLyricsWriter())
+            elif name == "cerebras":
+                from worker.music.cerebras import CerebrasLyricsWriter
+
+                writers.append(CerebrasLyricsWriter())
+            else:
+                logger.warning(
+                    "unknown_lyrics_writer",
+                    extra={"configured": name, "known": ["cerebras", "template"]},
+                )
+
+        if not writers:
+            return None
+        # A single configured writer is returned unwrapped, so that a
+        # deployment naming exactly one writer behaves — and logs — precisely
+        # as it did before the chain existed.
+        self._writer = writers[0] if len(writers) == 1 else FallbackLyricsWriter(writers)
         return self._writer
 
     # ── Language ─────────────────────────────────────────────────────────
@@ -304,7 +351,25 @@ class MusicAdapter:
         writer = self._resolve_writer()
         self._refuse_a_language_the_writer_cannot_write(writer, brief, plan)
 
-        written = await write_lyrics(brief, plan, writer)
+        try:
+            written = await write_lyrics(brief, plan, writer)
+        except (NoLyricsWriterAvailable, UnsupportedLyricLanguage) as exc:
+            # Every writer that could have served this language has been tried
+            # and none produced a sheet. Failing here is the instruction: the
+            # alternative is an empty sheet, and an empty sheet is how the music
+            # model is told to make an INSTRUMENTAL — so a silent return would
+            # hand a wordless track to someone who asked for a song with words,
+            # which is the original complaint restored by a different route.
+            raise AdapterError(
+                "We could not write lyrics for this track just now. Please try "
+                "again, or paste your own lyrics and we will sing those.",
+                internal_detail=str(exc),
+                # Retriable: the common cause is a rate limit or a timeout at
+                # the writing service, and the next attempt costs one text call
+                # rather than a GPU render.
+                retriable=True,
+            ) from exc
+
         if written is None:
             # Only two ways here: the plan is wordless (ambient/instrumental
             # genres) or the writer is deliberately disabled. Returning None
@@ -318,13 +383,22 @@ class MusicAdapter:
         # Not decoration: it is the difference between "we wrote Spanish
         # lyrics" and "we wrote English lyrics and labelled them Spanish",
         # which is indistinguishable from the outside until someone listens.
+        #
+        # `lyrics_provider` is the operational half of that — whether the
+        # hosted writer answered or the chain fell through to the local bank is
+        # the first thing worth knowing when a song comes back in the wrong
+        # register, and it is not visible anywhere else.
         logger.info(
             "lyrics_ready",
             extra={
+                "lyrics_mode": "auto",
+                "lyrics_provider": getattr(writer, "last_writer", "")
+                or getattr(writer, "name", type(writer).__name__),
                 "rhyme_rate": round(review.rhyme_rate, 2),
                 "unique_rate": round(review.unique_rate, 2),
                 "unresolved_issues": len(review.issues),
                 "language": brief.language,
+                "characters": len(text),
             },
         )
         return text
@@ -348,18 +422,33 @@ class MusicAdapter:
         if writer is None or not plan.has_lyrics:
             return
 
+        # Asked FIRST, because "no writer can run" and "the writer that can run
+        # does not do this language" are different situations that deserve
+        # different copy — and because the protocol expresses the first one as
+        # an empty language set, which is indistinguishable from "any".
+        if not is_available(writer):
+            reason = getattr(writer, "unavailable_reason", lambda: "not configured")()
+            raise AdapterError(
+                "We cannot write lyrics automatically just now. Add your own "
+                "lyrics in the language you picked and we will sing those.",
+                internal_detail=f"no lyrics writer is available: {reason}",
+                retriable=False,
+            )
+
         supported: frozenset[str] = getattr(writer, "supported_languages", frozenset())
         # An empty set means "any" — a language model has no list to give.
         if not supported or brief.language in supported:
             return
 
+        writable = sorted(supported)
         raise AdapterError(
-            "We can only write lyrics for you in English at the moment. "
-            "Add your own lyrics in the language you picked and we will sing "
-            "those instead.",
+            "We can only write lyrics for you in "
+            + _english_list([_LANGUAGE_NAMES.get(code, code) for code in writable])
+            + " at the moment. Add your own lyrics in the language you picked "
+            "and we will sing those instead.",
             internal_detail=(
                 f"lyrics writer cannot write {brief.language!r}; "
-                f"it supports {sorted(supported)}"
+                f"it supports {writable}"
             ),
             retriable=False,
         )

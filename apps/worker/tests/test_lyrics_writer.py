@@ -28,7 +28,6 @@ from worker.music import (
 )
 from worker.music.writer import _BANKS, _DETAIL_COUPLET
 
-
 # ── The bank itself ──────────────────────────────────────────────────────
 
 
@@ -216,14 +215,58 @@ async def test_dark_prompts_do_not_get_party_couplets() -> None:
 # ── Adapter integration: the writer resolves like the provider does ─────
 
 
-async def test_the_adapter_resolves_the_template_writer_by_default(
+async def test_the_adapter_resolves_the_configured_chain_by_default(
     tmp_path: Path,
 ) -> None:
+    """The default is now the hosted writer with this bank behind it."""
     from worker.adapters.music import MusicAdapter
+    from worker.music.fallback import FallbackLyricsWriter
 
-    adapter = MusicAdapter()
-    writer = adapter._resolve_writer()
-    assert isinstance(writer, TemplateLyricsWriter)
+    writer = MusicAdapter()._resolve_writer()
+    assert isinstance(writer, FallbackLyricsWriter)
+    assert [w.name for w in writer.writers] == ["cerebras", "template"]
+
+
+async def test_the_default_chain_changes_nothing_without_an_api_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The load-bearing safety property of changing that default.
+
+    A deployment that has not configured Cerebras must behave EXACTLY as it did
+    when this bank was the only writer: English lyrics get written, and a
+    language the bank cannot write is refused rather than answered in English.
+    Anything else would mean a config default silently altered live behaviour.
+    """
+    from worker.adapters.music import MusicAdapter
+    from worker.core.config import settings
+
+    monkeypatch.setattr(settings, "cerebras_api_key", "")
+    writer = MusicAdapter()._resolve_writer()
+
+    assert writer.supported_languages == frozenset({"en"})
+    assert writer.available is True
+
+
+async def test_a_single_configured_writer_is_not_wrapped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Naming exactly one writer keeps the pre-chain shape, so a deployment
+    pinned to the bank gets the bank rather than a chain of one."""
+    from worker.adapters.music import MusicAdapter
+    from worker.core.config import settings
+
+    monkeypatch.setattr(settings, "music_lyrics_writer", "template")
+    assert isinstance(MusicAdapter()._resolve_writer(), TemplateLyricsWriter)
+
+
+async def test_an_unknown_name_inside_a_chain_is_dropped_not_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from worker.adapters.music import MusicAdapter
+    from worker.core.config import settings
+
+    monkeypatch.setattr(settings, "music_lyrics_writer", "not-a-writer,template")
+    assert isinstance(MusicAdapter()._resolve_writer(), TemplateLyricsWriter)
 
 
 async def test_an_unknown_writer_name_degrades_to_no_writer(

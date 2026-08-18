@@ -114,6 +114,56 @@ _SONG_WORDS = re.compile(
 )
 
 
+#: Genre and style names `_PRODUCTION_TERMS` does not cover, plus the English
+#: number words. Both are things `salient_details` collects and neither is ever
+#: a thing to sing about.
+_STYLE_WORDS = frozenset(
+    """latin latino latina afrobeat afrobeats reggaeton salsa bachata merengue
+    cumbia flamenco bossa samba tango kpop jpop synthpop dreampop britpop
+    jazz blues disco funk soul motown gospel reggae ska punk grunge indie
+    techno trance dubstep drill grime afro amapiano bollywood qawwali ghazal
+    orchestral symphonic classical baroque opera choir anthem ballad
+    christmas holiday lofi chillhop trap hardstyle
+    one two three four five six seven eight nine ten"""
+    .split()
+)
+
+
+def singable_details(details: list[str]) -> list[str]:
+    """The must-keep details that are actually things to sing ABOUT.
+
+    `salient_details` finds capitalised words and bare numbers, which is the
+    right shallow rule for names, places and counts — but it cannot tell a name
+    from an ordinary word that happens to open the sentence. "Romantic Latin
+    pop about two people…" yields "Romantic", "Latin" and "Two", and a brief
+    that then DEMANDS those words appear gets exactly what it asked for.
+    Measured on the GPU, 2026-08-19:
+
+        "La brisa trae un aire romantic / bajo el cielo Latin del mar"
+        "estamos Two en un baile fiel"
+        "É o nosso verão, Two souls in love"
+
+    Two failures at once: the writer singing the brief back at the customer,
+    and an English word wedged into a Spanish song — which is the language
+    guarantee leaking through the one door that bypasses it, since a detail is
+    demanded verbatim and is therefore never translated.
+
+    Real names, places and digits survive, because losing those is the failure
+    the must-keep mechanism exists to prevent in the first place.
+
+    Filtered here rather than inside `salient_details` so that the function
+    itself — and the tests pinning it — keep describing what a prompt contains;
+    this describes what is worth demanding of a writer, which is a narrower
+    question asked in only one place.
+    """
+    return [
+        detail
+        for detail in details
+        if not _PRODUCTION_TERMS.fullmatch(detail.strip())
+        and detail.strip().lower() not in _STYLE_WORDS
+    ]
+
+
 def extract_subject(prompt: str) -> str:
     """The thing the song is about, lifted from the prompt.
 
@@ -246,6 +296,11 @@ class TemplateLyricsWriter:
     (non-empty `notes`) reshuffles the bank so the second draft is a different
     draft rather than the same one resubmitted.
     """
+
+    name = "template"
+    """Internal label, matching the value that selects it in
+    MUSIC_LYRICS_WRITER. The chain logs which writer answered, and a log line
+    naming the config value is one somebody can act on."""
 
     supported_languages = frozenset({"en"})
     """

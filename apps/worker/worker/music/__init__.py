@@ -7,6 +7,8 @@ and stay useful after one is replaced — which is why they live here rather tha
 inside an adapter.
 """
 
+from worker.music.detect import written_in
+from worker.music.fallback import FallbackLyricsWriter
 from worker.music.language import (
     ENGLISH,
     Language,
@@ -19,7 +21,9 @@ from worker.music.lyrics import (
     LyricFit,
     LyricIssue,
     LyricsReview,
+    LyricsWriteFailed,
     LyricsWriter,
+    NoLyricsWriterAvailable,
     Section,
     SongPlan,
     UnsupportedLyricLanguage,
@@ -43,19 +47,27 @@ from worker.music.provider import (
     ProviderProgress,
     ProviderUnavailable,
 )
-from worker.music.writer import TemplateLyricsWriter, detect_mood, extract_subject
+from worker.music.writer import (
+    TemplateLyricsWriter,
+    detect_mood,
+    extract_subject,
+    singable_details,
+)
 
 __all__ = [
     "ENGLISH",
+    "FallbackLyricsWriter",
     "Language",
     "LyricBrief",
     "LyricFit",
     "LyricIssue",
     "LyricsReview",
+    "LyricsWriteFailed",
     "LyricsWriter",
     "MusicGenerationProvider",
     "MusicRequest",
     "MusicTake",
+    "NoLyricsWriterAvailable",
     "ProviderGenerationError",
     "ProviderProgress",
     "ProviderUnavailable",
@@ -78,5 +90,7 @@ __all__ = [
     "review_lyrics",
     "rhyme_key",
     "salient_details",
+    "singable_details",
     "write_lyrics",
+    "written_in",
 ]

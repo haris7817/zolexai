@@ -18,6 +18,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -363,16 +364,116 @@ class WorkerSettings(BaseSettings):
     `worker/music/lyrics.py:line_budget`.
     """
 
-    music_lyrics_writer: str = "template"
+    music_lyrics_writer: str = "cerebras,template"
     """
     Which lyrics writer fills the song plan with words when the customer's
-    prompt is the only input. "template" is the built-in, dependency-free
-    writer (worker/music/writer.py); empty disables writing entirely.
+    prompt is the only input — and, as a comma-separated list, in what order.
+
+    Known names: "cerebras" (a hosted language model, writes any offered
+    language) and "template" (the built-in, dependency-free English bank in
+    worker/music/writer.py). Empty disables writing entirely.
+
+    The default puts the model first and the bank behind it. With no
+    CEREBRAS_API_KEY set, the first entry reports itself unavailable and the
+    chain behaves exactly as it did when "template" was the only value — so
+    this default is safe on a deployment that has not configured anything.
+
+    A fallback is only tried for languages it can actually write; see
+    worker/music/fallback.py. Falling back from Spanish to an English-only
+    writer is not a degradation, it is the wrong song, and the chain refuses it.
 
     Load-bearing: the music model treats an empty lyric sheet as "make an
     instrumental" (verified on the GPU, 2026-08-16), so a music platform with
     no writer configured produces NO sung words on any track — which was the
     client's "lyrics not present" complaint, in its entirety.
+    """
+
+    # ── Cerebras (lyrics text only — never audio) ────────────────────────
+    #
+    # Cerebras writes words and nothing else. ACE-Step remains solely
+    # responsible for composition, vocals and audio; the two never meet except
+    # through a lyric sheet. See worker/music/cerebras.py.
+
+    cerebras_api_key: str = ""
+    """
+    Read from the worker's environment as CEREBRAS_API_KEY, and used in exactly
+    one place: the Authorization header in worker/music/cerebras.py.
+
+    It never reaches the browser (the web app has no notion of a lyrics
+    provider), never enters job parameters or job metadata, and is never
+    logged — the log records latency, token counts and the model name, none of
+    which identify the credential. Empty means the Cerebras writer reports
+    itself unavailable and the chain moves to the next writer.
+    """
+
+    cerebras_base_url: str = "https://api.cerebras.ai"
+    """The API root. Overridable so a test or a proxy can stand in front."""
+
+    cerebras_lyrics_model: str = Field(
+        default="gemma-4-31b",
+        validation_alias=AliasChoices("CEREBRAS_LYRICS_MODEL", "CEREBRAS_AI_MODEL"),
+    )
+    """
+    Which model writes the lyrics.
+
+    Two accepted names, because a deployment already had this set as
+    `CEREBRAS_AI_MODEL` and a configured value that is silently ignored is
+    worse than one that is rejected — it looks connected and changes nothing,
+    which is the same class of bug as a language selector that does not select.
+    `CEREBRAS_LYRICS_MODEL` is the canonical name; the other is an alias kept
+    for that existing config.
+
+    `gemma-4-31b` because the product offers fourteen lyric languages and Gemma
+    is the multilingual one of the two models on the Cerebras public endpoint
+    (checked 2026-08-19); the other, `gpt-oss-120b`, is reasoning-first,
+    English-centred, and emits a reasoning channel that fights a "return only
+    the lyric sheet" contract.
+
+    Configurable because that lineup changes — this default is a reasoned
+    starting point, not a permanent fact.
+    """
+
+    cerebras_lyrics_enabled: bool = True
+    """
+    The feature switch for automatic lyrics via Cerebras.
+
+    False makes the writer report itself unavailable, which is the same path a
+    missing key takes: the chain moves on. It exists so the hosted writer can
+    be turned off on a running deployment without editing the writer list and
+    without a restart that changes anything else.
+    """
+
+    cerebras_lyrics_timeout_seconds: float = 45.0
+    """
+    Whole-request budget for one lyric generation.
+
+    A few hundred tokens on this hardware is a couple of seconds, so this is
+    already generous. It is bounded at all because the alternative is a stalled
+    text call holding a music job — and therefore a GPU slot — open for as long
+    as the job timeout allows.
+    """
+
+    cerebras_lyrics_max_retries: int = 1
+    """
+    Extra attempts after the first, within one call to the writer.
+
+    One, deliberately. This budget covers BOTH kinds of second chance — a
+    transient transport failure (timeout, 429, 5xx) and a sheet that came back
+    in the wrong language, which is retried with a reinforced instruction. A
+    permanent failure (bad key, unknown model) does not consume it at all and
+    goes straight to the fallback.
+
+    Kept small because it sits inside a job a customer is watching, and because
+    the review loop above may call the writer a second time anyway.
+    """
+
+    cerebras_lyrics_temperature: float = 0.8
+    """
+    Sampling temperature for lyric writing.
+
+    Above the middle on purpose: a near-deterministic writer hands the same
+    song to every customer whose prompt rhymes with another's. Low enough that
+    the structure rules in the prompt are still followed.
     """
 
     music_crossfade_seconds: float = 1.5
