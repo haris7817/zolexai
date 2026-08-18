@@ -291,3 +291,31 @@ render, through the actual adapter on the box, isolated test checkout):
 - **Costs (distilled tier, 1024x576):** planning adds ~35–45 s to a job
   (subprocess + model load + generation); renders: 20 s video ≈ 78 s wall
   total, 30 s ≈ 112 s, 60 s (2 passes) ≈ 203 s. No guided tier anywhere.
+
+### Short-clip pacing (fixed after the first deploy)
+
+The deployed 15 s render fused its opening two lines into one utterance
+("This ends now relax detective. We have time"). **Word density was not the
+cause** — that clip carried 0.93 words/second where a clean 20 s clip carried
+1.1 — so a flat words-per-second cut would have been the wrong fix. What
+distinguished it was two short lines placed back to back with nothing between
+them. Three changes, all measured:
+
+1. **The word budget now excludes an establishing head** (`ESTABLISH_SECONDS
+   = 2.5`), so it bites hardest exactly where over-packing hurts: a 15 s clip
+   loses ~17% of a flat allowance, a 60 s clip ~4%.
+2. **The planner is given computed `SPOKEN_LINES` and `TOTAL_WORDS` figures**
+   rather than arithmetic to perform, plus explicit rules to open on a silent
+   establishing beat and never place two lines back to back. A line-count
+   *cap* is deliberately NOT enforced in code: a 20 s scene with six short
+   lines rendered cleanly, so trimming to the guide would discard working
+   output.
+3. **Consecutive spoken lines get an explicit pause cue** in the compiled
+   prose ("After a short pause", "A beat of silence passes, and then") —
+   the official pacing lever, applied wherever the preceding event spoke.
+
+Re-measured at the failing duration (15 s, same idea): the planner wrote two
+lines instead of four, and both were delivered **separately and verbatim**
+(0.0–0.8 s and 10.2–11.3 s). The trade-off is real and worth stating: short
+clips now favour clarity over density, so a 15 s scene may carry a single
+exchange with several seconds of ambience around it.

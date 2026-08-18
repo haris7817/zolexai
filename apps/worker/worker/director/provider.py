@@ -34,11 +34,12 @@ from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.director.plan import (
     MAX_CHARACTERS,
-    WORDS_PER_SECOND,
     DirectorPlan,
     DirectorPlanError,
     parse_plan,
     required_quotes,
+    speech_budget,
+    spoken_line_budget,
 )
 
 logger = get_logger(__name__)
@@ -121,9 +122,16 @@ Hard rules:
 - All dialogue must be written in the DIALOGUE LANGUAGE.
 - If the idea implies nobody would speak, leave every "dialogue" null rather than
   forcing a line into the scene.
-- Speech pacing: at most {WORDS_PER_SECOND:g} spoken words per second of video IN TOTAL,
-  spread over the timeline. Short lines are better. Include events with no dialogue for
-  reactions, movement and silence.
+- LINE COUNT: aim for about one spoken line per 5 seconds of video (a SPOKEN_LINES
+  figure is given below). Fewer, better-placed lines beat more lines. A short clip
+  should carry a single exchange, not a whole argument.
+- The first spoken line starts AFTER the scene has established itself, not on the
+  very first frame: open with a short action event that nobody speaks over.
+- Never put two spoken lines back to back without a reaction, action or pause
+  between them — that is what makes two lines run together as one.
+- Speech pacing: stay within the TOTAL_WORDS figure given below, spread over the
+  timeline. Short lines are better. Include events with no dialogue for reactions,
+  movement and silence.
 - The timeline covers 0 to DURATION seconds in 2-6 second events, in order, no overlaps.
 - The conversation must progress: no line repeats an earlier line, and the last event
   resolves or lands the exchange.
@@ -144,6 +152,10 @@ def _user_prompt(request: DirectorRequest) -> str:
         f"IDEA: {request.idea}",
         f"DURATION: {request.duration_seconds:g} seconds",
         f"DIALOGUE LANGUAGE: {language}",
+        # Computed rather than left as arithmetic in the brief: a small
+        # instruct model reliably obeys a number and unreliably derives one.
+        f"SPOKEN_LINES: about {spoken_line_budget(request.duration_seconds)}",
+        f"TOTAL_WORDS: at most {speech_budget(request.duration_seconds)}",
     ]
     quotes = required_quotes(request.idea)
     if quotes:

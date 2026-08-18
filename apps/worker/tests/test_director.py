@@ -300,6 +300,36 @@ def test_an_empty_section_holds_the_scene_without_inventing_events() -> None:
     assert "no one speaks" in second
 
 
+def test_short_clips_get_a_proportionally_tighter_speech_budget() -> None:
+    """The establishing head is excluded from the word budget, so it costs a
+    short clip a far larger share of its allowance than a long one — which is
+    where over-packing actually produced run-together delivery."""
+    from worker.director.plan import speech_budget, spoken_line_budget
+
+    assert speech_budget(15.0) == 25  # (15 - 2.5) * 2
+    assert speech_budget(60.0) == 115
+    # Proportionally: a 15s clip loses ~17% of a flat budget, a 60s clip ~4%.
+    assert speech_budget(15.0) / 15.0 < speech_budget(60.0) / 60.0
+    assert spoken_line_budget(15.0) == 3
+    assert spoken_line_budget(5.0) == 2  # never below a two-line exchange
+
+
+def test_back_to_back_spoken_lines_are_separated_by_a_pause_cue() -> None:
+    """Two quoted lines in a row with only "A moment later" between them get
+    delivered as one utterance. The pause is stated, per the official pacing
+    guidance, whenever the preceding event also spoke."""
+    events = raw_plan()["timeline"]
+    events[0]["speaker"] = "detective"
+    events[0]["dialogue"] = "You knew."
+    events[0]["delivery"] = "low"
+    [caption] = compile_section_prompts(parsed(timeline=events), 1, total_seconds=12.0)
+    assert "After a short pause" in caption
+    assert "A beat of silence passes, and then the" in caption  # no stray comma
+    # The silent-beat case keeps its ordinary transition.
+    [plain] = compile_section_prompts(parsed(), 1, total_seconds=12.0)
+    assert "A moment later" in plain
+
+
 def test_a_move_phrase_that_already_has_a_verb_keeps_it() -> None:
     """Planners write moves both ways. A noun phrase gets a verb supplied; a
     phrase that already has one — including a sequenced "then cuts to …" —
@@ -371,7 +401,7 @@ async def test_a_director_job_renders_the_compiled_caption_not_the_idea(
             },
             {
                 "start": 1,
-                "end": 2,
+                "end": 4,
                 "action": "The detective leans forward",
                 "camera": "medium close-up, static",
                 "speaker": "detective",
@@ -381,16 +411,29 @@ async def test_a_director_job_renders_the_compiled_caption_not_the_idea(
         ]
     )
     install_provider(monkeypatch, CannedProvider(short_plan))
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 2.0, audio=True))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 5.0, audio=True))
 
-    result, reported = await collect(director_job(workspace))
+    # 5s is the product's shortest offered length; below it the establishing
+    # head leaves no speech budget at all, which is the correct answer for a
+    # duration the menu never offers.
+    result, reported = await collect(
+        director_job(
+            workspace,
+            parameters={
+                "duration": "5s",
+                "aspect_ratio": "16:9",
+                "quality": "High",
+                "prompt_mode": "director",
+            },
+        )
+    )
 
     argv = invocations(log)[0]
     prompt = value_of(argv, "--prompt")
     assert '"You knew."' in prompt
     assert IDEA not in prompt  # the idea is an input, not the prompt
     assert "CONTINUITY" not in prompt  # structuring skipped by design
-    assert result.duration_seconds == pytest.approx(2.0, abs=1.0)
+    assert result.duration_seconds == pytest.approx(5.0, abs=1.0)
     assert any("Directing" in message for _, _, message in reported)
 
 

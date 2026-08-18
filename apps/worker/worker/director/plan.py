@@ -27,17 +27,45 @@ import math
 import re
 from dataclasses import dataclass, replace
 
-#: The pacing ceiling: how many spoken words one second of video can carry.
-#: Conversational speech runs ~2.5 words/second; planning at 2 leaves air for
-#: reactions, pauses and silence — which is both the official prompting
-#: recommendation ("break long sentences into shorter phrases with acting
-#: directions between them") and the hedge against the model mumbling through
-#: an over-packed soundtrack.
+#: The pacing ceiling: how many spoken words one second of SPEAKABLE video can
+#: carry. Conversational speech runs ~2.5 words/second; planning at 2 leaves
+#: air for reactions, pauses and silence — which is both the official
+#: prompting recommendation ("break long sentences into shorter phrases with
+#: acting directions between them") and the hedge against the model mumbling
+#: through an over-packed soundtrack.
 WORDS_PER_SECOND = 2.0
+
+#: Seconds at the head of a clip that belong to establishing the shot rather
+#: than to speech, and are therefore excluded from the word budget.
+#:
+#: This is what makes the budget bite harder on short clips, which is where
+#: over-packing actually hurts: it costs a 60-second video 4% of its allowance
+#: and a 10-second video a quarter of it. Measured 18 Aug 2026 — a 15s render
+#: whose plan opened with two quick lines delivered them as one run-together
+#: utterance, while longer clips carrying MORE words per second stayed clean.
+ESTABLISH_SECONDS = 2.5
 
 #: Grace multiplier before trimming kicks in. A plan a few words over budget
 #: is fine; one at double the budget is not.
 _BUDGET_SLACK = 1.15
+
+
+def speech_budget(duration_seconds: float) -> int:
+    """Spoken words this clip can hold, before the grace multiplier."""
+    speakable = max(0.0, duration_seconds - ESTABLISH_SECONDS)
+    return int(speakable * WORDS_PER_SECOND)
+
+
+def spoken_line_budget(duration_seconds: float) -> int:
+    """Roughly how many separate spoken lines fit, at ~5s of screen time each.
+
+    Guidance for the planner rather than a rule enforced here: a 20-second
+    scene carrying six short lines rendered cleanly on the box, so trimming to
+    this number in code would throw away working output. What it prevents is
+    the planner reaching for one more exchange than a short clip can pace.
+    """
+    return max(2, int(duration_seconds // 5))
+
 
 #: More characters than this cannot hold stable identities in one generated
 #: scene; the planner is told two or three is the sweet spot.
@@ -290,7 +318,7 @@ def _enforce_speech_budget(plan: DirectorPlan, idea: str) -> DirectorPlan:
     trimmed: if the USER over-packed the clip, that is their call to make, and
     honouring it beats silently editing them.
     """
-    budget = int(plan.duration_seconds * WORDS_PER_SECOND * _BUDGET_SLACK)
+    budget = int(speech_budget(plan.duration_seconds) * _BUDGET_SLACK)
     if plan.spoken_words <= budget:
         return plan
 

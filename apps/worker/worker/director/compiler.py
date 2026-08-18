@@ -31,6 +31,20 @@ from worker.director.plan import DirectorCharacter, DirectorEvent, DirectorPlan
 
 _TRANSITIONS = ("A moment later", "Then", "A beat later", "Next", "Soon after")
 
+#: Used instead of the above when the PRECEDING event also spoke.
+#:
+#: Two quoted lines in a row with only "A moment later" between them read as
+#: one continuous utterance, and the model delivers them that way — measured
+#: 18 Aug 2026, where a 15s render fused its opening two lines despite
+#: carrying fewer words per second than a clean 20s one. An explicit pause is
+#: the official pacing lever ("break long sentences into shorter phrases with
+#: acting directions between them … explicit direction on pacing").
+_PAUSE_TRANSITIONS = (
+    "After a short pause",
+    "A beat of silence passes, and then",
+    "The room holds still for a moment, and then",
+)
+
 _ARTICLE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
 _PRONOUN = re.compile(r"^(?:he|she|they)\s+", re.IGNORECASE)
 
@@ -100,19 +114,27 @@ def _compile_section(
         )
     else:
         previous_camera = ""
+        previous_spoke = False
         for position, event in enumerate(events):
             camera = _humanise(event.camera.strip(), plan)
             if camera and camera.lower() != previous_camera.lower():
                 sentences.append(_camera_sentence(camera))
                 previous_camera = camera
+            speaks = bool((event.dialogue or "").strip())
             sentences.append(
                 _event_sentence(
                     plan,
                     event,
-                    transition=_transition(position, len(events), first),
+                    transition=_transition(
+                        position,
+                        len(events),
+                        first,
+                        after_speech=previous_spoke and speaks,
+                    ),
                     introduced=introduced,
                 )
             )
+            previous_spoke = speaks
         # A tail the plan says nothing about is not neutral: on TC2 the model
         # filled ~10 uncovered seconds by READING the caption's camera and
         # ambience sentences aloud as narration. Describe the tail as lived
@@ -138,9 +160,15 @@ def _compile_section(
     return " ".join(filter(None, sentences))
 
 
-def _transition(position: int, total: int, first_section: bool) -> str:
+def _transition(
+    position: int, total: int, first_section: bool, *, after_speech: bool = False
+) -> str:
     if position == 0:
         return "Initially" if first_section else ""
+    if after_speech:
+        # A pause cue outranks "Finally" on the closing line: landing an
+        # exchange matters less than the last two lines staying separable.
+        return _PAUSE_TRANSITIONS[(position - 1) % len(_PAUSE_TRANSITIONS)]
     if position == total - 1 and total >= 3:
         return "Finally"
     return _TRANSITIONS[(position - 1) % len(_TRANSITIONS)]
@@ -177,7 +205,7 @@ def _event_sentence(
     if speaker is None or not (event.dialogue or "").strip():
         body = event.action.strip().rstrip(".")
         if transition:
-            return _sentence(f"{transition}, {body[0].lower()}{body[1:]}" if body else transition)
+            return _sentence(_joined(transition, body) if body else transition)
         return _sentence(_capfirst(body))
 
     subject = _full_subject(speaker, introduced)
@@ -189,11 +217,19 @@ def _event_sentence(
         core = f'{subject} {action}, and {says}, "{line}"'
     else:
         core = f'{subject} {says}, "{line}"'
-    if transition:
-        core = f"{transition}, {core[0].lower()}{core[1:]}"
-    else:
-        core = _capfirst(core)
+    core = _joined(transition, core) if transition else _capfirst(core)
     return _sentence(core)
+
+
+def _joined(transition: str, body: str) -> str:
+    """Transition + clause, with the comma only where English wants one.
+
+    A transition that already ends in a conjunction ("…, and then") runs
+    straight into its clause; one that does not takes a comma.
+    """
+    lowered = body[0].lower() + body[1:]
+    separator = " " if re.search(r"\b(?:and|then|but|so)$", transition) else ", "
+    return f"{transition}{separator}{lowered}"
 
 
 def _speech_verb(event: DirectorEvent, speaker: DirectorCharacter, spoken: set[str]) -> str:
