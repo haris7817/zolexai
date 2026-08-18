@@ -14,24 +14,40 @@ while Director mode's whole job is to write words the user never typed. The
 two postures cannot share a module without one of them lying.
 """
 
+from worker.director.cerebras import (
+    CerebrasDirectorProvider,
+    DirectorProviderUnavailable,
+)
 from worker.director.compiler import compile_section_prompts
-from worker.director.plan import DirectorPlan, DirectorPlanError, parse_plan
+from worker.director.plan import (
+    DirectorPlan,
+    DirectorPlanError,
+    pacing_problems,
+    parse_plan,
+    target_spoken_lines,
+)
 from worker.director.provider import (
     DirectorFailure,
     DirectorRequest,
     GemmaDirectorProvider,
     create_director_plan,
+    default_providers,
     wants_director,
 )
 
 __all__ = [
+    "CerebrasDirectorProvider",
     "DirectorFailure",
     "DirectorPlan",
     "DirectorPlanError",
+    "DirectorProviderUnavailable",
     "DirectorRequest",
     "GemmaDirectorProvider",
     "compile_section_prompts",
     "create_director_plan",
+    "default_providers",
+    "pacing_problems",
     "parse_plan",
+    "target_spoken_lines",
     "wants_director",
 ]

@@ -117,7 +117,13 @@ def director_job(workspace: Path, **overrides):
 
 
 class CannedProvider:
-    """A provider returning queued raw plans — no subprocess, no model."""
+    """A provider returning queued raw plans — no subprocess, no model.
+
+    Once the queue is down to its last entry it keeps returning it, which is
+    what a real model does when asked again: it answers. Popping to empty
+    instead would make every test brittle to how many attempts the
+    orchestration happens to make.
+    """
 
     def __init__(self, *plans) -> None:
         self.plans = list(plans)
@@ -125,7 +131,7 @@ class CannedProvider:
 
     async def generate_plan(self, request: DirectorRequest) -> dict:
         self.requests.append(request)
-        return self.plans.pop(0)
+        return self.plans.pop(0) if len(self.plans) > 1 else self.plans[0]
 
 
 def install_provider(monkeypatch: pytest.MonkeyPatch, provider) -> None:
@@ -304,14 +310,57 @@ def test_short_clips_get_a_proportionally_tighter_speech_budget() -> None:
     """The establishing head is excluded from the word budget, so it costs a
     short clip a far larger share of its allowance than a long one — which is
     where over-packing actually produced run-together delivery."""
-    from worker.director.plan import speech_budget, spoken_line_budget
+    from worker.director.plan import speech_budget
 
     assert speech_budget(15.0) == 25  # (15 - 2.5) * 2
     assert speech_budget(60.0) == 115
     # Proportionally: a 15s clip loses ~17% of a flat budget, a 60s clip ~4%.
     assert speech_budget(15.0) / 15.0 < speech_budget(60.0) / 60.0
-    assert spoken_line_budget(15.0) == 3
-    assert spoken_line_budget(5.0) == 2  # never below a two-line exchange
+
+
+def test_the_line_target_keeps_someone_speaking_throughout() -> None:
+    """A target ABOVE the measured repetition threshold, separate from the
+    ceiling. Below ~0.2 lines/second the model fills the silence by repeating
+    itself — a 60s plan carrying 7 lines said one of them twice."""
+    from worker.director.plan import spoken_line_budget, target_spoken_lines
+
+    assert target_spoken_lines(20.0) == 5
+    assert target_spoken_lines(60.0) == 15
+    # The failing 60s render had 7 lines; the target must be well clear of it.
+    assert target_spoken_lines(60.0) > 7
+    # Every duration lands above the density that measured clean.
+    for seconds in (10.0, 15.0, 20.0, 30.0, 60.0):
+        assert target_spoken_lines(seconds) / seconds >= 0.2
+    # A target is not a ceiling, and never exceeds one.
+    assert target_spoken_lines(20.0) < spoken_line_budget(20.0)
+    assert target_spoken_lines(5.0) == 2  # never below a two-line exchange
+
+
+def test_pacing_problems_names_every_silence_a_customer_would_hear() -> None:
+    """Sparse plans are reported, not raised: a thin conversation still makes
+    a valid video, and failing the job over it helps nobody."""
+    from worker.director.plan import pacing_problems
+
+    events = [
+        {
+            "start": 0, "end": 2, "action": "The detective steps in",
+            "camera": "medium shot", "speaker": "detective",
+            "dialogue": "You knew.", "delivery": "low",
+        },
+        {
+            "start": 40, "end": 44, "action": "The chief looks up",
+            "camera": "close-up", "speaker": "chief",
+            "dialogue": "I did what I had to.", "delivery": "strained",
+        },
+    ]
+    problems = pacing_problems(parsed(duration=60.0, timeline=events))
+    joined = " ".join(problems)
+    assert "only 2 spoken lines" in joined       # too few for 60s
+    assert "38-second silence" in joined         # the gap in the middle
+    assert "last 16 seconds" in joined           # nothing lands at the end
+
+    # A well-paced plan reports nothing at all.
+    assert pacing_problems(parsed(duration=12.0)) == []
 
 
 def test_back_to_back_spoken_lines_are_separated_by_a_pause_cue() -> None:
@@ -328,6 +377,26 @@ def test_back_to_back_spoken_lines_are_separated_by_a_pause_cue() -> None:
     # The silent-beat case keeps its ordinary transition.
     [plain] = compile_section_prompts(parsed(), 1, total_seconds=12.0)
     assert "A moment later" in plain
+
+
+def test_the_caption_asks_for_each_line_once_without_using_a_negative() -> None:
+    """A 60s render spoke three of fourteen lines twice, each repeat seconds
+    after the original. The instruction against it must be POSITIVE: this
+    runtime has no negation mechanism, so "no line is repeated" reads as a
+    request for repetition (the rule `enhance.py` is built around)."""
+    [caption] = compile_section_prompts(parsed(), 1, total_seconds=12.0)
+    assert "spoken a single time" in caption
+    assert "moves forward to the next speaker" in caption
+    for banned in ("do not repeat", "never repeat", "no line is repeated", "without repeating"):
+        assert banned not in caption.lower()
+
+    # A section with no dialogue has no lines to say once, and should not
+    # carry an instruction about them.
+    silent = raw_plan()["timeline"][:1]
+    silent[0]["speaker"] = None
+    silent[0]["dialogue"] = None
+    [quiet] = compile_section_prompts(parsed(timeline=silent), 1, total_seconds=12.0)
+    assert "spoken a single time" not in quiet
 
 
 def test_a_move_phrase_that_already_has_a_verb_keeps_it() -> None:
@@ -353,6 +422,103 @@ def test_character_ids_leaking_into_prose_are_humanised() -> None:
 
 
 # ── Orchestration: retry once, then a clean failure ──────────────────────
+
+
+async def test_a_sparse_plan_is_retried_with_the_pacing_complaint_attached(
+    workspace: Path,
+) -> None:
+    """The retry is never a blind repeat: it carries what was wrong, so the
+    planner can fix the silence rather than re-roll and hope."""
+    sparse = raw_plan(
+        timeline=[
+            {
+                "start": 0, "end": 3, "action": "The detective steps in",
+                "camera": "medium shot", "speaker": "detective",
+                "dialogue": "You knew.", "delivery": "low",
+            },
+            {
+                "start": 40, "end": 44, "action": "The chief looks away",
+                "camera": "close-up", "speaker": "chief",
+                "dialogue": "I did what I had to.", "delivery": "strained",
+            },
+        ]
+    )
+    provider = CannedProvider(sparse, raw_plan())
+    plan = await create_director_plan(director_job(workspace), 60.0, provider=provider)
+
+    assert len(provider.requests) == 2
+    notes = " ".join(provider.requests[1].notes)
+    assert "spoken lines" in notes  # the count complaint reached the retry
+    assert "silence" in notes       # and so did the gap
+    assert plan.spoken_lines >= 2
+
+
+async def test_a_plan_that_only_paces_badly_still_ships(workspace: Path) -> None:
+    """Sparse dialogue is a worse video, not a broken one. After the retry the
+    best available plan is used rather than failing a job the customer is
+    watching — the complaint is in the log, not in their face."""
+    sparse = raw_plan(
+        timeline=[
+            {
+                "start": 0, "end": 3, "action": "The detective steps in",
+                "camera": "medium shot", "speaker": "detective",
+                "dialogue": "You knew.", "delivery": "low",
+            },
+        ]
+    )
+    plan = await create_director_plan(
+        director_job(workspace), 60.0, provider=CannedProvider(sparse)
+    )
+    assert plan.spoken_lines == 1
+
+
+async def test_the_hosted_planner_is_preferred_and_falls_back_when_unusable(
+    workspace: Path,
+) -> None:
+    """Hosted first because it plans in seconds where the local checkpoint
+    costs 18-26s of the GPU the render is waiting for — but an outage or a
+    missing key must only make the feature slower, never absent."""
+    from worker.director import DirectorProviderUnavailable
+
+    class Unusable:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate_plan(self, request: DirectorRequest) -> dict:
+            self.calls += 1
+            raise DirectorProviderUnavailable("CEREBRAS_API_KEY is not set")
+
+    hosted, local = Unusable(), CannedProvider(raw_plan())
+    plan = await create_director_plan(
+        director_job(workspace), 12.0, providers=[hosted, local]
+    )
+
+    assert plan.spoken_lines >= 2
+    # Asked once, then abandoned — an unusable provider must not burn its retry.
+    assert hosted.calls == 1
+    assert len(local.requests) == 1
+
+
+def test_the_chain_is_local_only_until_a_key_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A node with no credential plans locally and says so in the log, rather
+    than every job failing against a service it was never given access to."""
+    from worker.core.config import settings
+    from worker.director import (
+        CerebrasDirectorProvider,
+        GemmaDirectorProvider,
+        default_providers,
+    )
+
+    monkeypatch.setattr(settings, "cerebras_api_key", "")
+    assert [type(p) for p in default_providers()] == [GemmaDirectorProvider]
+
+    monkeypatch.setattr(settings, "cerebras_api_key", "sk-test")
+    assert [type(p) for p in default_providers()] == [
+        CerebrasDirectorProvider,
+        GemmaDirectorProvider,
+    ]
 
 
 async def test_a_refused_first_plan_is_retried_with_sampling(

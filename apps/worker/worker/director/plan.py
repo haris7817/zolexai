@@ -56,15 +56,63 @@ def speech_budget(duration_seconds: float) -> int:
     return int(speakable * WORDS_PER_SECOND)
 
 
-def spoken_line_budget(duration_seconds: float) -> int:
-    """Roughly how many separate spoken lines fit, at ~5s of screen time each.
+#: Screen time one spoken line should occupy, including its reaction beat.
+#:
+#: MEASURED, and the number the whole feature's pacing rests on. Across nine
+#: GPU renders on 18-19 Aug 2026, plans denser than ~0.2 lines/second were
+#: clean and plans below it were not: a 60s clip carrying 7 lines (0.12/s)
+#: opened with a 12.8-SECOND silence and then spoke one line twice, and a 15s
+#: clip carrying 2 (0.13/s) echoed its last word. A 20s clip carrying 6
+#: (0.30/s) delivered all six verbatim.
+#:
+#: The failure mode is worth naming precisely, because it looks like two bugs
+#: and is one: **dead air is not neutral.** Given seconds the plan says
+#: nothing about, the model fills them — by repeating a line it already said,
+#: or by reading the caption's own prose aloud. Density is the cure for both,
+#: and separation (the pause cues in `compiler.py`) is what keeps density from
+#: turning into run-together delivery. They are independent levers; an earlier
+#: revision cut density to fix run-together and produced exactly the sparse,
+#: repetitive output a customer then reported.
+TARGET_SECONDS_PER_LINE = 4.0
 
-    Guidance for the planner rather than a rule enforced here: a 20-second
-    scene carrying six short lines rendered cleanly on the box, so trimming to
-    this number in code would throw away working output. What it prevents is
-    the planner reaching for one more exchange than a short clip can pace.
+#: Fewer lines than this is not a conversation, whatever the duration.
+_MINIMUM_LINES = 2
+
+#: Longest stretch of the timeline that may pass with nobody speaking.
+#:
+#: Six seconds is a long beat on screen and about where the measured failures
+#: began: the 60s plan that repeated itself opened with 12.8 seconds of
+#: silence. Checked after parsing and reported back to the planner as a
+#: correction rather than enforced by rejection — see `pacing_problems`.
+MAX_SILENT_GAP = 6.0
+
+
+def spoken_line_budget(duration_seconds: float) -> int:
+    """The CEILING on separate spoken lines — the far bound, not the aim.
+
+    Kept because the other direction is a real failure too: past roughly one
+    line every two seconds there is no room for the reactions and pauses that
+    make an exchange readable.
     """
-    return max(2, int(duration_seconds // 5))
+    return max(_MINIMUM_LINES, int(duration_seconds // 2))
+
+
+def target_spoken_lines(duration_seconds: float) -> int:
+    """How many spoken lines a plan should actually aim to produce.
+
+    A TARGET, stated separately from the ceiling above, because a model handed
+    only a maximum treats it as a problem to stay clear of. The lyrics writer
+    learned this the expensive way three days earlier: given "at most 9" it
+    wrote 6, and the song was mostly instrumental. Same model family, same
+    arithmetic, same result here — told "about 3" alongside "at most", the
+    planner wrote 2 and the render echoed itself.
+    """
+    # Rounded UP, not to nearest: the two errors are not symmetric. One line
+    # too many is a slightly busy scene; one too few is the silence the model
+    # fills by repeating itself. (`round` would also hand a 10-second clip 2
+    # lines rather than 3, via banker's rounding on the exact .5.)
+    by_density = math.ceil(duration_seconds / TARGET_SECONDS_PER_LINE)
+    return min(spoken_line_budget(duration_seconds), max(_MINIMUM_LINES, by_density))
 
 
 #: More characters than this cannot hold stable identities in one generated
@@ -132,6 +180,22 @@ class DirectorPlan:
     @property
     def spoken_words(self) -> int:
         return sum(len((event.dialogue or "").split()) for event in self.timeline)
+
+    @property
+    def spoken_lines(self) -> int:
+        return sum(1 for event in self.timeline if (event.dialogue or "").strip())
+
+    @property
+    def seconds_per_spoken_line(self) -> float | None:
+        """Screen seconds per spoken line — the density that decides pacing.
+
+        Logged on every plan because it is the single number that separated a
+        clean render from a repetitive one across every GPU measurement:
+        comfortably under `TARGET_SECONDS_PER_LINE` was clean, well above it
+        was not.
+        """
+        lines = self.spoken_lines
+        return round(self.duration_seconds / lines, 1) if lines else None
 
 
 def required_quotes(idea: str) -> list[str]:
@@ -339,6 +403,58 @@ def _enforce_speech_budget(plan: DirectorPlan, idea: str) -> DirectorPlan:
         events[index] = stripped
         plan = replace(plan, timeline=tuple(events))
     return plan
+
+
+def pacing_problems(plan: DirectorPlan) -> list[str]:
+    """Where this plan would leave the soundtrack empty, in the planner's terms.
+
+    Deliberately NOT part of `parse_plan`'s validation. Everything that raises
+    there is a correctness contract — a rewritten user line, a speaker who does
+    not exist — and failing a job over those is right. Pacing is a quality
+    judgement: a sparse plan still renders a valid video, just a worse one. So
+    it is measured here, handed back to the planner as a correction it can act
+    on, and accepted on the final attempt rather than costing the customer
+    their job.
+
+    The stakes are still real. Dead air is where the model repeats a line it
+    already spoke or reads the caption prose aloud, which is what a customer
+    reports as "it says the same thing twice".
+    """
+    spoken = [event for event in plan.timeline if (event.dialogue or "").strip()]
+    if not spoken:
+        return []
+
+    problems: list[str] = []
+    target = target_spoken_lines(plan.duration_seconds)
+    if len(spoken) < max(2, target - 1):
+        problems.append(
+            f"only {len(spoken)} spoken lines for a {plan.duration_seconds:g}-second "
+            f"video — write about {target}, spread across the whole timeline"
+        )
+
+    opening = spoken[0].start
+    if opening > MAX_SILENT_GAP:
+        problems.append(
+            f"nobody speaks for the first {opening:g} seconds — start the dialogue "
+            "within a couple of seconds of the opening"
+        )
+
+    for earlier, later in zip(spoken, spoken[1:], strict=False):
+        gap = later.start - earlier.end
+        if gap > MAX_SILENT_GAP:
+            problems.append(
+                f"a {gap:g}-second silence between the line ending at "
+                f"{earlier.end:g}s and the next at {later.start:g}s — add lines so "
+                f"no gap exceeds {MAX_SILENT_GAP:g} seconds"
+            )
+
+    tail = plan.duration_seconds - spoken[-1].end
+    if tail > MAX_SILENT_GAP:
+        problems.append(
+            f"the last {tail:g} seconds have no dialogue — the closing line should "
+            "land near the end of the video"
+        )
+    return problems
 
 
 def _require_user_dialogue(plan: DirectorPlan, idea: str) -> None:

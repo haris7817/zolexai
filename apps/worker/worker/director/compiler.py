@@ -146,6 +146,22 @@ def _compile_section(
                 "ambience is the only sound."
             )
 
+    # Each line said once, stated POSITIVELY.
+    #
+    # Measured 19 Aug 2026: a 60s render spoke three of its fourteen lines
+    # twice, each repeat landing seconds after the original — the model
+    # filling a line's remaining screen time by saying it again rather than
+    # moving on. The obvious wording ("no line is repeated") is exactly what
+    # this runtime cannot use: it has no negation mechanism, so a banned thing
+    # reads as a requested one (see `worker/longform/enhance.py`). Framed as
+    # forward motion instead, which is the same instruction the model can act
+    # on.
+    if any((event.dialogue or "").strip() for event in events):
+        sentences.append(
+            "Each line of dialogue is spoken a single time, and the exchange "
+            "moves forward to the next speaker as soon as it lands."
+        )
+
     sentences.append(_ambience_sentence(plan))
     if plan.characters:
         sentences.append(

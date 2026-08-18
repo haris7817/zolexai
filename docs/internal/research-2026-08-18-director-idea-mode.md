@@ -292,6 +292,61 @@ render, through the actual adapter on the box, isolated test checkout):
   (subprocess + model load + generation); renders: 20 s video ≈ 78 s wall
   total, 30 s ≈ 112 s, 60 s (2 passes) ≈ 203 s. No guided tier anywhere.
 
+### Density, repetition, and the hosted planner (19 Aug, after launch)
+
+Two customer reports came back after the feature went live: *"can you make it
+have dialogue the whole video"* and *"in some videos repetitive things are
+spoken"*. They looked like two asks and share one origin.
+
+**The plans were too sparse, and the brief was why.** Across nine renders,
+every plan denser than ~0.2 spoken lines/second was clean and every plan below
+it was not — a 60s plan carrying 7 lines opened with a **12.8-second silence**
+and spoke one line twice. The cause was the shape of the instruction, not the
+model: the brief gave a ceiling ("at most N") plus a vague "about N", and an
+instruct model handed two numbers multiplies the small ones. The lyrics writer
+had hit this three days earlier and fixed it the same way (`510c616`).
+
+Fixes: `target_spoken_lines` states a **target with a floor**, separate from
+the ceiling, at one line per 4 seconds; `pacing_problems` measures opening
+silence, internal gaps and the tail, and hands the specific complaint back to
+the planner as a correction. Pacing is reported, never raised — a sparse plan
+still makes a valid video, and failing a job over it helps nobody. Measured
+after: a 60s plan went from 7 lines with a 12.8s hole to **14 lines spanning
+0→60s**, all spoken verbatim.
+
+**Repetition is a SEPARATE bug, and density does not fix it.** With the denser
+plan, three of fourteen lines were spoken twice — each repeat landing seconds
+after its original, not filling distant dead air. The mechanism looks like the
+model filling a line's remaining screen time by saying it again. A positively
+phrased caption directive ("each line of dialogue is spoken a single time, and
+the exchange moves forward") took the same idea and duration from **3 repeats
+to 1**. The phrasing is not stylistic: this runtime has no negation mechanism,
+so "no line is repeated" would read as a request for repetition — the rule
+`worker/longform/enhance.py` is built around.
+
+Measured with the directive: **1 repeat across 22 lines in two runs** (60s:
+14 lines, 1 repeat; 30s: 8 lines, 0 repeats and a line landing every four
+seconds from the first to the last). Against 3 repeats in 14 lines without it.
+**Not eliminated**, and both survivors were the OPENING line, which is where
+the model has the least preceding context to hold it — that is the next thing
+to attack if a customer reports it again.
+
+**The planner moved to Cerebras.** The local checkpoint costs 18-26s of the
+GPU the render is waiting for; the hosted call plans in **~1 second** against a
+far larger model. It sits first in a chain with the local one beneath it, so a
+missing key or an outage makes the feature slower rather than absent. Five
+live cases (20s, 60s, 30s, Spanish, user-quoted dialogue) all planned clean
+and well-paced.
+
+**A trap worth recording: `response_format: json_object` BREAKS
+`gemma-4-31b`.** It is the obvious safety measure — ask for JSON at the
+protocol level as well as in the prompt — and adding it took the success rate
+to 1 in 3, the failures running away to 8-49 KB of output before truncating at
+`finish_reason: length`. Without it, 3 of 3 clean. `gpt-oss-120b` is
+unaffected either way, so this reads as a constrained-decoding interaction
+with that model rather than a service fault. A test now guards against
+re-adding it.
+
 ### Short-clip pacing (fixed after the first deploy)
 
 The deployed 15 s render fused its opening two lines into one utterance

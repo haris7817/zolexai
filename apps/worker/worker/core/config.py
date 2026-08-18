@@ -467,6 +467,54 @@ class WorkerSettings(BaseSettings):
     the review loop above may call the writer a second time anyway.
     """
 
+    # ── Director scene planning (Text to Video, Idea mode) ───────────────
+    #
+    # The same account and key as lyrics; a separate model, switch and budget
+    # because the two tasks fail differently and are tuned separately. See
+    # worker/director/cerebras.py.
+
+    cerebras_director_model: str = Field(
+        default="gemma-4-31b",
+        validation_alias=AliasChoices("CEREBRAS_DIRECTOR_MODEL", "CEREBRAS_AI_MODEL"),
+    )
+    """
+    Which model plans the scene.
+
+    Defaults to the same Gemma the lyric writer uses, for the same measured
+    reasons: it is the multilingual one of the two models on the Cerebras
+    public endpoint, and it is the plainer instruction-follower for a "return
+    only this JSON" contract — which matters more here than for lyrics,
+    because a plan is parsed rather than read.
+    """
+
+    cerebras_director_enabled: bool = True
+    """
+    Whether Director mode may plan on the hosted model.
+
+    False falls the chain through to the local Gemma checkpoint, which is
+    slower but needs nothing external. This exists so the hosted planner can be
+    turned off on a running deployment without the feature going with it.
+    """
+
+    cerebras_director_timeout_seconds: float = 60.0
+    """
+    Whole-request budget for one planning call.
+
+    Longer than the lyrics equivalent because a plan is a bigger answer, and
+    bounded at all because this call sits in front of a render: a stalled
+    request would hold a GPU slot open producing nothing.
+    """
+
+    cerebras_director_temperature: float = 0.7
+    """
+    Sampling temperature for scene planning.
+
+    Below the lyric writer's 0.8. A plan is a structure that gets parsed and
+    validated, not a creative artefact read by a human — the dialogue inside it
+    still needs life, but a planner that wanders off the JSON shape costs an
+    attempt.
+    """
+
     cerebras_lyrics_temperature: float = 0.8
     """
     Sampling temperature for lyric writing.

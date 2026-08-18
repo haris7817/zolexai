@@ -32,14 +32,21 @@ from typing import Any, Protocol
 from worker.adapters.base import AdapterJob
 from worker.core.config import settings
 from worker.core.logging import get_logger
+from worker.director.cerebras import (
+    CerebrasDirectorProvider,
+    DirectorProviderUnavailable,
+)
 from worker.director.plan import (
     MAX_CHARACTERS,
+    MAX_SILENT_GAP,
     DirectorPlan,
     DirectorPlanError,
+    pacing_problems,
     parse_plan,
     required_quotes,
     speech_budget,
     spoken_line_budget,
+    target_spoken_lines,
 )
 
 logger = get_logger(__name__)
@@ -72,6 +79,13 @@ class DirectorRequest:
     sample: bool
     """False for the deterministic first attempt; True adds temperature on the
     retry so a refused plan is not regenerated token for token."""
+
+    notes: tuple[str, ...] = ()
+    """What was wrong with the previous draft, in the planner's own terms.
+
+    Carries both kinds of correction — a validation failure and a pacing
+    complaint — because the retry is one attempt and it should fix everything
+    known to be wrong, not just the thing that raised."""
 
 
 class DirectorProvider(Protocol):
@@ -122,16 +136,20 @@ Hard rules:
 - All dialogue must be written in the DIALOGUE LANGUAGE.
 - If the idea implies nobody would speak, leave every "dialogue" null rather than
   forcing a line into the scene.
-- LINE COUNT: aim for about one spoken line per 5 seconds of video (a SPOKEN_LINES
-  figure is given below). Fewer, better-placed lines beat more lines. A short clip
-  should carry a single exchange, not a whole argument.
-- The first spoken line starts AFTER the scene has established itself, not on the
-  very first frame: open with a short action event that nobody speaks over.
+- LINE COUNT: write the number of spoken lines given as TOTAL_LINES below. That is
+  a target to hit, not a maximum to stay under. Fewer lines than that leaves the
+  video silent for long stretches, which is worse than too many.
+- THE CONVERSATION RUNS THE WHOLE VIDEO. Spread the lines from the first seconds
+  to the last so someone is speaking or reacting throughout. Never leave more than
+  {MAX_SILENT_GAP:g} seconds of the timeline with nobody speaking. The last spoken
+  line lands near the end, not in the middle.
+- Open on a SHORT establishing beat — one or two seconds of action nobody speaks
+  over — then start the dialogue. Do not open with a long silence.
 - Never put two spoken lines back to back without a reaction, action or pause
   between them — that is what makes two lines run together as one.
-- Speech pacing: stay within the TOTAL_WORDS figure given below, spread over the
-  timeline. Short lines are better. Include events with no dialogue for reactions,
-  movement and silence.
+- Keep individual lines SHORT (a handful of words) and stay within the TOTAL_WORDS
+  figure below. Many short lines beat a few long ones: short lines are what let the
+  conversation cover the whole video without anyone rushing.
 - The timeline covers 0 to DURATION seconds in 2-6 second events, in order, no overlaps.
 - The conversation must progress: no line repeats an earlier line, and the last event
   resolves or lands the exchange.
@@ -148,14 +166,24 @@ def _user_prompt(request: DirectorRequest) -> str:
         if request.language == "auto"
         else request.language.capitalize()
     )
+    target = target_spoken_lines(request.duration_seconds)
+    words = speech_budget(request.duration_seconds)
     lines = [
         f"IDEA: {request.idea}",
         f"DURATION: {request.duration_seconds:g} seconds",
         f"DIALOGUE LANGUAGE: {language}",
         # Computed rather than left as arithmetic in the brief: a small
         # instruct model reliably obeys a number and unreliably derives one.
-        f"SPOKEN_LINES: about {spoken_line_budget(request.duration_seconds)}",
-        f"TOTAL_WORDS: at most {speech_budget(request.duration_seconds)}",
+        #
+        # A target with a FLOOR and the ceiling stated last, in that order. The
+        # lyrics writer proved the failure of the other shape on 19 Aug: given
+        # a maximum and a vague "about", the model multiplies the small numbers
+        # and stops short, and the result is a mostly-silent render.
+        f"TOTAL_LINES: write {target} spoken lines across the whole video. "
+        f"Not fewer than {max(2, target - 1)}, and never more than "
+        f"{spoken_line_budget(request.duration_seconds)}.",
+        f"TOTAL_WORDS: keep the spoken words under {words} in total, "
+        f"which is roughly {max(3, words // max(1, target))} words per line.",
     ]
     quotes = required_quotes(request.idea)
     if quotes:
@@ -163,7 +191,28 @@ def _user_prompt(request: DirectorRequest) -> str:
             "REMINDER — these exact words from the idea must appear verbatim as dialogue: "
             + "; ".join(f'"{quote}"' for quote in quotes)
         )
+    if request.notes:
+        lines.append(
+            "\nYOUR PREVIOUS PLAN HAD THESE PROBLEMS. Fix every one of them:\n"
+            + "\n".join(f"- {note}" for note in request.notes)
+        )
     return "\n".join(lines)
+
+
+def system_prompt() -> str:
+    """The planning brief. One text, shared by every provider.
+
+    Exposed so a hosted provider sends the same instructions as the local one:
+    if the two drifted apart, a fallback would quietly produce a differently
+    shaped plan than the primary and the difference would only ever show up in
+    a customer's video.
+    """
+    return _SYSTEM_PROMPT
+
+
+def user_prompt(request: DirectorRequest) -> str:
+    """The per-job half of the request. Shared for the same reason."""
+    return _user_prompt(request)
 
 
 class GemmaDirectorProvider:
@@ -254,63 +303,134 @@ def requested_language(job: AdapterJob) -> str:
     return language if language in DIALOGUE_LANGUAGES else "auto"
 
 
+def default_providers() -> list[DirectorProvider]:
+    """The providers to try, best first.
+
+    Hosted before local, when it is configured: it plans in about two seconds
+    against a far larger model, where the local checkpoint costs 18-26 seconds
+    of the GPU the render is waiting for. The local one stays underneath as the
+    floor, so a missing key, an outage or a revoked credential slows the
+    feature down instead of taking it out.
+    """
+    hosted = CerebrasDirectorProvider()
+    return [hosted, GemmaDirectorProvider()] if hosted.available else [GemmaDirectorProvider()]
+
+
 async def create_director_plan(
     job: AdapterJob,
     duration_seconds: float,
     *,
     provider: DirectorProvider | None = None,
+    providers: list[DirectorProvider] | None = None,
 ) -> DirectorPlan:
     """Idea → validated DirectorPlan, or a clean `DirectorFailure`.
 
-    Two attempts: greedy (deterministic, cheap to reason about), then sampled
-    (a refused plan regenerated greedily would be refused again, token for
-    token). The stored job keeps the user's idea verbatim throughout — the
-    plan lives only in this process and in the log.
+    Two attempts per provider, and the second is never a blind repeat: it
+    carries the previous draft's problems as corrections, whether those were
+    validation failures (a rewritten user line, an unknown speaker) or pacing
+    complaints (long silences, too few lines). A plan that only fails pacing is
+    ACCEPTED on the final attempt — sparse dialogue is a worse video, not a
+    broken one, and failing the job over it would serve the customer nothing.
+
+    The stored job keeps the user's idea verbatim throughout; the plan lives
+    only in this process and in the log.
     """
-    provider = provider or GemmaDirectorProvider()
+    chain = providers or ([provider] if provider is not None else default_providers())
     language = requested_language(job)
     seed = zlib.crc32(f"{job.job_id}:director".encode())
 
     failures: list[str] = []
-    for attempt, sample in enumerate((False, True), start=1):
-        job.raise_if_cancelled()
-        request = DirectorRequest(
-            idea=job.prompt,
-            duration_seconds=duration_seconds,
-            language=language,
-            seed=seed + attempt,
-            sample=sample,
-        )
-        try:
-            raw = await provider.generate_plan(request)
-            plan = parse_plan(
-                raw,
+    best: DirectorPlan | None = None
+    attempt = 0
+
+    for source in chain:
+        notes: tuple[str, ...] = ()
+        for sample in (False, True):
+            attempt += 1
+            job.raise_if_cancelled()
+            request = DirectorRequest(
                 idea=job.prompt,
                 duration_seconds=duration_seconds,
                 language=language,
+                seed=seed + attempt,
+                sample=sample,
+                notes=notes,
             )
-        except DirectorPlanError as error:
-            failures.append(f"attempt {attempt}: {error}")
-            logger.warning(
-                "director_plan_rejected",
-                extra={"attempt": attempt, "problems": error.problems},
-            )
-            continue
+            try:
+                raw = await source.generate_plan(request)
+                plan = parse_plan(
+                    raw,
+                    idea=job.prompt,
+                    duration_seconds=duration_seconds,
+                    language=language,
+                )
+            except DirectorProviderUnavailable as unavailable:
+                # Not a failed attempt — this provider was never usable. Move
+                # to the next one without spending its retry.
+                logger.info(
+                    "director_provider_skipped",
+                    extra={"provider": type(source).__name__, "reason": str(unavailable)},
+                )
+                failures.append(f"{type(source).__name__}: {unavailable}")
+                break
+            except DirectorPlanError as error:
+                failures.append(f"attempt {attempt}: {error}")
+                logger.warning(
+                    "director_plan_rejected",
+                    extra={"attempt": attempt, "problems": error.problems},
+                )
+                notes = tuple(error.problems)
+                continue
 
-        logger.info(
-            "director_plan_ready",
-            extra={
-                "attempt": attempt,
-                "characters": [entry.id for entry in plan.characters],
-                "events": len(plan.timeline),
-                "spoken_words": plan.spoken_words,
-                "language": plan.language,
-            },
-        )
-        return plan
+            pacing = pacing_problems(plan)
+            if pacing:
+                failures.append(f"attempt {attempt} pacing: {'; '.join(pacing)}")
+                logger.warning(
+                    "director_plan_pacing",
+                    extra={
+                        "attempt": attempt,
+                        "provider": type(source).__name__,
+                        "problems": pacing,
+                    },
+                )
+                # Valid, just sparse. Hold it as the floor and spend the
+                # remaining attempt asking for better; if nothing better
+                # arrives, this still ships a video.
+                best = best or plan
+                if not sample:
+                    notes = tuple(pacing)
+                    continue
+                break
+
+            _log_ready(plan, attempt=attempt, provider=type(source).__name__, paced=True)
+            return plan
+
+    if best is not None:
+        _log_ready(best, attempt=attempt, provider="fallback", paced=False)
+        return best
 
     raise DirectorFailure(
         "We couldn't turn this idea into a scene plan. Try adding a little more "
         "detail to the idea, or switch to the standard prompt mode.",
         internal_detail=" || ".join(failures),
+    )
+
+
+def _log_ready(plan: DirectorPlan, *, attempt: int, provider: str, paced: bool) -> None:
+    logger.info(
+        "director_plan_ready",
+        extra={
+            "attempt": attempt,
+            "provider": provider,
+            "characters": [character.id for character in plan.characters],
+            "events": len(plan.timeline),
+            "spoken_lines": sum(1 for e in plan.timeline if (e.dialogue or "").strip()),
+            "spoken_words": plan.spoken_words,
+            "seconds_per_line": plan.seconds_per_spoken_line,
+            "language": plan.language,
+            # False means the plan shipped despite a pacing complaint, which is
+            # the state worth finding in a log when a customer reports silence
+            # or a repeated line.
+            "well_paced": paced,
+        },
     )
