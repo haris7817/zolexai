@@ -116,6 +116,12 @@ from worker.adapters.base import (
 )
 from worker.core.config import settings
 from worker.core.logging import get_logger
+from worker.director import (
+    DirectorFailure,
+    compile_section_prompts,
+    create_director_plan,
+    wants_director,
+)
 from worker.longform import (
     GENERATE_FROM,
     GENERATE_TO,
@@ -902,7 +908,12 @@ class LtxAdapter:
         # continuity rules, it never rewrites — and the stored job still
         # carries exactly what the user typed, because this happens here in
         # the worker rather than anywhere the prompt is persisted.
-        if job.execution.get("prompt_structuring"):
+        #
+        # A Director-mode job skips it: there the user's text is an IDEA, not
+        # a prompt — the director compiler owns the entire prompt text, and
+        # stacking a second structure on top of it would be the contradiction
+        # `structure_prompt`'s own bail-out rule exists to avoid.
+        if job.execution.get("prompt_structuring") and not wants_director(job):
             job = replace(job, prompt=structure_prompt(job.prompt))
 
         # Dispatch on the WORKFLOW, never on which inputs happen to be present:
@@ -933,14 +944,39 @@ class LtxAdapter:
         # and behaviour change is a product decision, never a silent default.
         guided = job.execution.get("generation_engine") == "guided"
         self._record_audio_mode(job, AudioMode.GENERATED_PER_SECTION_AUDIO)
+
+        # Director mode: the idea becomes a validated global plan BEFORE any
+        # section renders, and each section's prompt is compiled from that one
+        # plan — never re-planned per section, which is what previously made
+        # long-form dialogue restart at every seam. The standard path below is
+        # untouched when the mode is off.
+        director_plan = None
+        if wants_director(job):
+            await reporter.report(
+                "preparing", 14, "Directing your scene…", {"phase": "preparing"}
+            )
+            try:
+                director_plan = await create_director_plan(job, seconds)
+            except DirectorFailure as failure:
+                raise AdapterError(
+                    failure.user_message,
+                    internal_detail=failure.internal_detail,
+                    retriable=False,
+                ) from failure
+
         prompt_plan: list[str] | None = None
 
         def prompt_for_step(step: ChainStep) -> str:
             nonlocal prompt_plan
             if prompt_plan is None:
-                prompt_plan = plan_section_prompts(
-                    job.prompt, step.total, total_seconds=seconds
-                )
+                if director_plan is not None:
+                    prompt_plan = compile_section_prompts(
+                        director_plan, step.total, total_seconds=seconds
+                    )
+                else:
+                    prompt_plan = plan_section_prompts(
+                        job.prompt, step.total, total_seconds=seconds
+                    )
             return prompt_plan[step.index]
 
         def conditioning(step: ChainStep) -> list[ConditioningFrame]:
@@ -2218,7 +2254,16 @@ class LtxAdapter:
             # offers. It REWRITES the prompt, so it stays opt-in per workflow
             # and off by default: a user who typed something specific should
             # not silently get a machine's paraphrase of it.
-            cmd.append("--enhance-prompt")
+            #
+            # The gemma4 encode root cannot generate, so the pipeline REQUIRES
+            # a separate instruct checkpoint alongside the bare flag — without
+            # it the render exits with a ValueError before any GPU work. The
+            # root is the same Apache-2.0 checkpoint the Director planner
+            # runs, so one download serves both.
+            cmd += [
+                "--enhance-prompt",
+                "--prompt-enhancer-gemma-root", str(settings.director_gemma_root),
+            ]
         for item in conditioning:
             # `--image PATH FRAME_IDX STRENGTH`, once per conditioning frame,
             # in ascending frame order so the pipeline reads them as a timeline

@@ -165,6 +165,12 @@ def test_prompt_enhancement_is_off_unless_a_workflow_asks_for_it(workspace: Path
         workspace / "output.mp4",
     )
     assert "--enhance-prompt" in opted_in
+    # The gemma4 encode root cannot generate, so the bare flag alone is a
+    # pipeline ValueError — the instruct root must ride along.
+    assert (
+        opted_in[opted_in.index("--prompt-enhancer-gemma-root") + 1]
+        == str(settings.director_gemma_root)
+    )
     # Even then the user's own words are still what is sent.
     assert opted_in[opted_in.index("--prompt") + 1] == make_job(workspace).prompt
 

@@ -147,6 +147,12 @@ async def main() -> int:
     if workflow_id not in ("video-to-video", "music-video"):
         parameters["duration"] = os.getenv("DURATION", "10s")
         parameters["quality"] = "High"
+    if os.getenv("PARAMETERS"):
+        # Arbitrary request parameters, as JSON — the request-side sibling of
+        # EXECUTION, for parameters the env shortcuts above don't cover:
+        #
+        #   PARAMETERS='{"prompt_mode": "director"}' python scripts/ltx_smoke.py …
+        parameters.update(json.loads(os.environ["PARAMETERS"]))
 
     workspace = Path(tempfile.mkdtemp(prefix="ltx-smoke-"))
     job = AdapterJob(

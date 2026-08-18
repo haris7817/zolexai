@@ -203,6 +203,31 @@ class WorkerSettings(BaseSettings):
     it can be replaced without touching a line of worker code.
     """
 
+    director_planner_command: str = ""
+    """
+    How to invoke the Director-mode scene planner, which turns a one-line idea
+    into a structured dialogue plan. Empty means "the script shipped in this
+    checkout, run in the LTX environment" — see `director_planner_argv`. Same
+    seam and same reasoning as `person_matte_command`: it is model work, the
+    worker has no torch, and a subprocess CLI keeps the planning model
+    swappable without worker changes.
+    """
+
+    director_gemma_dir: Path | None = None
+    """
+    HF directory of the generative Gemma instruct checkpoint the planner runs.
+    Defaults to `<ltx_repo_dir>/models/gemma-4-e2b-it` — deliberately the same
+    checkpoint the LTX 2.5 runtime documents as its official prompt enhancer
+    (Apache 2.0), so one ~10 GB download serves both roles.
+    """
+
+    director_planner_timeout_seconds: float = 900.0
+    """
+    Wall-clock ceiling for one planning subprocess, model load included. A cold
+    load plus a long plan is minutes, not seconds; a planner that has hung is
+    better killed and retried than left holding the job's budget.
+    """
+
     ltx_quantization: str = "nvfp4-prequant"
     """
     NVFP4 is the only mode that fits the client's RTX 5090: the BF16
@@ -399,6 +424,20 @@ class WorkerSettings(BaseSettings):
         if self.person_matte_command:
             return shlex.split(self.person_matte_command)
         script = Path(__file__).resolve().parents[2] / "scripts" / "person_matte.py"
+        return ["uv", "run", "python", str(script)]
+
+    @property
+    def director_gemma_root(self) -> Path:
+        return self.director_gemma_dir or self.ltx_repo_dir / "models" / "gemma-4-e2b-it"
+
+    @property
+    def director_planner_argv(self) -> list[str]:
+        """The planning command, as argv — the `person_matte_argv` pattern:
+        the script travels with this checkout and runs in the LTX environment,
+        so a node that has pulled the worker already has the planner."""
+        if self.director_planner_command:
+            return shlex.split(self.director_planner_command)
+        script = Path(__file__).resolve().parents[2] / "scripts" / "director_plan.py"
         return ["uv", "run", "python", str(script)]
 
 
