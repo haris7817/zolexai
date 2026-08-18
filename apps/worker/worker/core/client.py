@@ -8,10 +8,14 @@ Every call carries the service token. Nothing here retries blindly: a failed
 progress report is logged and the job continues, because the lease reaper will
 recover a job whose worker genuinely went away, and a retry storm against a
 struggling API helps nobody.
+
+TRANSPORT failures are the one exception, and they are not the same thing as an
+API that is struggling — see `_RETRYABLE`.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -24,6 +28,56 @@ logger = get_logger(__name__)
 
 class ApiUnavailable(RuntimeError):
     """The API could not be reached or returned a server error."""
+
+
+#: Transport failures worth one more attempt: the request never reached the API,
+#: or the connection died underneath it. These say nothing about the API's
+#: health, so the "no retry storms" rule above does not apply — asking again on
+#: a fresh socket is the correct and complete fix.
+#:
+#: This is not hypothetical. The worker reaches the API down a long-lived
+#: tunnel, and a pooled connection that the far end (or the tunnel carrying it)
+#: has already closed raises `RemoteProtocolError` on the next write. On
+#: 2026-08-17 that single error, on a routine progress update, discarded SIX
+#: jobs — one of them a video-to-video that had already rendered seven of its
+#: eight sections, six minutes of GPU work thrown away because a status message
+#: did not land. Every one of those jobs was healthy.
+#:
+#: `ReadTimeout` is deliberately absent: there the request DID reach the API and
+#: may still be executing, so repeating it would be a second instruction rather
+#: than a retry.
+_RETRYABLE = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+    httpx.ReadError,
+    httpx.RemoteProtocolError,
+    httpx.WriteError,
+)
+
+#: Attempts per call, including the first. Three covers the observed failure —
+#: one dead pooled socket, one tunnel reconnect — and stops well short of the
+#: hammering this module has always warned against.
+_TRANSPORT_ATTEMPTS = 3
+
+#: Waits before the second and third attempts. Short on purpose: a job is
+#: holding a GPU while this sleeps.
+_TRANSPORT_BACKOFF_SECONDS = (0.5, 1.5)
+
+#: How long an idle connection may be kept in the pool, in seconds.
+#:
+#: This is the ROOT CAUSE of the dropped jobs above, and it is a race we were
+#: losing by default. The API runs uvicorn with no `--timeout-keep-alive`, so
+#: the server closes an idle connection after 5s — and httpx's own default
+#: `keepalive_expiry` is also 5.0s. Both ends therefore expire the same socket
+#: at the same instant, and any call landing on that boundary finds a
+#: connection the client still trusts and the server has already closed.
+#:
+#: Expiring well before the server does removes the race rather than surviving
+#: it: the pool never offers a socket old enough to have been closed. The cost
+#: is a TCP handshake on calls more than two seconds apart, which over a
+#: loopback tunnel is nothing next to the job it protects.
+_KEEPALIVE_EXPIRY_SECONDS = 2.0
 
 
 #: Mirrors `JobFailRequest.internal_detail` in the API's internal schema. Over
@@ -65,16 +119,45 @@ class WorkerApiClient:
             base_url=settings.api_v1,
             timeout=httpx.Timeout(settings.request_timeout_seconds),
             headers={"X-Worker-Token": settings.worker_api_token},
+            limits=httpx.Limits(keepalive_expiry=_KEEPALIVE_EXPIRY_SECONDS),
         )
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            response = await self._client.post(path, json=payload)
-        except httpx.HTTPError as exc:
-            raise ApiUnavailable(f"{type(exc).__name__} calling {path}") from exc
+    async def _send(self, path: str, payload: dict[str, Any], *, attempts: int) -> httpx.Response:
+        """POSTs once, or a few times if the transport — not the API — failed."""
+        for attempt in range(1, attempts + 1):
+            try:
+                return await self._client.post(path, json=payload)
+            except _RETRYABLE as exc:
+                if attempt == attempts:
+                    raise ApiUnavailable(f"{type(exc).__name__} calling {path}") from exc
+                delay = _TRANSPORT_BACKOFF_SECONDS[
+                    min(attempt - 1, len(_TRANSPORT_BACKOFF_SECONDS) - 1)
+                ]
+                logger.warning(
+                    "api_transport_retry",
+                    extra={
+                        "path": path,
+                        "attempt": attempt,
+                        "attempts": attempts,
+                        "reason": type(exc).__name__,
+                    },
+                )
+                await asyncio.sleep(delay)
+            except httpx.HTTPError as exc:
+                # Everything else — a timeout the API may still be serving, a
+                # malformed response — is reported as-is rather than repeated.
+                raise ApiUnavailable(f"{type(exc).__name__} calling {path}") from exc
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _post(
+        self, path: str, payload: dict[str, Any], *, retry: bool = True
+    ) -> dict[str, Any]:
+        response = await self._send(
+            path, payload, attempts=_TRANSPORT_ATTEMPTS if retry else 1
+        )
 
         if response.status_code >= 500:
             raise ApiUnavailable(f"HTTP {response.status_code} from {path}")
@@ -118,6 +201,13 @@ class WorkerApiClient:
         )
 
     async def claim(self, worker_id: str, workflows: list[str] | None = None) -> dict[str, Any]:
+        # The ONE call that is not retried. Every other endpoint here can be
+        # repeated safely — progress clamps forward, completion and failure are
+        # terminal transitions the API validates, register and heartbeat are
+        # upserts — but a claim whose RESPONSE was lost has already taken a job
+        # on the server, and asking again would take a second one this worker
+        # will never run. It needs no retry anyway: the poll loop is the retry,
+        # and it comes round in a second.
         return await self._post(
             "/internal/jobs/claim",
             {
@@ -129,6 +219,7 @@ class WorkerApiClient:
                 # what the old row said it could do.
                 "runtimes": settings.runtime_list,
             },
+            retry=False,
         )
 
     # ── Job reporting ────────────────────────────────────────────────────

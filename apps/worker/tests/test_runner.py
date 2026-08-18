@@ -480,3 +480,41 @@ async def test_an_unreachable_api_leaves_the_job_to_the_reaper(stub_adapter) -> 
     await JobRunner(api, WORKER_ID).run(make_claim())
 
     assert api.failures == []
+
+
+async def test_a_dropped_progress_update_does_not_discard_a_healthy_job(
+    stub_adapter,
+) -> None:
+    """THE BUG, 2026-08-17: six jobs died because a STATUS MESSAGE could not be
+    delivered — one a video-to-video that had already rendered seven of its
+    eight sections. A progress update is telemetry; the job is the work.
+
+    The transport blip is transient by definition, so the run must carry on and
+    still deliver. The lease keeper is separately renewing the lease, and a
+    lease that is genuinely gone arrives as a REJECTION, which is what
+    `test_a_refused_lease_stops_the_adapter` pins — a different path entirely.
+    """
+
+    class FlakyProgressApi(FakeApi):
+        """Drops the first update, then behaves. That is the shape of the real
+        fault: one dead pooled socket, everything afterwards fine."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.dropped = 0
+
+        async def report_progress(self, job_id: str, **payload: Any) -> dict[str, Any]:
+            if self.dropped == 0:
+                self.dropped += 1
+                raise ApiUnavailable("RemoteProtocolError calling /progress")
+            return await super().report_progress(job_id, **payload)
+
+    api = FlakyProgressApi()
+    adapter = StubAdapter()
+    stub_adapter(adapter)
+
+    await JobRunner(api, WORKER_ID).run(make_claim())
+
+    assert api.dropped > 0, "the test must actually exercise a dropped update"
+    assert len(api.completed) == 1, "the job still finished and was reported"
+    assert api.failures == []

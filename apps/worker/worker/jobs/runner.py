@@ -295,6 +295,19 @@ class _LeaseKeeper:
         except LeaseLost:
             self._cancelled.set()
             raise
+        except ApiUnavailable as exc:
+            # A status update is telemetry; the job is the work. Letting this
+            # propagate discarded six healthy jobs on 2026-08-17 — one of them
+            # seven-eighths rendered — because a progress message did not land.
+            #
+            # Nothing is lost by continuing. `_loop` below is still renewing the
+            # lease and retrying this same report, `self._last` already holds the
+            # value it will send, and a lease that is genuinely gone comes back
+            # as a REJECTION (LeaseLost, above), which is a different thing from
+            # a socket that broke. The keepalive loop has always treated an
+            # outage this way; the foreground path disagreeing with it was the
+            # bug, not the policy.
+            logger.warning("progress_report_failed", extra={"reason": str(exc)})
 
     def raise_if_lost(self) -> None:
         if self._lost is not None:

@@ -142,3 +142,161 @@ async def test_a_server_error_is_an_outage() -> None:
             internal_detail="y",
             retriable=True,
         )
+
+
+# ── Transport failures are retried; API failures are not ─────────────────
+
+
+def flaky(fail_times: int, error: Exception) -> tuple[httpx.MockTransport, list[int]]:
+    """A transport that raises `error` the first `fail_times` calls.
+
+    Returns the transport and a one-element list counting every attempt, so a
+    test can assert not only that the call succeeded but how many sockets it
+    took.
+    """
+    calls = [0]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls[0] += 1
+        if calls[0] <= fail_times:
+            raise error
+        return httpx.Response(200, json={"accepted": True})
+
+    return httpx.MockTransport(handle), calls
+
+
+@pytest.fixture(autouse=True)
+def _no_backoff_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retries are real; their waits are not worth a second of test time."""
+    import worker.core.client as module
+
+    async def instant(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(module.asyncio, "sleep", instant)
+
+
+async def test_a_dropped_connection_is_retried_rather_than_losing_the_job() -> None:
+    """THE BUG, 2026-08-17. The worker reaches the API down a long-lived tunnel;
+    a pooled socket the far end has already closed raises RemoteProtocolError on
+    the next write. Six jobs died of this in one day — including a
+    video-to-video that had rendered seven of its eight sections — because one
+    routine progress update could not be delivered. Asking again on a fresh
+    socket is the whole fix."""
+    transport, calls = flaky(1, httpx.RemoteProtocolError("server disconnected"))
+
+    result = await client(transport).report_progress(
+        "job-1",
+        worker_id=WORKER_ID,
+        lease_token=LEASE,
+        status="generating",
+        progress=40,
+        message="Generating your video…",
+    )
+
+    assert result["accepted"] is True
+    assert calls[0] == 2, "the first socket failed; the second carried the report"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.RemoteProtocolError("server disconnected"),
+        httpx.ReadError("connection reset"),
+        httpx.ConnectError("tunnel down"),
+        httpx.WriteError("broken pipe"),
+    ],
+)
+async def test_every_transport_failure_class_seen_in_production_is_retried(
+    error: Exception,
+) -> None:
+    """RemoteProtocolError and ReadError are the two the logs actually show;
+    the others are the same fault arriving through a different socket call, and
+    treating any of them as an outage would keep the bug alive under a new
+    name."""
+    transport, calls = flaky(1, error)
+
+    result = await client(transport).heartbeat(WORKER_ID)
+
+    assert result["accepted"] is True
+    assert calls[0] == 2
+
+
+async def test_retries_are_bounded_and_then_reported_as_an_outage() -> None:
+    """A genuinely unreachable API must still surface as an outage — quickly.
+    Retrying forever would hold a GPU against a platform that is not coming
+    back."""
+    from worker.core.client import _TRANSPORT_ATTEMPTS, ApiUnavailable
+
+    transport, calls = flaky(99, httpx.ConnectError("tunnel down"))
+
+    with pytest.raises(ApiUnavailable) as raised:
+        await client(transport).heartbeat(WORKER_ID)
+
+    assert calls[0] == _TRANSPORT_ATTEMPTS
+    assert "ConnectError" in str(raised.value)
+
+
+async def test_a_read_timeout_is_not_repeated() -> None:
+    """The request reached the API and may still be running. Sending it again
+    would be a second instruction, not a retry — the one transport-shaped
+    failure where asking twice is worse than failing once."""
+    from worker.core.client import ApiUnavailable
+
+    transport, calls = flaky(99, httpx.ReadTimeout("no answer"))
+
+    with pytest.raises(ApiUnavailable):
+        await client(transport).heartbeat(WORKER_ID)
+
+    assert calls[0] == 1
+
+
+async def test_claiming_a_job_is_never_retried() -> None:
+    """A claim whose response was lost has already taken a job on the server;
+    asking again takes a SECOND one this worker will never run. The poll loop
+    is the retry, and it comes round in a second."""
+    from worker.core.client import ApiUnavailable
+
+    transport, calls = flaky(99, httpx.RemoteProtocolError("server disconnected"))
+
+    with pytest.raises(ApiUnavailable):
+        await client(transport).claim(WORKER_ID, ["text-to-video"])
+
+    assert calls[0] == 1
+
+
+def test_pooled_connections_expire_before_the_server_closes_them() -> None:
+    """The ROOT CAUSE, not the symptom. The API runs uvicorn with no
+    `--timeout-keep-alive`, so it drops an idle connection at 5s — and httpx's
+    own default is also 5.0s. Both ends expiring the same socket at the same
+    instant is a race the worker loses roughly 28 times a day, each one a
+    RemoteProtocolError on a connection it still believed in.
+
+    Expiring earlier removes the race instead of surviving it. If this value
+    ever creeps back up to the server's, the retries above will hide the
+    problem while it happens on every call again."""
+    from worker.core.client import _KEEPALIVE_EXPIRY_SECONDS, WorkerApiClient
+
+    UVICORN_DEFAULT_KEEPALIVE = 5.0
+    assert _KEEPALIVE_EXPIRY_SECONDS < UVICORN_DEFAULT_KEEPALIVE
+
+    pool = WorkerApiClient()._client._transport._pool
+    assert pool._keepalive_expiry == _KEEPALIVE_EXPIRY_SECONDS
+
+
+async def test_a_server_error_is_not_retried_either() -> None:
+    """A 5xx is the API answering. It is an outage to report, not a socket to
+    re-open, and hammering a struggling API is what this module has always
+    warned against."""
+    from worker.core.client import ApiUnavailable
+
+    calls = [0]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls[0] += 1
+        return httpx.Response(503, json={})
+
+    with pytest.raises(ApiUnavailable):
+        await client(httpx.MockTransport(handle)).heartbeat(WORKER_ID)
+
+    assert calls[0] == 1
