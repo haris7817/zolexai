@@ -109,6 +109,8 @@ class WorkflowRegistry:
         input_roles: set[str],
         lyrics: str | None = None,
         lyrics_language: str | None = None,
+        prompt_mode: str | None = None,
+        dialogue_language: str | None = None,
     ) -> WorkflowDefinition:
         """Checks a submitted generation request against its workflow.
 
@@ -206,6 +208,47 @@ class WorkflowRegistry:
                     }
                 )
 
+        # Prompt modes follow the lyrics policy exactly: a workflow that does
+        # not declare the control rejects the parameter, and the dependent
+        # language choice is only meaningful inside Director mode.
+        if not definition.settings.prompt_modes:
+            if prompt_mode is not None:
+                problems.append(
+                    {"field": "prompt_mode", "reason": "This tool does not offer prompt modes."}
+                )
+            if dialogue_language is not None:
+                problems.append(
+                    {
+                        "field": "dialogue_language",
+                        "reason": "This tool does not take a dialogue language.",
+                    }
+                )
+        else:
+            if prompt_mode is not None and prompt_mode not in PROMPT_MODES:
+                problems.append(
+                    {
+                        "field": "prompt_mode",
+                        "reason": "Unsupported prompt mode for this tool.",
+                        "allowed": list(PROMPT_MODES),
+                    }
+                )
+            if dialogue_language is not None:
+                if prompt_mode != "director":
+                    problems.append(
+                        {
+                            "field": "dialogue_language",
+                            "reason": "A dialogue language only applies to Director mode.",
+                        }
+                    )
+                elif dialogue_language not in DIALOGUE_LANGUAGES:
+                    problems.append(
+                        {
+                            "field": "dialogue_language",
+                            "reason": "Unsupported dialogue language.",
+                            "allowed": list(DIALOGUE_LANGUAGES),
+                        }
+                    )
+
         missing = [role for role in definition.required_roles if role not in input_roles]
         if missing:
             problems.append(
@@ -238,6 +281,24 @@ class WorkflowRegistry:
 
         return definition
 
+
+#: The two ways a prompt can be read on workflows that declare
+#: `settings.prompt_modes`. Absent means `standard`, so existing clients are
+#: untouched by the feature existing.
+PROMPT_MODES: tuple[str, ...] = ("standard", "director")
+
+#: Languages Director mode will write dialogue in. "auto" follows the idea's
+#: own language; the named five are the set the video runtime's vendor
+#: documents as validated for generated speech. Mirrored by the worker
+#: (`worker.director.provider.DIALOGUE_LANGUAGES`) and the frontend selector.
+DIALOGUE_LANGUAGES: tuple[str, ...] = (
+    "auto",
+    "english",
+    "spanish",
+    "french",
+    "german",
+    "russian",
+)
 
 #: Product display order. Every workflow surface renders in this sequence so the
 #: sidebar, All Tools, the dashboard and the landing grid can never disagree.

@@ -90,7 +90,14 @@ for (const [id, disk] of onDisk) {
     fail(`${id}.inputs: yaml [${diskRoles}] != api [${apiRoles}]`);
   }
 
-  for (const key of ["quality", "motion_strength", "prompt_adherence", "seed"]) {
+  for (const key of [
+    "quality",
+    "motion_strength",
+    "prompt_adherence",
+    "seed",
+    "lyrics",
+    "prompt_modes",
+  ]) {
     const expected = disk.settings?.[key] ?? false;
     if (expected !== api.settings[key]) {
       fail(`${id}.settings.${key}: yaml ${expected} != api ${api.settings[key]}`);

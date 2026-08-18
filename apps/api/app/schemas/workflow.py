@@ -93,6 +93,11 @@ class SettingsSpec(BaseModel):
     """Whether the panel offers a lyrics box and a lyric-language choice.
     Music only; a video workflow receiving lyrics is a client bug and is
     rejected in `validate_request`."""
+    prompt_modes: bool = False
+    """Whether the panel offers the Standard / Idea (Director) prompt-mode
+    toggle and, in Director mode, a dialogue-language choice. Text to Video
+    only today; a workflow that does not declare it rejects `prompt_mode`
+    in `validate_request`, same policy as lyrics."""
 
 
 class CapabilitiesSpec(BaseModel):

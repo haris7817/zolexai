@@ -75,6 +75,85 @@ async def test_rejects_unsupported_duration_and_lists_the_valid_ones(
     assert fields["duration"]["allowed"] == ["5s", "10s", "15s", "30s", "60s"]
 
 
+async def test_accepts_director_mode_on_text_to_video(
+    client: AsyncClient, text_to_video_request: dict
+) -> None:
+    """Text to Video declares `settings.prompt_modes`, so the director mode and
+    its language are stored with the job exactly as sent — the worker reads
+    them from there."""
+    request = {
+        **text_to_video_request,
+        "parameters": {
+            **text_to_video_request["parameters"],
+            "prompt_mode": "director",
+            "dialogue_language": "spanish",
+        },
+    }
+    response = await client.post("/api/v1/generations", json=request)
+    assert response.status_code == 202
+
+    job = (await client.get(f"/api/v1/generations/{response.json()['job_id']}")).json()
+    assert job["parameters"]["prompt_mode"] == "director"
+    assert job["parameters"]["dialogue_language"] == "spanish"
+
+
+async def test_rejects_prompt_mode_on_a_workflow_without_the_control(
+    client: AsyncClient,
+) -> None:
+    """Same policy as lyrics: present-and-unsupported is reported, never
+    silently dropped — Director mode must not leak past Text to Video."""
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "workflow_id": "image-to-video",
+            "prompt": "make it move",
+            "parameters": {
+                "duration": "5s",
+                "aspect_ratio": "16:9",
+                "prompt_mode": "director",
+            },
+            "inputs": {"source_image": "00000000-0000-0000-0000-000000000000"},
+        },
+    )
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert "prompt_mode" in fields
+
+
+async def test_rejects_a_dialogue_language_outside_director_mode(
+    client: AsyncClient, text_to_video_request: dict
+) -> None:
+    request = {
+        **text_to_video_request,
+        "parameters": {
+            **text_to_video_request["parameters"],
+            "dialogue_language": "spanish",
+        },
+    }
+    response = await client.post("/api/v1/generations", json=request)
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert "dialogue_language" in fields
+
+
+async def test_rejects_an_unknown_dialogue_language_and_lists_the_valid_ones(
+    client: AsyncClient, text_to_video_request: dict
+) -> None:
+    request = {
+        **text_to_video_request,
+        "parameters": {
+            **text_to_video_request["parameters"],
+            "prompt_mode": "director",
+            "dialogue_language": "klingon",
+        },
+    }
+    response = await client.post("/api/v1/generations", json=request)
+    assert response.status_code == 422
+    fields = {f["field"]: f for f in response.json()["error"]["details"]["fields"]}
+    assert "auto" in fields["dialogue_language"]["allowed"]
+    assert "spanish" in fields["dialogue_language"]["allowed"]
+
+
 async def test_rejects_missing_required_input(client: AsyncClient) -> None:
     response = await client.post(
         "/api/v1/generations",

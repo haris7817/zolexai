@@ -342,4 +342,6 @@ const FIELD_MAP: Record<string, string> = {
   aspect_ratio: "aspectRatio",
   quality: "quality",
   prompt: "prompt",
+  prompt_mode: "promptMode",
+  dialogue_language: "dialogueLanguage",
 };

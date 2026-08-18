@@ -46,9 +46,34 @@ export interface GenerationFormValues {
   lyrics: string;
   /** null when the workflow has no lyrics support. */
   lyricsLanguage: string | null;
+  /** "standard" | "director"; null when the workflow has no prompt modes. */
+  promptMode: string | null;
+  /** Language for Director-mode dialogue; null when there are no prompt
+   *  modes. Holds its value while the mode is "standard" so switching back
+   *  and forth does not forget the choice — it is simply not submitted. */
+  dialogueLanguage: string | null;
   /** role → asset id. null while an optional input is unfilled. */
   inputs: Record<string, string | null>;
 }
+
+/** The two ways a prompt can be read, on workflows that offer the choice. */
+export const PROMPT_MODES = ["standard", "director"] as const;
+
+/**
+ * Languages Director mode will write dialogue in. "auto" follows the idea's
+ * own language. Deliberately shorter than LYRIC_LANGUAGES: this list is only
+ * what the video runtime's vendor documents as validated for generated
+ * speech, and offering a language the voices cannot deliver would be a
+ * control the result ignores.
+ */
+export const DIALOGUE_LANGUAGES = [
+  "auto",
+  "english",
+  "spanish",
+  "french",
+  "german",
+  "russian",
+] as const;
 
 /**
  * Languages offered for GENERATED lyrics. The music model sings 50+ languages
@@ -163,6 +188,25 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
       "Choose a language.",
     ),
 
+    promptMode: choiceOrNull(
+      workflow.settings.prompt_modes ? PROMPT_MODES : [],
+      "Choose a prompt mode.",
+    ),
+    // Unlike choiceOrNull fields, null stays valid while the control exists:
+    // the language only applies in Director mode, and the resting state on
+    // Standard is simply "not applicable" rather than an error.
+    dialogueLanguage: z.union([z.string(), z.null()]).superRefine((value, ctx) => {
+      if (!workflow.settings.prompt_modes) {
+        if (value !== null) {
+          ctx.addIssue({ code: "custom", message: "Not available for this tool." });
+        }
+        return;
+      }
+      if (value !== null && !(DIALOGUE_LANGUAGES as readonly string[]).includes(value)) {
+        ctx.addIssue({ code: "custom", message: "Choose a dialogue language." });
+      }
+    }),
+
     // Required roles are enforced here, which is what makes Video to Video's
     // OPTIONAL reference image work with no bespoke rule (directive §14).
     inputs: z
@@ -196,6 +240,8 @@ export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
     seedLocked: false,
     lyrics: "",
     lyricsLanguage: workflow.settings.lyrics ? LYRIC_LANGUAGES[0] : null,
+    promptMode: workflow.settings.prompt_modes ? PROMPT_MODES[0] : null,
+    dialogueLanguage: workflow.settings.prompt_modes ? DIALOGUE_LANGUAGES[0] : null,
     inputs: Object.fromEntries(workflow.inputs.map((input) => [input.role, null])),
   };
 }
@@ -258,6 +304,18 @@ export function preserveValues(
       (LYRIC_LANGUAGES as readonly string[]).includes(previous.lyricsLanguage)
         ? previous.lyricsLanguage
         : defaults.lyricsLanguage,
+    promptMode:
+      workflow.settings.prompt_modes &&
+      previous.promptMode &&
+      (PROMPT_MODES as readonly string[]).includes(previous.promptMode)
+        ? previous.promptMode
+        : defaults.promptMode,
+    dialogueLanguage:
+      workflow.settings.prompt_modes &&
+      previous.dialogueLanguage &&
+      (DIALOGUE_LANGUAGES as readonly string[]).includes(previous.dialogueLanguage)
+        ? previous.dialogueLanguage
+        : defaults.dialogueLanguage,
     duration:
       previous.duration !== null && workflow.supported_durations.includes(previous.duration)
         ? previous.duration
@@ -311,6 +369,18 @@ export function toCreateInput(
       ...(workflow.settings.lyrics && values.lyricsLanguage
         ? { lyrics_language: values.lyricsLanguage }
         : {}),
+      // Standard mode is expressed by ABSENCE, so a request from a client
+      // that has never heard of prompt modes and a request with the toggle
+      // on Standard are byte-identical — the existing path cannot be
+      // affected by this feature existing.
+      ...(workflow.settings.prompt_modes && values.promptMode === "director"
+        ? { prompt_mode: "director" }
+        : {}),
+      ...(workflow.settings.prompt_modes &&
+      values.promptMode === "director" &&
+      values.dialogueLanguage
+        ? { dialogue_language: values.dialogueLanguage }
+        : {}),
     },
     ...(Object.keys(inputs).length ? { inputs } : {}),
   };
@@ -358,6 +428,16 @@ export function valuesFromJob(
       parameters.lyrics_language,
       workflow.settings.lyrics ? LYRIC_LANGUAGES : [],
       defaults.lyricsLanguage,
+    ),
+    promptMode: pick(
+      parameters.prompt_mode,
+      workflow.settings.prompt_modes ? PROMPT_MODES : [],
+      defaults.promptMode,
+    ),
+    dialogueLanguage: pick(
+      parameters.dialogue_language,
+      workflow.settings.prompt_modes ? DIALOGUE_LANGUAGES : [],
+      defaults.dialogueLanguage,
     ),
   };
 }

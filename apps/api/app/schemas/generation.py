@@ -44,6 +44,17 @@ class GenerationParameters(BaseModel):
     none. Recorded and passed to the worker's lyric writer; writers that
     cannot honour it say so in the log rather than silently singing English."""
 
+    prompt_mode: str | None = Field(default=None, max_length=32)
+    """How the prompt should be read: `standard` (the default — the text IS
+    the generation prompt) or `director` (the text is an IDEA, and the worker
+    plans characters, dialogue and timing from it before generating). Only
+    workflows whose definition sets `settings.prompt_modes` accept it; absent
+    means standard, so every existing client keeps its exact behaviour."""
+    dialogue_language: str | None = Field(default=None, max_length=32)
+    """Language for the dialogue Director mode writes. `auto` (or absent)
+    follows the language of the idea itself. Only meaningful — and only
+    accepted — alongside `prompt_mode: director`."""
+
 
 class GenerationCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

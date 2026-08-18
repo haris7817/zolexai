@@ -107,6 +107,8 @@ class GenerationService:
             input_roles=set(request.inputs),
             lyrics=params.lyrics,
             lyrics_language=params.lyrics_language,
+            prompt_mode=params.prompt_mode,
+            dialogue_language=params.dialogue_language,
         )
 
         await self._validate_inputs(user, request, definition)

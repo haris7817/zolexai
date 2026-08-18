@@ -21,6 +21,11 @@ export interface CreateGenerationInput {
     motion_strength?: number;
     prompt_adherence?: number;
     seed?: number | null;
+    lyrics?: string;
+    lyrics_language?: string;
+    /** Only ever sent as "director" — Standard mode is expressed by absence. */
+    prompt_mode?: string;
+    dialogue_language?: string;
   };
   inputs?: Record<string, string>;
 }

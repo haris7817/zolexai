@@ -116,6 +116,10 @@ export const workflowSchema = z.object({
     // Music only: a lyrics box plus a lyric-language choice. Defaulted so
     // API responses predating the field still parse.
     lyrics: z.boolean().default(false),
+    // Text to Video only: the Standard / Idea (Director) prompt-mode toggle
+    // plus, in Director mode, a dialogue-language choice. Defaulted for the
+    // same reason as `lyrics`.
+    prompt_modes: z.boolean().default(false),
   }),
 
   capabilities: z.object({

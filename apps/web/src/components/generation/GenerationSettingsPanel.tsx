@@ -15,7 +15,11 @@ import {
   SelectField,
   ToggleField,
 } from "@/components/ui/Controls";
-import { LYRIC_LANGUAGES, type GenerationFormValues } from "@/features/generation/form";
+import {
+  DIALOGUE_LANGUAGES,
+  LYRIC_LANGUAGES,
+  type GenerationFormValues,
+} from "@/features/generation/form";
 import {
   autoDurationLabel,
   durationLabel,
@@ -60,6 +64,10 @@ export function GenerationSettingsPanel({
    * `reset()` on every workflow switch.
    */
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  /** Only meaningful on workflows that declare `settings.prompt_modes`. */
+  const directorMode =
+    workflow.settings.prompt_modes && form.watch("promptMode") === "director";
 
   return (
     <>
@@ -115,14 +123,51 @@ export function GenerationSettingsPanel({
           </div>
         ))}
 
+        {/* ── Prompt mode — rendered only when the workflow declares it.
+            Standard submits exactly what the pre-feature form submitted;
+            Idea (Director) has the backend plan characters, dialogue and
+            timing from a simple idea before generating. */}
+        {workflow.settings.prompt_modes ? (
+          <>
+            <SectionLabel>Prompt mode</SectionLabel>
+            <Controller
+              control={form.control}
+              name="promptMode"
+              render={({ field }) => (
+                <div className={directorMode ? "mb-2" : "mb-6"}>
+                  <SegmentedControl
+                    label="Prompt mode"
+                    value={field.value ?? "standard"}
+                    onChange={field.onChange}
+                    options={[
+                      { value: "standard", label: "Standard" },
+                      { value: "director", label: "Idea (Director)" },
+                    ]}
+                  />
+                </div>
+              )}
+            />
+            {directorMode ? (
+              <p className="text-zx-text-muted mb-4 text-[11.5px] leading-[1.5]">
+                Describe a simple idea — AI will create the scene, characters
+                and dialogue automatically.
+              </p>
+            ) : null}
+          </>
+        ) : null}
+
         {/* ── Prompt ───────────────────────────────────────────────── */}
         <SectionLabel as="label" htmlFor="zx-prompt">
-          Prompt
+          {directorMode ? "Idea" : "Prompt"}
         </SectionLabel>
         <textarea
           id="zx-prompt"
           {...form.register("prompt")}
-          placeholder={workflow.prompt.placeholder}
+          placeholder={
+            directorMode
+              ? "Describe your idea — who is in the scene, where, and what happens…"
+              : workflow.prompt.placeholder
+          }
           maxLength={workflow.prompt.max_length}
           rows={4}
           aria-invalid={Boolean(errors.prompt)}
@@ -135,6 +180,35 @@ export function GenerationSettingsPanel({
           <p role="alert" className="text-zx-error mb-6 text-[11.5px] font-semibold">
             {errors.prompt.message}
           </p>
+        ) : null}
+
+        {/* ── Dialogue language — Director mode only ───────────────── */}
+        {directorMode ? (
+          <>
+            <SectionLabel as="label" htmlFor="zx-dialogue-language">
+              Dialogue language
+            </SectionLabel>
+            <Controller
+              control={form.control}
+              name="dialogueLanguage"
+              render={({ field }) => (
+                <SelectField
+                  id="zx-dialogue-language"
+                  value={field.value ?? DIALOGUE_LANGUAGES[0]}
+                  onChange={(event) => field.onChange(event.target.value)}
+                  className="mb-6"
+                >
+                  {DIALOGUE_LANGUAGES.map((language) => (
+                    <option key={language} value={language}>
+                      {language === "auto"
+                        ? "Auto (match my idea)"
+                        : language.charAt(0).toUpperCase() + language.slice(1)}
+                    </option>
+                  ))}
+                </SelectField>
+              )}
+            />
+          </>
         ) : null}
 
         {/* ── Lyrics — rendered only when the workflow declares the control.
