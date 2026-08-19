@@ -154,6 +154,7 @@ from worker.media import (
     ffmpeg,
     mux_audio,
     normalize_clip,
+    plan_segments,
     probe_media,
     verify_output,
 )
@@ -537,6 +538,39 @@ _V2V_REFERENCE_STRENGTH = 0.3
 the contract the customer reads says it "guides the look", and a strength that
 made it the opening frame would be replacing the source's intent with it.
 Setting this to 0 in a workflow drops reference conditioning entirely."""
+
+_V2V_IDENTITY_ANCHOR_STRENGTH = 0.65
+"""The reference image at frame 0 of the FIRST pass, under
+`v2v_reference_identity`. High enough to seed the replacement — the reference
+engine's own head-start value on this pipeline family is 0.65 on retry, ≤1.0
+otherwise — and below full strength because the edge map still owns the
+opening composition and a reference that outweighed it would replace the
+shot, not the person."""
+
+_V2V_IDENTITY_REFRESH_STRENGTH = 0.35
+"""The reference image again, in EVERY later pass, at an interior frame.
+
+This is the long-form half of identity replacement, and it is the exact
+mechanism image-to-video already uses to stop a chained render forgetting its
+subject (`i2v_reference_strength`): the continuity frame carries temporal
+state but is a decaying identity anchor — each pass reproduces the previous
+pass's rendering of the person, and small errors compound back toward
+whatever the control signal suggests, which is the source person. Re-showing
+the reference itself every pass is what stops the drift. Away from frame 0 so
+it never fights the seam."""
+
+_V2V_IDENTITY_SUBJECT_ATTENTION = 0.5
+"""How hard the edge map still steers the PERSON under identity replacement.
+
+The mirror of person lock's `BACKGROUND_ATTENTION`, and the load-bearing half
+of the mode: at 1.0 the canny edges re-impose the source person's facial
+geometry — jawline, hairline, features — in every pass, and no reference
+strength can win against a control signal that redraws the original face
+outline 24 times a second. Lowered, the person's placement and pose still
+track the footage while their appearance is freed for the reference to own.
+Toward 0 the person stops following the source's motion, which defeats the
+workflow. The scene around them stays at full strength — camera and layout
+are not what this mode is asked to change."""
 
 _V2V_CONTROL_STRENGTH = 1.0
 """How hard the edge map pulls, on the `transform` engine.
@@ -1184,6 +1218,22 @@ class LtxAdapter:
                 job, reporter, staged, source, target_seconds, reference, grid
             )
 
+        if job.execution.get("v2v_reference_identity") and reference is not None:
+            # Identity replacement is built on the transform engine's control
+            # and attention machinery. Running this job through the still-
+            # conditioned restyle would deliver the source person unchanged
+            # while the workflow claims replacement — the silent-success
+            # failure mode, refused rather than shipped.
+            raise AdapterError(
+                "This tool is temporarily unavailable.",
+                internal_detail=(
+                    "v2v_reference_identity requires `v2v_engine: transform`; "
+                    "the still-conditioned restyle cannot replace a person and "
+                    "must not pretend to"
+                ),
+                retriable=False,
+            )
+
         # An explicit count still wins — it is how a workflow pins conditioning
         # for footage where the derived density is wrong — but the default is
         # derived per pass from the duration it actually has to cover.
@@ -1244,17 +1294,18 @@ class LtxAdapter:
             ]
             return items
 
+        per_pass = self._per_pass_seconds(job, grid)
         rendered = await render_chain(
             job,
             target_seconds,
-            per_pass_seconds=self._per_pass_seconds(job, grid),
+            per_pass_seconds=per_pass,
             render=self._renderer(job, reporter, dimensions=grid, conditioning=conditioning),
             reporter=reporter,
             prefix="restyled",
         )
 
         return await self._deliver_restyle(
-            job, reporter, rendered, staged, source, target_seconds
+            job, reporter, rendered, staged, source, target_seconds, per_pass
         )
 
     async def _run_transform(
@@ -1293,11 +1344,39 @@ class LtxAdapter:
         # workflow says otherwise: it adds a matting pass per section, and the
         # existing engine is what has been serving customers.
         person_lock = bool(job.execution.get("v2v_person_lock"))
+        # `execution.v2v_reference_identity` is the opposite ask: the person
+        # should NOT survive — the uploaded reference image supplies who they
+        # are, while the footage keeps supplying what they do. Three levers
+        # move together (see the constants for why each exists): the reference
+        # is re-anchored in EVERY pass rather than shown once, and the edge
+        # map's grip is loosened over the person's own region so the source's
+        # facial geometry stops being re-imposed. Without a reference image
+        # the flag is inert and the job is an ordinary transform.
+        identity = bool(job.execution.get("v2v_reference_identity")) and reference is not None
+        if identity and person_lock:
+            raise AdapterError(
+                "This tool is temporarily unavailable.",
+                internal_detail=(
+                    "v2v_person_lock and v2v_reference_identity are both set: "
+                    "one preserves the source person, the other replaces them. "
+                    "A workflow must choose."
+                ),
+                retriable=False,
+            )
         strength = job.execution_float("v2v_control_strength", _V2V_CONTROL_STRENGTH)
         lora_strength = job.execution_float("v2v_lora_strength", _V2V_LORA_STRENGTH)
         continuity = job.execution_float("v2v_continuity_strength", _V2V_CONTINUITY_STRENGTH)
         reference_strength = job.execution_float(
             "v2v_reference_strength", _V2V_REFERENCE_STRENGTH
+        )
+        anchor_strength = job.execution_float(
+            "v2v_identity_anchor_strength", _V2V_IDENTITY_ANCHOR_STRENGTH
+        )
+        refresh_strength = job.execution_float(
+            "v2v_identity_refresh_strength", _V2V_IDENTITY_REFRESH_STRENGTH
+        )
+        subject_attention = job.execution_float(
+            "v2v_identity_subject_attention", _V2V_IDENTITY_SUBJECT_ATTENTION
         )
         low = job.execution_float("v2v_edge_low", DEFAULT_EDGE_LOW)
         high = job.execution_float("v2v_edge_high", DEFAULT_EDGE_HIGH)
@@ -1308,6 +1387,24 @@ class LtxAdapter:
         )
 
         def conditioning(step: ChainStep) -> list[ConditioningFrame]:
+            if identity:
+                # The reference conditions EVERY pass, not only the first.
+                # A continuity frame carries the replacement forward but
+                # decays — each pass reproduces the previous pass's rendering,
+                # and the errors compound back toward what the control signal
+                # suggests, which is the source person. Ascending frame order,
+                # as `_command` requires.
+                if step.previous_frame is None:
+                    return [ConditioningFrame(reference, 0, anchor_strength)]
+                items = [ConditioningFrame(step.previous_frame, 0, continuity)]
+                if refresh_strength > 0:
+                    frames = self._frame_count(step.seconds)
+                    interior = min(frames - 1, max(1, frames // 3))
+                    if interior > 0:
+                        items.append(
+                            ConditioningFrame(reference, interior, refresh_strength)
+                        )
+                return items
             # Frame 0 only. The control clip already states where everything is
             # for the whole window, so source stills would be a second, weaker
             # copy of the same instruction — and a redundant one that reasserts
@@ -1343,12 +1440,44 @@ class LtxAdapter:
             return ControlConditioning(path, strength)
 
         async def attention(step: ChainStep, frames: int) -> MaskConditioning | None:
-            """Weight the subject's region above the rest of the frame.
+            """Per-region weights on the control signal, when a mode needs them.
 
-            Only reachable under person lock: without a matte there is no
-            region to weight, and a mask of all one value is a slower way of
-            saying nothing.
+            Person lock weights the subject ABOVE the scene (their real pixels
+            are inside the control clip and must be followed hard). Identity
+            replacement weights them BELOW it (the edges over the person are
+            the source's facial geometry, which is exactly what must lose its
+            grip). Neither mode active → no mask, and a mask of all one value
+            would be a slower way of saying nothing.
+
+            A matting failure here fails the pass. Delivering the source
+            person at full control strength while claiming the reference
+            replaced them is the one outcome this mode must never produce.
             """
+            if identity:
+                matte = await cancellable(
+                    job,
+                    build_person_matte(
+                        staged,
+                        job.workspace / f"matte-{step.index:04d}.mp4",
+                        start_seconds=step.segment.start_seconds,
+                        duration_seconds=step.seconds,
+                        width=grid[0],
+                        height=grid[1],
+                        fps=float(settings.ltx_frame_rate),
+                        frames=frames,
+                    ),
+                )
+                weights = await cancellable(
+                    job,
+                    build_attention_mask(
+                        matte,
+                        job.workspace / f"attention-{step.index:04d}.mp4",
+                        frames=frames,
+                        background=1.0,
+                        subject=subject_attention,
+                    ),
+                )
+                return MaskConditioning(weights, 1.0)
             if not person_lock:
                 return None
             matte = job.workspace / f"matte-{step.index:04d}.mp4"
@@ -1395,7 +1524,7 @@ class LtxAdapter:
         )
 
         return await self._deliver_restyle(
-            job, reporter, rendered, staged, source, target_seconds
+            job, reporter, rendered, staged, source, target_seconds, per_pass
         )
 
     async def _deliver_restyle(
@@ -1406,6 +1535,7 @@ class LtxAdapter:
         staged: Path,
         source: MediaInfo,
         target_seconds: float,
+        per_pass_seconds: float,
     ) -> AdapterResult:
         """Assemble, restore the source's audio once, verify, hand back.
 
@@ -1413,6 +1543,18 @@ class LtxAdapter:
         specific — and because "the source's audio survives exactly once" and
         "the result is the source's length" are promises that must not be able
         to hold on one path and quietly not on the other.
+
+        `per_pass_seconds` re-derives the chain's own plan so each section can
+        be delivered at exactly its planned length. This workflow lays ONE
+        continuous soundtrack — the source's — over sections that were
+        generated separately, so a section delivered even half a frame long
+        pushes every later section's content later against that audio. The
+        error is small and it only ever accumulates: measured arithmetically,
+        a 37s source at 30fps drifts +33ms per seam and ends +133ms late,
+        which is past the ~45ms threshold where a viewer sees a mouth move
+        after the words. Sections whose planned lengths are whole frames were
+        never affected, which is why this surfaced as "minor" and only on some
+        uploads.
         """
         await reporter.stitching()
         width, height = output_dimensions(source.width, source.height)
@@ -1420,6 +1562,9 @@ class LtxAdapter:
         keep_audio = source.has_audio
         self._record_audio_mode(
             job, AudioMode.SOURCE_AUDIO if keep_audio else AudioMode.NO_AUDIO
+        )
+        section_frames = self._planned_section_frames(
+            rendered, target_seconds, per_pass_seconds, fps
         )
         output = job.workspace / "output.mp4"
 
@@ -1435,6 +1580,7 @@ class LtxAdapter:
                 dimensions=(width, height),
                 fps=fps,
                 audio=False,
+                section_frames=section_frames,
             )
             if not keep_audio:
                 return picture.replace(output)
@@ -1629,8 +1775,16 @@ class LtxAdapter:
         dimensions: tuple[int, int],
         fps: float | None = None,
         audio: bool,
+        section_frames: Sequence[int] | None = None,
     ) -> Path:
-        """Normalize FPS/timebase/streams before any generated-section concat."""
+        """Normalize FPS/timebase/streams before any generated-section concat.
+
+        `section_frames` pins each normalized section to an exact frame count
+        (see `_planned_section_frames`). Callers that lay ONE continuous
+        soundtrack over the stitched picture need this; callers whose sections
+        carry their own audio do not, because there any duration rounding moves
+        both streams together.
+        """
         width, height = dimensions
         normalized: list[Path] = []
         for index, part in enumerate(rendered):
@@ -1643,9 +1797,52 @@ class LtxAdapter:
                     height=height,
                     fps=fps or float(settings.ltx_frame_rate),
                     audio=audio,
+                    frames=(
+                        section_frames[index] if section_frames is not None else None
+                    ),
                 )
             )
         return await concat_segments(normalized, output)
+
+    def _planned_section_frames(
+        self,
+        rendered: list[Path],
+        target_seconds: float,
+        per_pass_seconds: float,
+        fps: float,
+    ) -> list[int] | None:
+        """Each section's delivery length in whole frames, from the plan.
+
+        `plan_segments` is pure, so calling it again with the chain's own
+        inputs reproduces the chain's own windows. Counts are allocated from
+        the CUMULATIVE boundary (`round(end · fps) − round(start · fps)`)
+        rather than per-section, so rounding can never walk: every section
+        starts within half a delivery frame of its planned timestamp, and the
+        error at the last seam is the same as at the first.
+
+        Returns None when the recomputed plan does not match what was actually
+        rendered — that would mean this arithmetic has diverged from the
+        chain's, and delivering with the historical quantization is strictly
+        better than cutting sections at wrong lengths.
+        """
+        segments = plan_segments(
+            target_seconds, max_segment_seconds=per_pass_seconds
+        )
+        if len(segments) != len(rendered):
+            logger.warning(
+                "section_plan_mismatch",
+                extra={
+                    "planned_sections": len(segments),
+                    "rendered_sections": len(rendered),
+                },
+            )
+            return None
+        counts: list[int] = []
+        for segment in segments:
+            start = round(segment.start_seconds * fps)
+            end = round((segment.start_seconds + segment.duration_seconds) * fps)
+            counts.append(max(1, end - start))
+        return counts
 
     def _record_audio_mode(self, job: AdapterJob, mode: AudioMode) -> None:
         logger.info(

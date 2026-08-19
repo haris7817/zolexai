@@ -111,6 +111,7 @@ async def normalize_clip(
     height: int,
     fps: float,
     audio: bool,
+    frames: int | None = None,
     timeout: float = 900.0,
 ) -> Path:
     """Re-encodes `source` to exactly the given parameters.
@@ -124,6 +125,20 @@ async def normalize_clip(
     decides once per assembly, so no part of a stitched file can disagree
     about having audio — mixed presence is exactly what breaks the concat
     demuxer.
+
+    `frames` pins the output to exactly that many frames. A stitched timeline
+    needs this: every re-time can only produce WHOLE frames, so a section
+    whose planned length is not a whole number of frames comes back a fraction
+    long, and butt-joining such sections against one continuous soundtrack
+    accumulates that fraction at every seam. `None` keeps the historical
+    behaviour: the clip's own length, quantized.
+
+    The pad that backs the pin is deliberately TWO FRAMES, not open-ended.
+    Rounding is the only legitimate shortfall and it is under one frame; a
+    clip materially shorter than its pin is a faulty render, and cloning its
+    last picture up to length would hide exactly the wrong-length fault the
+    output verification exists to catch. Such a clip comes back short here,
+    and fails honestly there.
     """
     info = await probe_media(source)
     if not info.has_video:
@@ -133,6 +148,13 @@ async def normalize_clip(
         f"scale={width}:{height}:force_original_aspect_ratio=increase,"
         f"crop={width}:{height},fps={fps:g},format=yuv420p"
     )
+    if frames is not None:
+        if frames < 1:
+            raise ValueError(f"a normalized clip needs at least one frame, got {frames}")
+        # The clone-pad + hard count recipe the control extractor uses —
+        # `-frames:v` alone cannot lengthen a short clip — but bounded to the
+        # rounding it exists to absorb (see the docstring).
+        filters += f",tpad=stop_mode=clone:stop_duration={2 / max(fps, 1e-6):.3f}"
 
     args = ["-i", str(source)]
     synthesize_silence = audio and not info.has_audio
@@ -141,6 +163,8 @@ async def normalize_clip(
         args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
 
     args += ["-filter:v", filters, "-map", "0:v:0"]
+    if frames is not None:
+        args += ["-frames:v", str(frames), "-fps_mode", "cfr"]
     if synthesize_silence:
         args += ["-map", "1:a:0", "-shortest", *_AUDIO_ARGS]
     elif audio:

@@ -272,20 +272,29 @@ async def build_attention_mask(
     *,
     frames: int,
     background: float = BACKGROUND_ATTENTION,
+    subject: float = 1.0,
     timeout: float = 900.0,
 ) -> Path:
     """The matte rescaled into the pipeline's per-region conditioning weights.
 
-    The subject stays at full strength and everything else is lifted to
-    `background`, so the model follows the person's real pixels hard while the
-    scene keeps enough of the edge map to hold its geometry.
+    With the defaults — person lock — the subject stays at full strength and
+    everything else is lifted to `background`, so the model follows the
+    person's real pixels hard while the scene keeps enough of the edge map to
+    hold its geometry.
+
+    The two weights are independent because identity REPLACEMENT needs them
+    the other way round: `background=1.0, subject=<lowered>` keeps the edge
+    map's full grip on the scene and the camera while loosening it exactly
+    where the person is, so their pose still tracks the footage but their
+    facial geometry stops being re-imposed — which is what lets a reference
+    image supply the identity instead.
     """
     if frames < 1:
         raise ValueError(f"an attention mask needs at least one frame, got {frames}")
 
-    weight = min(1.0, max(0.0, background))
-    floor = round(weight * 255)
-    gain = (255 - floor) / 255
+    floor = round(min(1.0, max(0.0, background)) * 255)
+    peak = round(min(1.0, max(0.0, subject)) * 255)
+    gain = (peak - floor) / 255
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -293,7 +302,7 @@ async def build_attention_mask(
             [
                 "-i", str(matte),
                 "-filter:v",
-                f"format=gray,lutyuv=y={floor}+val*{gain:.6f},format=yuv420p",
+                f"format=gray,lutyuv=y={floor}+val*({gain:.6f}),format=yuv420p",
                 "-frames:v", str(frames),
                 "-fps_mode", "cfr",
                 "-an",

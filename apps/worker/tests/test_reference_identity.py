@@ -1,0 +1,367 @@
+"""Reference identity: the person follows the picture, the footage keeps the motion.
+
+`execution.v2v_reference_identity` turns the optional reference image from a
+one-shot look hint into the answer to "who is in this video". The mechanics
+are three levers that only work together, and each test pins one of them:
+
+**The reference conditions every pass.** The M1 contract showed it once, on
+the first pass, at 0.3 — which is why a 30-second result drifted back to the
+source person by its second section. Identity mode anchors the opening on the
+reference and then re-shows it at an interior frame of every later pass,
+exactly the mechanism image-to-video already uses to keep its subject.
+
+**The edge map lets go of the person.** Canny edges of a face ARE its
+geometry — jawline, hairline, features — and a control signal that redraws
+the original face outline 24 times a second beats any reference strength. A
+person matte turns into an attention mask weighting the person's region BELOW
+the scene, so pose still tracks while appearance is freed.
+
+**Nothing silently pretends.** Identity without the transform engine, or
+combined with person lock (its exact opposite), or with matting broken, is a
+refusal — never a job that delivers the source person while claiming the
+reference replaced them.
+
+Default behaviour without the flag is pinned untouched by the existing
+video-to-video and transform suites.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from tests.conftest import (
+    collect,
+    conditioning_of,
+    invocations,
+    make_clip,
+    make_job,
+    needs_ffmpeg,
+    render_stub,
+    staged_input,
+)
+from worker.adapters.base import AdapterError
+from worker.media import FfmpegError, extract_final_frame, probe_media
+
+
+def identity_job(workspace: Path, source: Path, reference: Path | None, **overrides):
+    execution = {
+        "runtime": "ltx",
+        "v2v_engine": "transform",
+        "v2v_reference_identity": True,
+    }
+    execution.update(overrides.pop("execution", {}))
+    inputs = [staged_input("source_video", "video", "video/mp4", source)]
+    if reference is not None:
+        inputs.append(staged_input("reference_image", "image", "image/png", reference))
+    defaults = dict(
+        workflow_id="video-to-video",
+        prompt="keep the performance and the camera, use the person from the reference",
+        parameters={"aspect_ratio": "16:9"},
+        inputs=inputs,
+        execution=execution,
+    )
+    return make_job(workspace, **{**defaults, **overrides})
+
+
+def stub_matte(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """Synthesises a matte at whatever shape it is asked for, recording the ask.
+
+    Matting is model work that runs in the GPU environment; the suite
+    substitutes it the way it substitutes the pipelines, and everything
+    downstream — the weighting, the argv — runs for real against correctly
+    shaped inputs.
+    """
+    from worker.media import ffmpeg as run_ffmpeg
+    from worker.media import masks
+
+    calls: list[dict] = []
+
+    async def fake(
+        source: Path, dest: Path, *, width: int, height: int,
+        fps: float, frames: int, **kwargs,
+    ) -> Path:
+        calls.append(
+            {"source": source, "width": width, "height": height,
+             "fps": fps, "frames": frames}
+        )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        await run_ffmpeg(
+            [
+                "-f", "lavfi", "-i", f"color=black:s={width}x{height}:r={fps:g}",
+                "-vf", (
+                    f"drawbox=x={width // 4}:y=0:w={width // 2}:h={height}"
+                    ":color=white:t=fill,format=yuv420p"
+                ),
+                "-frames:v", str(frames),
+                "-fps_mode", "cfr",
+                "-c:v", "libx264", "-preset", "ultrafast", str(dest),
+            ]
+        )
+        return dest
+
+    monkeypatch.setattr(masks, "build_person_matte", fake)
+    monkeypatch.setattr("worker.adapters.ltx.build_person_matte", fake)
+    return calls
+
+
+def record_attention(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """Passes build_attention_mask through for real, recording its weights."""
+    from worker.media import masks
+
+    calls: list[dict] = []
+    real = masks.build_attention_mask
+
+    async def recording(matte: Path, dest: Path, **kwargs) -> Path:
+        calls.append(dict(kwargs))
+        return await real(matte, dest, **kwargs)
+
+    monkeypatch.setattr("worker.adapters.ltx.build_attention_mask", recording)
+    return calls
+
+
+def mask_of(argv: list[str]) -> tuple[str, float] | None:
+    if "--conditioning-attention-mask" not in argv:
+        return None
+    index = argv.index("--conditioning-attention-mask")
+    return argv[index + 1], float(argv[index + 2])
+
+
+# ── The reference persists through every pass ────────────────────────────
+
+
+@needs_ffmpeg
+async def test_the_reference_anchors_the_opening_and_refreshes_every_pass(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Long-form is where the old contract failed: one weak showing on pass
+    one, then every later pass chained off renders alone and walked back to
+    the source person. Identity mode re-shows the picture itself, every pass,
+    away from the seam."""
+    source = await make_clip(workspace / "source.mp4", 3.7)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    stub_matte(monkeypatch)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = identity_job(
+        workspace, source, reference,
+        execution={"transform_pass_seconds": 1},
+    )
+    await collect(job)
+
+    passes = invocations(log)
+    assert len(passes) == 4
+
+    first = conditioning_of(passes[0])
+    assert first == [(str(reference), 0, 0.65)], (
+        "the opening is anchored on the reference, and on nothing else"
+    )
+
+    for argv in passes[1:]:
+        items = conditioning_of(argv)
+        paths = [path for path, _, _ in items]
+        assert str(reference) in paths, "a pass without the reference drifts back"
+        seam = items[0]
+        assert seam[0] != str(reference) and seam[1] == 0, (
+            "frame 0 stays the seam's; the reference must not fight it"
+        )
+        refresh = next(item for item in items if item[0] == str(reference))
+        assert refresh[1] > 0
+        assert refresh[2] == pytest.approx(0.35)
+
+
+@needs_ffmpeg
+async def test_the_identity_strengths_are_tunable_per_workflow(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The right values are a GPU judgement; the sweep script sets them
+    through the same private keys every other conditioning dial uses."""
+    source = await make_clip(workspace / "source.mp4", 3.7)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    stub_matte(monkeypatch)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = identity_job(
+        workspace, source, reference,
+        execution={
+            "transform_pass_seconds": 1,
+            "v2v_identity_anchor_strength": 0.8,
+            "v2v_identity_refresh_strength": 0.5,
+        },
+    )
+    await collect(job)
+
+    passes = invocations(log)
+    assert conditioning_of(passes[0])[0][2] == pytest.approx(0.8)
+    refresh = next(
+        item for item in conditioning_of(passes[1]) if item[0] == str(reference)
+    )
+    assert refresh[2] == pytest.approx(0.5)
+
+
+# ── The edge map lets go of the person ───────────────────────────────────
+
+
+@needs_ffmpeg
+async def test_identity_softens_the_control_grip_over_the_person(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every pass mattes its own window and weights the person BELOW the
+    scene — the mirror of person lock. The scene keeps the edge map's full
+    grip (camera, layout); the person's region is where the reference is
+    allowed to win."""
+    source = await make_clip(workspace / "source.mp4", 3.7)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    mattes = stub_matte(monkeypatch)
+    weights = record_attention(monkeypatch)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = identity_job(
+        workspace, source, reference,
+        execution={"transform_pass_seconds": 1},
+    )
+    await collect(job)
+
+    passes = invocations(log)
+    assert len(mattes) == len(passes), "one matte per pass — identity is not a first-pass event"
+    for argv in passes:
+        assert "--video-conditioning" in argv, "the control signal still carries the motion"
+        masked = mask_of(argv)
+        assert masked is not None, "every pass weights the person's region"
+        assert masked[1] == pytest.approx(1.0)
+
+    for call, matte_call in zip(weights, mattes, strict=True):
+        assert call["background"] == pytest.approx(1.0)
+        assert call["subject"] == pytest.approx(0.5)
+        assert call["frames"] == matte_call["frames"], (
+            "a mask of a different length weights the wrong pixels"
+        )
+
+
+@needs_ffmpeg
+async def test_the_matte_matches_the_frames_actually_rendered(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    mattes = stub_matte(monkeypatch)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    await collect(identity_job(workspace, source, reference))
+
+    (argv,) = invocations(log)
+    rendered = int(argv[argv.index("--num-frames") + 1])
+    assert [call["frames"] for call in mattes] == [rendered]
+
+
+# ── Nothing silently pretends ────────────────────────────────────────────
+
+
+@needs_ffmpeg
+async def test_identity_without_a_reference_is_an_ordinary_transform(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag names a capability, not a demand: with nothing to replace the
+    person WITH, the job renders exactly as if the flag were absent — no
+    matte, no mask, no invented conditioning."""
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    mattes = stub_matte(monkeypatch)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    await collect(identity_job(workspace, source, reference=None))
+
+    (argv,) = invocations(log)
+    assert mattes == []
+    assert mask_of(argv) is None
+    assert conditioning_of(argv) == []
+    assert "--video-conditioning" in argv
+
+
+@needs_ffmpeg
+async def test_identity_and_person_lock_refuse_to_run_together(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One flag preserves the source person, the other replaces them. A
+    workflow carrying both is a configuration bug, not a preference order."""
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    with pytest.raises(AdapterError) as raised:
+        await collect(
+            identity_job(
+                workspace, source, reference,
+                execution={"v2v_person_lock": True},
+            )
+        )
+    assert raised.value.retriable is False
+
+
+@needs_ffmpeg
+async def test_identity_on_the_still_engine_is_refused_not_ignored(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The still-conditioned restyle cannot replace a person. Falling back to
+    it would deliver the source person while the workflow claims replacement —
+    the silent-success failure mode this feature must never ship."""
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = identity_job(workspace, source, reference)
+    job.execution.pop("v2v_engine")
+
+    with pytest.raises(AdapterError) as raised:
+        await collect(job)
+    assert raised.value.retriable is False
+
+
+@needs_ffmpeg
+async def test_a_matting_failure_fails_the_job_not_the_promise(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    async def broken(*args, **kwargs):
+        raise FfmpegError("matting model unavailable")
+
+    monkeypatch.setattr("worker.adapters.ltx.build_person_matte", broken)
+
+    with pytest.raises((AdapterError, FfmpegError)):
+        await collect(identity_job(workspace, source, reference))
+    assert not (workspace / "output.mp4").exists()
+
+
+# ── The workflow's standing promises survive the mode ────────────────────
+
+
+@needs_ffmpeg
+async def test_identity_keeps_the_sources_length_and_audio(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replacement changes who is on screen and nothing else the workflow
+    promises: the result is still the source's length, and the source's own
+    audio still survives, attached exactly once."""
+    source = await make_clip(workspace / "source.mp4", 2.0, audio=True)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    stub_matte(monkeypatch)
+    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    await collect(identity_job(workspace, source, reference))
+
+    info = await probe_media(workspace / "output.mp4")
+    assert info.duration_seconds == pytest.approx(2.0, abs=0.3)
+    assert info.has_audio is True
+    assert info.audio_stream_count == 1

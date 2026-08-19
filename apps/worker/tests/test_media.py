@@ -357,6 +357,45 @@ async def test_normalization_strips_audio_when_told_to(tmp_path: Path) -> None:
     assert info.has_audio is False
 
 
+@needs_ffmpeg
+async def test_normalization_pins_an_exact_frame_count_when_asked(tmp_path: Path) -> None:
+    """A stitched timeline is arithmetic over whole frames. A section that
+    comes back even one frame long pushes every later section's content later
+    against a continuous soundtrack, so the assembler needs to name the exact
+    count and get exactly that."""
+    clip = await _make_clip(tmp_path / "clip.mp4", 1.0)  # 24 frames at 24fps
+
+    shorter = await normalize_clip(
+        clip, tmp_path / "short.mp4", width=160, height=120, fps=24,
+        audio=False, frames=20,
+    )
+    info = await probe_media(shorter)
+    assert info.frame_count == 20
+    assert info.duration_seconds == pytest.approx(20 / 24, abs=0.05)
+
+    # One frame more than the clip holds: the rounding pad covers it.
+    longer = await normalize_clip(
+        clip, tmp_path / "long.mp4", width=160, height=120, fps=24,
+        audio=False, frames=25,
+    )
+    assert (await probe_media(longer)).frame_count == 25
+
+
+@needs_ffmpeg
+async def test_the_frame_pin_cannot_dress_up_a_broken_render(tmp_path: Path) -> None:
+    """The pad behind the pin absorbs rounding — under a frame — and nothing
+    more. A render that came back half its planned length is a fault, and
+    cloning its last picture out to the requested count would hide exactly the
+    wrong-length failure output verification exists to catch."""
+    clip = await _make_clip(tmp_path / "clip.mp4", 1.0)  # 24 frames
+    padded = await normalize_clip(
+        clip, tmp_path / "padded.mp4", width=160, height=120, fps=24,
+        audio=False, frames=48,
+    )
+    info = await probe_media(padded)
+    assert info.frame_count is not None and info.frame_count < 48
+
+
 # ── What a source measures: the shared probe every workflow reads ────────
 
 
