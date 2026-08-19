@@ -36,7 +36,7 @@ from tests.conftest import (
     staged_input,
     value_of,
 )
-from tests.test_director import CannedProvider, install_provider
+from tests.test_director import CannedProvider, install_provider, raw_plan
 from worker.core.config import settings
 from worker.director import (
     compile_section_prompts,
@@ -45,7 +45,7 @@ from worker.director import (
     source_image_facts,
     wants_director,
 )
-from worker.director.plan import DirectorPlanError
+from worker.director.plan import ANCHORED_SCENE, DirectorPlanError
 from worker.director.provider import DirectorRequest, system_prompt, user_prompt
 from worker.media import ffmpeg
 
@@ -251,11 +251,100 @@ def test_idea_stated_appearance_still_rides_along_when_anchored() -> None:
     """The refusal is of INVENTED detail. A fact the user's own idea states is
     the measured anti-drift lever and keeps its place in every caption."""
     characters = anchored_raw_plan()["characters"]
-    characters[0]["appearance"] = "in a red coat"
-    [caption] = compile_section_prompts(
-        anchored_plan(characters=characters), 1, total_seconds=10.0
+    characters[0]["appearance"] = "wearing a yellow raincoat"
+    plan = parse_plan(
+        anchored_raw_plan(characters=characters),
+        idea="A woman wearing a yellow raincoat talks to a robot about education.",
+        duration_seconds=10.0,
+        language="english",
+        source_anchored=True,
     )
-    assert "in a red coat" in caption
+    [caption] = compile_section_prompts(plan, 1, total_seconds=10.0)
+    assert "wearing a yellow raincoat" in caption
+
+
+# ── Grounding: no claim about a photograph nobody looked at ──────────────
+
+
+def test_an_invented_appearance_is_discarded_not_rendered() -> None:
+    """The measured failure, 19 Aug 2026: given a photograph of a woman in a
+    yellow raincoat, the hosted planner wrote a beige linen blouse on a clean
+    first attempt. Nothing in the idea supports it, so it does not reach the
+    caption — identity falls back to the frame, which is the truth anyway."""
+    characters = anchored_raw_plan()["characters"]
+    characters[0]["appearance"] = "mid-30s, slender, wearing a beige linen blouse"
+    characters[1]["appearance"] = "white polished ceramic plating with blue LED eyes"
+    plan = anchored_plan(characters=characters)
+
+    assert [c.appearance for c in plan.characters] == ["", ""]
+    [caption] = compile_section_prompts(plan, 1, total_seconds=10.0)
+    assert "blouse" not in caption and "ceramic" not in caption
+
+
+def test_an_invented_scene_becomes_a_pointer_at_the_frame() -> None:
+    """The same run put the park bench in "a modern minimalist study". A
+    caption cannot simply drop its opening sentence, so an ungrounded scene
+    becomes the one true statement available: look at the frame."""
+    plan = anchored_plan(scene="A modern minimalist study with soft natural light")
+    assert plan.scene == ANCHORED_SCENE
+
+    grounded = parse_plan(
+        anchored_raw_plan(scene="A park bench under autumn leaves"),
+        idea="A woman and a robot on a park bench under autumn leaves discuss education.",
+        duration_seconds=10.0,
+        language="english",
+        source_anchored=True,
+    )
+    assert grounded.scene == "A park bench under autumn leaves"
+
+
+def test_invented_continuity_is_dropped_because_every_section_repeats_it() -> None:
+    """Continuity is restated at the end of EVERY section, so an invented fact
+    there is drift pressure applied once per pass — the exact mechanism this
+    mode exists to remove."""
+    plan = anchored_plan(
+        continuity=[
+            "The woman wears a beige linen blouse",
+            "The robot has white ceramic plating and blue LED eyes",
+        ]
+    )
+    assert plan.continuity == ()
+
+    for caption in compile_section_prompts(plan, 2, total_seconds=10.0):
+        assert "blouse" not in caption and "ceramic" not in caption
+        # What survives is the frame-anchored constancy the compiler owns,
+        # which needs no visual claim to be true.
+        assert "they have in the first frame" in caption
+
+
+def test_measured_image_facts_ground_a_description_and_let_it_through() -> None:
+    """The payoff for turning the vision step on: a description someone
+    actually looked at is allowed to reach the caption, because it is now
+    evidence rather than invention."""
+    characters = anchored_raw_plan()["characters"]
+    characters[0]["appearance"] = "wearing a yellow raincoat"
+    plan = parse_plan(
+        anchored_raw_plan(characters=characters, continuity=["The raincoat stays yellow"]),
+        idea=IDEA,
+        duration_seconds=10.0,
+        language="english",
+        source_anchored=True,
+        grounding="PEOPLE: one woman wearing a yellow raincoat; one silver robot",
+    )
+    assert plan.characters[0].appearance == "wearing a yellow raincoat"
+    assert plan.continuity == ("The raincoat stays yellow",)
+
+
+def test_text_to_video_plans_are_never_grounded() -> None:
+    """T2V has no photograph to contradict, and there the invented appearance
+    IS the identity channel — the measured anti-drift lever. Grounding must
+    not touch it."""
+    plan = parse_plan(
+        raw_plan(), idea="A detective confronts a chief.", duration_seconds=12.0,
+        language="english",
+    )
+    assert plan.characters[0].appearance == "a weathered man in a rumpled gray suit"
+    assert plan.scene.startswith("A dim police chief's office")
 
 
 def test_anchored_sections_each_carry_only_their_own_events() -> None:

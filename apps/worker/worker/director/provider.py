@@ -462,6 +462,10 @@ async def create_director_plan(
                     duration_seconds=duration_seconds,
                     language=language,
                     source_anchored=anchored,
+                    # The measured facts are grounding, not just prompt
+                    # material: a description the planner copied out of them
+                    # is one someone actually looked at, and survives.
+                    grounding=facts,
                 )
             except DirectorProviderUnavailable as unavailable:
                 # Not a failed attempt — this provider was never usable. Move

@@ -245,6 +245,7 @@ def parse_plan(
     duration_seconds: float,
     language: str,
     source_anchored: bool = False,
+    grounding: str = "",
 ) -> DirectorPlan:
     """Parses and validates the planner's JSON into a `DirectorPlan`.
 
@@ -252,9 +253,12 @@ def parse_plan(
     prompt (or a log reader) sees the full diagnosis rather than the first
     symptom.
 
-    `source_anchored` (Image to Video) relaxes exactly one rule: a character
-    may have an empty `appearance`, because on that path the uploaded image is
-    the appearance and a made-up description would contradict it.
+    `source_anchored` (Image to Video) changes two things. A character may
+    have an empty `appearance`, because on that path the uploaded image is the
+    appearance and a made-up description would contradict it — and every
+    visual claim the planner *does* make is then checked against `grounding`
+    (the user's idea plus any measured image facts) and discarded if nothing
+    there supports it. See `_ground_visual_claims`.
     """
     problems: list[str] = []
     if not isinstance(raw, dict):
@@ -287,6 +291,8 @@ def parse_plan(
         source_anchored=source_anchored,
         continuity=_parse_continuity(raw.get("continuity")),
     )
+    if source_anchored:
+        plan = _ground_visual_claims(plan, f"{idea}\n{grounding}")
     plan = _enforce_speech_budget(plan, idea)
     _require_user_dialogue(plan, idea)
     return plan
@@ -439,6 +445,114 @@ def _enforce_speech_budget(plan: DirectorPlan, idea: str) -> DirectorPlan:
         events[index] = stripped
         plan = replace(plan, timeline=tuple(events))
     return plan
+
+
+#: What a source-anchored caption says about the setting when the planner's
+#: own scene sentence turns out to be invented. The opening frame IS the
+#: setting, so pointing at it is both the honest statement and the useful one.
+ANCHORED_SCENE = "The scene continues exactly as the opening frame shows it"
+
+
+def _ground_visual_claims(plan: DirectorPlan, grounding: str) -> DirectorPlan:
+    """Discards visual claims about a photograph nobody looked at.
+
+    MEASURED, on the box, 19 Aug 2026, and the reason this function exists
+    rather than a sterner paragraph in the planning brief. Given a photograph
+    of a woman in a yellow raincoat beside a silver robot on a park bench —
+    and a brief whose SOURCE IMAGE MODE rules say NEVER invent visible detail
+    — both planners described a scene they could not see. The hosted one, on a
+    clean first attempt, wrote a "beige linen blouse", a robot with "white
+    ceramic plating and blue LED eyes", and "a modern minimalist study", then
+    pinned all three into `continuity`, which the compiler restates at the end
+    of EVERY section. That is not a weak prompt; it is a language model doing
+    what language models do with a gap, and it turned the anti-drift mechanism
+    into a drift engine aimed at the customer's own image.
+
+    So the contract is enforced here, coldly, the way every other contract in
+    this file is: a visual claim survives only if the text someone actually
+    supplied supports it — the user's idea, plus the measured image facts when
+    the vision step ran. Anything else is dropped, and identity falls back to
+    the conditioned frames, which are the truth regardless.
+
+    Deliberately NOT applied to:
+
+      * `voice` — audible, not visible. A photograph says nothing about it and
+        somebody has to speak.
+      * event `action` and `camera` — that is WHAT HAPPENS, which is the whole
+        job of the plan. An action can still smuggle an adjective ("the woman
+        in the silver jumpsuit leans in"); filtering prose that specific would
+        cost more than it saves, and it is stated as a limitation rather than
+        half-solved here.
+    """
+    vocabulary = _distinctive_words(grounding)
+
+    characters = tuple(
+        character
+        if _is_grounded(character.appearance, vocabulary)
+        else replace(character, appearance="")
+        for character in plan.characters
+    )
+    continuity = tuple(
+        fact for fact in plan.continuity if _is_grounded(fact, vocabulary)
+    )
+    scene = plan.scene if _is_grounded(plan.scene, vocabulary) else ANCHORED_SCENE
+    return replace(plan, characters=characters, continuity=continuity, scene=scene)
+
+
+#: The grammar of a continuity statement, which carries no visual claim.
+#:
+#: Kept separate from `_COMMON_WORDS` rather than merged into it, because that
+#: set is also what decides whether DIALOGUE reuses a distinctive word, and a
+#: character saying "identical" twice is exactly the repetition
+#: `repeated_vocabulary` is meant to catch.
+#:
+#: The list exists because continuity facts are written as sentences by
+#: instruction ("the red hat STAYS the same red hat"), so their verbs can
+#: never appear in a user's idea — and grounding every word of them would
+#: discard the true facts along with the invented ones, which would make the
+#: vision step pointless.
+_DESCRIPTION_SCAFFOLDING = frozenset(
+    """stay stays stayed remain remains keep keeps kept same identical unchanged
+    consistent constant throughout entire whole every each frame frames shot shots
+    scene setting video clip present visible appears appear appearance look looks
+    wear wears wearing worn dressed exactly both people person character characters
+    number count total""".split()
+)
+
+
+def _distinctive_words(text: str) -> set[str]:
+    """The content words of `text`, normalised for comparison."""
+    return {
+        _stem(match)
+        for match in re.findall(r"[^\W\d_]+", text, re.UNICODE)
+        if len(match) >= _MIN_DISTINCTIVE
+        and match.lower() not in _COMMON_WORDS
+        and match.lower() not in _DESCRIPTION_SCAFFOLDING
+    }
+
+
+def _stem(word: str) -> str:
+    """Crude singular form, so "robots" and "robot" are one word.
+
+    Deliberately crude: this decides whether a description is ALLOWED, and a
+    clever stemmer that maps two unrelated words together would let an
+    invention through. Over-strictness costs a description the image already
+    carries; under-strictness costs the customer their subject.
+    """
+    lowered = word.lower()
+    return lowered[:-1] if len(lowered) > 4 and lowered.endswith("s") else lowered
+
+
+def _is_grounded(claim: str, vocabulary: set[str]) -> bool:
+    """Whether every distinctive word in `claim` is one somebody supplied.
+
+    All of them, not most: a description is a conjunction, and "a woman in a
+    beige linen blouse" is wrong about the blouse even though it is right
+    about the woman. A claim with no distinctive words at all is vacuous
+    rather than grounded, and is dropped too.
+    """
+    words = _distinctive_words(claim)
+    return bool(words) and words <= vocabulary
 
 
 def _parse_continuity(raw: object) -> tuple[str, ...]:
