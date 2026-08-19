@@ -229,6 +229,37 @@ class WorkerSettings(BaseSettings):
     better killed and retried than left holding the job's budget.
     """
 
+    director_vision_enabled: bool = False
+    """
+    Whether Image-to-Video Director mode may LOOK at the uploaded image before
+    planning — a subprocess that asks the local checkpoint to state what the
+    photograph visibly shows, so the plan's continuity facts come from the
+    image rather than only from the idea.
+
+    OFF by default for the same reason the guided tier is: whether the
+    on-box checkpoint accepts image input is a measurement nobody has made,
+    and this codebase does not ship unmeasured model paths as defaults.
+    Planning works without it — the planner is then forbidden to invent
+    visual details, and identity rides on the conditioned frames alone.
+    A failure while enabled degrades to exactly that posture; it never fails
+    the job.
+    """
+
+    director_vision_command: str = ""
+    """
+    How to invoke the image-facts describer. Empty means "the script shipped
+    in this checkout, run in the LTX environment" — see
+    `director_vision_argv`. Same seam as `director_planner_command`.
+    """
+
+    director_vision_timeout_seconds: float = 300.0
+    """
+    Wall-clock ceiling for one image-description subprocess, model load
+    included. Shorter than the planner's: this step is optional garnish, and
+    holding a job for minutes over it would cost more than the facts are
+    worth.
+    """
+
     ltx_quantization: str = "nvfp4-prequant"
     """
     NVFP4 is the only mode that fits the client's RTX 5090: the BF16
@@ -587,6 +618,14 @@ class WorkerSettings(BaseSettings):
         if self.director_planner_command:
             return shlex.split(self.director_planner_command)
         script = Path(__file__).resolve().parents[2] / "scripts" / "director_plan.py"
+        return ["uv", "run", "python", str(script)]
+
+    @property
+    def director_vision_argv(self) -> list[str]:
+        """The image-facts command, as argv — same pattern as the planner's."""
+        if self.director_vision_command:
+            return shlex.split(self.director_vision_command)
+        script = Path(__file__).resolve().parents[2] / "scripts" / "director_image_facts.py"
         return ["uv", "run", "python", str(script)]
 
 
