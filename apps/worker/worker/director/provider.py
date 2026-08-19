@@ -47,6 +47,7 @@ from worker.director.plan import (
     speech_budget,
     spoken_line_budget,
     target_spoken_lines,
+    vocabulary_problems,
 )
 
 logger = get_logger(__name__)
@@ -116,6 +117,10 @@ Output ONLY a JSON object, no markdown fences, no commentary, with this exact sh
      "appearance": "<concrete visible description: age group, build, hair, clothing with colours>",
      "voice": "<audible voice description: pitch, pace, texture>"}}
   ],
+  "continuity": [
+    "<a fact that must look identical in every frame: a prop's exact colour and
+      shape, what each person is wearing, how many people are in the scene>"
+  ],
   "timeline": [
     {{"start": <seconds>, "end": <seconds>, "action": "<what is visibly happening>",
      "camera": "<one of: medium shot | medium close-up | close-up | two-shot |
@@ -157,6 +162,16 @@ Hard rules:
   shots, with a static camera or a subtle push-in. No fast camera moves.
 - The ambience stays quiet under the voices. No background music unless the idea asks.
 - Characters keep exactly the same appearance for the whole video.
+- VOCABULARY: every line uses different words. If one line says "excellent", no other
+  line may say "excellent" — pick another word. Reusing a distinctive word across lines
+  is the single thing that makes generated dialogue sound generated.
+- CONTINUITY: list 2-5 facts that must look identical in every single frame. Always
+  include what each person is wearing and how many people are present. If any prop is
+  picked up, taken off, put down or handled during the scene, describe it there in
+  concrete detail (exact colour, material, shape) — a thing that leaves the frame and
+  comes back is where the picture drifts.
+- Write continuity facts as things that STAY, never as things to avoid: "the red felt
+  hat stays the same red felt hat every time it appears", not "the hat does not change".
 """
 
 
@@ -382,11 +397,14 @@ async def create_director_plan(
                 notes = tuple(error.problems)
                 continue
 
-            pacing = pacing_problems(plan)
+            # Quality complaints, gathered together: both are "this makes a
+            # weaker video", neither is "this video is broken", and the retry
+            # should fix everything known to be wrong rather than one thing.
+            pacing = pacing_problems(plan) + vocabulary_problems(plan)
             if pacing:
-                failures.append(f"attempt {attempt} pacing: {'; '.join(pacing)}")
+                failures.append(f"attempt {attempt} quality: {'; '.join(pacing)}")
                 logger.warning(
-                    "director_plan_pacing",
+                    "director_plan_quality",
                     extra={
                         "attempt": attempt,
                         "provider": type(source).__name__,

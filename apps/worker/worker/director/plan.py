@@ -170,6 +170,19 @@ class DirectorPlan:
     ambience: str
     characters: tuple[DirectorCharacter, ...]
     timeline: tuple[DirectorEvent, ...]
+    continuity: tuple[str, ...] = ()
+    """Facts that must look the same in every frame — a red hat that stays the
+    same red hat after it is taken off and put back on, a jacket that does not
+    change colour when someone turns around.
+
+    This is the Director-mode counterpart of the CONTINUITY block
+    `worker/longform/enhance.py` appends to a standard prompt, and it exists
+    for the same measured reason (16 Aug 2026): the distilled runtime is
+    unguided, so a constraint the prompt only implies has no mechanism to hold
+    it, and restating one explicitly is the lever that actually works.
+    Customer-reported symptoms this targets: a prop that comes back subtly
+    different after being off screen, and a person who flickers out for a
+    frame or two mid-shot."""
 
     def character(self, character_id: str) -> DirectorCharacter:
         for entry in self.characters:
@@ -252,6 +265,7 @@ def parse_plan(
         ambience=ambience,
         characters=tuple(characters),
         timeline=tuple(timeline),
+        continuity=_parse_continuity(raw.get("continuity")),
     )
     plan = _enforce_speech_budget(plan, idea)
     _require_user_dialogue(plan, idea)
@@ -403,6 +417,77 @@ def _enforce_speech_budget(plan: DirectorPlan, idea: str) -> DirectorPlan:
         events[index] = stripped
         plan = replace(plan, timeline=tuple(events))
     return plan
+
+
+def _parse_continuity(raw: object) -> tuple[str, ...]:
+    """Immutable facts, deduplicated and bounded.
+
+    Bounded because this text is repeated in EVERY section's caption: a long
+    list stops being emphasis and starts crowding out the scene itself.
+    """
+    if not isinstance(raw, list):
+        return ()
+    seen: list[str] = []
+    for entry in raw:
+        text = str(entry or "").strip().rstrip(".")
+        if text and text.lower() not in {s.lower() for s in seen}:
+            seen.append(text)
+    return tuple(seen[:6])
+
+
+#: Words too ordinary for their reuse to be noticeable. A conversation cannot
+#: avoid "the" or "you"; it very much can avoid saying "excellent" twice.
+_COMMON_WORDS = frozenset(
+    """a an and the this that these those is are was were be been am i you he she it we they
+    me him her us them my your his hers its our their to of in on at for with from by as
+    but or so if then than there here what who whom whose which when where why how not no
+    yes do does did done have has had will would can could shall should may might must
+    just now well okay ok about into over under out up down off again more most very
+    all any some one two three too also like get got go going come came know knew think
+    thought say said says tell told take took make made want need let put back still
+    even only ever never always because while after before""".split()
+)
+
+#: Below this length a word is structural rather than distinctive.
+_MIN_DISTINCTIVE = 4
+
+
+def repeated_vocabulary(plan: DirectorPlan) -> list[str]:
+    """Distinctive words the dialogue uses in more than one line.
+
+    A customer noticed it before any of our checks did: a character says
+    "excellent", and two lines later says "excellent" again. Each line is
+    unique — the line-level repetition rules all pass — but the exchange reads
+    as written by something with a small vocabulary, which is exactly what it
+    was.
+
+    Reported as a correction rather than raised, for the same reason as pacing:
+    a repeated adjective makes a weaker video, not a broken one.
+    """
+    spoken = [(event.dialogue or "").strip() for event in plan.timeline]
+    seen: dict[str, int] = {}
+    for line in spoken:
+        # Per LINE, not per occurrence: a word repeated inside one sentence is
+        # usually deliberate ("no, no, no"), and it is the echo ACROSS lines
+        # that reads as a limited vocabulary.
+        for word in {
+            match.lower()
+            for match in re.findall(r"[^\W\d_]+", line, re.UNICODE)
+            if len(match) >= _MIN_DISTINCTIVE and match.lower() not in _COMMON_WORDS
+        }:
+            seen[word] = seen.get(word, 0) + 1
+    return sorted(word for word, count in seen.items() if count > 1)
+
+
+def vocabulary_problems(plan: DirectorPlan) -> list[str]:
+    """`repeated_vocabulary`, phrased as corrections the planner can act on."""
+    repeats = repeated_vocabulary(plan)
+    if not repeats:
+        return []
+    return [
+        "these words are used in more than one line — replace all but the "
+        f"first with different wording: {', '.join(repeats[:8])}"
+    ]
 
 
 def pacing_problems(plan: DirectorPlan) -> list[str]:

@@ -347,6 +347,41 @@ unaffected either way, so this reads as a constrained-decoding interaction
 with that model rather than a service fault. A test now guards against
 re-adding it.
 
+### Continuity and vocabulary (19 Aug, third round of customer feedback)
+
+Three more reports, all "small but noticeable": a person **flickers out** for a
+moment mid-shot; **a prop changes** after being handled (Santa removes his hat,
+puts it back, and the hat is subtly different); and **a distinctive word
+repeats** across lines ("excellent" twice).
+
+The third is ours outright — the planner writes those words. `repeated_vocabulary`
+finds any distinctive word used in more than one line (structural words like
+"the" and "you" exempt, 4+ characters, counted per line so "no, no, no" inside
+one line is left alone) and feeds it back as a correction. Verified: zero
+repeated words across every live case since.
+
+The first two are model artefacts, so the only lever is the prompt — but it is
+a lever with measured backing (16 Aug: explicit repeated constraints fixed
+colour and identity drift on this unguided runtime). The plan gained a
+`continuity` list — facts that must look identical in every frame — which the
+planner fills and the compiler restates at the end of EVERY section, alongside
+a standing "everyone stays fully visible in every single frame".
+
+Every one of those sentences is phrased as what STAYS. That is not style: this
+runtime has no negation mechanism, so "the hat does not change" reads as a
+changing hat. A test asserts no negative phrasing reaches the continuity block.
+
+Asked for the customer's own scene, the planner independently produced exactly
+the right constraints — *"The Santa hat is red velvet with a fluffy white
+pom-pom"*, *"Three people are present in the scene"*, plus each child's
+wardrobe. Rendered on the box at 30s: the hat comes off at ~14s and returns at
+~20s **looking like the same hat**, wardrobe held on all three, nobody missing
+from any sampled frame.
+
+**Honest limits.** One render is not proof that flicker is gone; a two-frame
+dropout would not show in 1 fps sampling, and both symptoms are intermittent
+by nature. This lowers the odds, it does not remove them.
+
 ### Short-clip pacing (fixed after the first deploy)
 
 The deployed 15 s render fused its opening two lines into one utterance

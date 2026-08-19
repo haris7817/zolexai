@@ -399,6 +399,57 @@ def test_the_caption_asks_for_each_line_once_without_using_a_negative() -> None:
     assert "spoken a single time" not in quiet
 
 
+def test_a_distinctive_word_reused_across_lines_is_reported() -> None:
+    """Every line unique, and the exchange still sounds machine-written: a
+    customer noticed "excellent" twice before any of our checks did. Ordinary
+    words are exempt — a conversation cannot avoid "the"."""
+    from worker.director.plan import repeated_vocabulary, vocabulary_problems
+
+    events = raw_plan()["timeline"]
+    events[1]["dialogue"] = "That was an excellent decision."
+    events[2]["dialogue"] = "Excellent work, truly."
+    plan = parsed(timeline=events)
+    assert repeated_vocabulary(plan) == ["excellent"]
+    assert "excellent" in vocabulary_problems(plan)[0]
+
+    # Structural words repeat in any real conversation and must not be flagged.
+    events[1]["dialogue"] = "You knew about the money."
+    events[2]["dialogue"] = "You knew about the risk."
+    assert repeated_vocabulary(parsed(timeline=events)) == []
+
+
+def test_continuity_facts_are_restated_in_every_section() -> None:
+    """The customer symptoms this targets — a prop that comes back different
+    after being off screen, a person who flickers out — are the unguided
+    runtime dropping a constraint the prompt only implied. Restating is the
+    measured lever, so it must survive into EVERY pass, not just the first."""
+    hat = "the red felt Santa hat stays the same red felt hat every time it appears"
+    plan = parsed(continuity=[hat, "exactly two people are in the room"])
+    for caption in compile_section_prompts(plan, 2, total_seconds=12.0):
+        assert "red felt Santa hat" in caption
+        assert "Exactly two people are in the room" in caption
+        # Continuous presence, phrased as presence.
+        assert "stay fully visible in the frame" in caption
+
+
+def test_continuity_is_phrased_as_what_stays_never_as_what_to_avoid() -> None:
+    """This runtime has no negation mechanism (`enhance.py`), so a banned
+    thing reads as a requested one. Every added constraint is positive."""
+    plan = parsed(continuity=["the blue mug stays the same blue mug throughout"])
+    [caption] = compile_section_prompts(plan, 1, total_seconds=12.0)
+    tail = caption[caption.index("Under the voices") :].lower()
+    for banned in ("does not", "do not", "never ", "without ", "no longer"):
+        assert banned not in tail
+
+
+def test_a_plan_with_no_continuity_facts_still_pins_the_cast() -> None:
+    """The list is the planner's to fill and may be empty; identity and
+    presence are ours and are always stated."""
+    [caption] = compile_section_prompts(parsed(), 1, total_seconds=12.0)
+    assert "keep exactly the same faces" in caption
+    assert "stay fully visible in the frame" in caption
+
+
 def test_a_move_phrase_that_already_has_a_verb_keeps_it() -> None:
     """Planners write moves both ways. A noun phrase gets a verb supplied; a
     phrase that already has one — including a sequenced "then cuts to …" —

@@ -163,17 +163,46 @@ def _compile_section(
         )
 
     sentences.append(_ambience_sentence(plan))
+    sentences.extend(_continuity_sentences(plan))
+    return " ".join(filter(None, sentences))
+
+
+def _continuity_sentences(plan: DirectorPlan) -> list[str]:
+    """What must not drift, restated at the end of every section.
+
+    Three customer-reported symptoms share one cause and one lever. A person
+    who flickers out for a few frames, a prop that returns subtly different
+    after being off screen, and a face that shifts between passes are all the
+    unguided runtime having no mechanism to hold a constraint the prompt only
+    implied. Restating constraints explicitly is the measured fix (16 Aug
+    2026), and it is why `enhance.py` appends the same kind of block to a
+    standard prompt.
+
+    Everything here is phrased as what STAYS, never as what to avoid: this
+    runtime has no negation mechanism, so "the hat does not change" reads as a
+    changing hat.
+    """
+    sentences: list[str] = []
     if plan.characters:
+        subjects = _join_roles([_subject(c) for c in plan.characters])
         sentences.append(
             _sentence(
-                _capfirst(
-                    _join_roles([_subject(c) for c in plan.characters])
-                    + " keep exactly the same faces, clothing and voices for the "
-                    "entire video"
-                )
+                _capfirst(subjects)
+                + " keep exactly the same faces, clothing and voices for the entire video"
             )
         )
-    return " ".join(filter(None, sentences))
+        # Continuous presence, stated as presence. The flicker is a person
+        # briefly absent, so the constraint is that they are always there.
+        sentences.append(
+            _sentence(
+                _capfirst(subjects)
+                + " stay fully visible in the frame from the first frame to the last, "
+                "present and solid in every single frame"
+            )
+        )
+    for fact in plan.continuity:
+        sentences.append(_sentence(_capfirst(_humanise(fact, plan))))
+    return sentences
 
 
 def _transition(

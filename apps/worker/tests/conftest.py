@@ -92,6 +92,25 @@ def recorder() -> tuple[ProgressCallback, list[tuple[str, int, str]]]:
 # ── Fixtures ─────────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _no_hosted_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test reaches a hosted service, whatever the developer's .env holds.
+
+    `WorkerSettings` reads the repo's `.env`, so a machine with a real
+    `CEREBRAS_API_KEY` put one into every test run — and because the Director
+    chain prefers the hosted planner, the adapter tests started making live
+    calls to api.cerebras.ai. On a box behind a TLS-intercepting proxy each of
+    those hangs to its 60-second timeout before falling back, which turned a
+    ten-minute suite into one that had not finished in twenty-seven.
+
+    Autouse and unconditional: a suite whose runtime and network behaviour
+    depend on which credentials happen to be lying around is not a suite. A
+    test that wants the hosted provider constructs it explicitly with its own
+    key and a mock transport (`tests/test_cerebras_director.py`).
+    """
+    monkeypatch.setattr(settings, "cerebras_api_key", "")
+
+
 @pytest.fixture
 def workspace(tmp_path: Path) -> Path:
     path = tmp_path / "job"
