@@ -334,7 +334,33 @@ _BAD_FRAME_BANDS: dict[bool, dict[tuple[int, int], list[tuple[int, int, int]]]] 
 #: pass through EXACTLY as requested — never snapped, never banded — because
 #: every one of them is evidence, and 720→721 is how evidence got replaced by
 #: a theory and broke image-to-video for a night.
+#:
+#: EVERY CELL IN THIS TABLE IS A SINGLE-IMAGE MEASUREMENT. A second
+#: conditioning image moves the decoder to a different, mostly unmeasured
+#: configuration — see `_TWO_IMAGE_SAFE_FRAMES`, learned from a production
+#: crash the night 60s image-to-video first chained.
 _MEASURED_SAFE_CONDITIONED = frozenset({120, 240, 360, 720, 1289, 1385, 1441, 1528})
+
+#: Frame counts MEASURED to decode with TWO conditioning images — the seam
+#: frame at 0 plus the identity reference mid-window, which is the shape of
+#: every I2V chain pass after the first and of Director-lineage extensions.
+#:
+#: Measured 20 Aug 2026 at 1024x576 (probe: `frame_probe2.py`, the adapter's
+#: own command builder), the night the first production 60s I2V chained:
+#:
+#:   PASS: 120 (production-shape test render, 19 Aug), 240, 360
+#:   FAIL: 720 (the production crash, reproduced deterministically),
+#:         736 (so the render-extra-and-trim dodge does NOT work here —
+#:         this cell family fails by size, not by lattice point)
+#:
+#: A pass whose count is not in this set carries the seam frame ALONE and the
+#: identity anchor is dropped, with a log line. That is the measured-good
+#: single-image shape (720 single-image passes everywhere), and identity
+#: across such seams is carried by the predecessor frame plus the compiled
+#: captions — the exact configuration the 60s two-section validation ran
+#: clean. Growing this set is a `frame_probe2.py` measurement, not an
+#: opinion.
+_TWO_IMAGE_SAFE_FRAMES = frozenset({120, 240, 360})
 
 #: The model's native frame convention: counts of the form 8k+1.
 #:
@@ -1044,13 +1070,14 @@ class LtxAdapter:
             # A predecessor frame carries temporal state but is a weak identity
             # anchor. Keep the original upload in every I2V pass at low strength
             # and away from frame zero, so it guides identity without resetting
-            # the section to the composition of the first image.
+            # the section to the composition of the first image — where the
+            # decoder is measured to survive the second image at all
+            # (`_TWO_IMAGE_SAFE_FRAMES`; a 720-frame two-image pass is the
+            # 20 Aug production crash).
             if still:
-                frames = self._frame_count(step.seconds)
-                reference_frame = min(frames - 1, max(1, frames // 3))
-                strength = job.execution_float("i2v_reference_strength", 0.2)
-                if strength > 0 and reference_frame > 0:
-                    items.append(ConditioningFrame(still, reference_frame, strength))
+                anchor = self._identity_anchor(job, still, step.seconds)
+                if anchor is not None:
+                    items.append(anchor)
             return items
 
         rendered = await render_chain(
@@ -1169,13 +1196,9 @@ class LtxAdapter:
             frame = step.previous_frame
             items = [ConditioningFrame(frame, 0, 1.0)] if frame else []
             if identity:
-                frames = self._frame_count(step.seconds)
-                reference_frame = min(frames - 1, max(1, frames // 3))
-                strength = job.execution_float("i2v_reference_strength", 0.2)
-                if strength > 0 and reference_frame > 0:
-                    items.append(
-                        ConditioningFrame(identity, reference_frame, strength)
-                    )
+                anchor = self._identity_anchor(job, identity, step.seconds)
+                if anchor is not None:
+                    items.append(anchor)
             return items
 
         # The grid follows the SOURCE's aspect, not the request's: the I2V
@@ -2316,6 +2339,42 @@ class LtxAdapter:
 
     def _frame_count(self, seconds: float) -> int:
         return max(1, round(seconds * settings.ltx_frame_rate))
+
+    def _identity_anchor(
+        self, job: AdapterJob, still: Path, pass_seconds: float
+    ) -> ConditioningFrame | None:
+        """The original upload as a mid-window identity reference — when the
+        decoder is measured to survive it.
+
+        A pass carrying this is a TWO-image pass, and the decoder's two-image
+        failure set is its own lottery: 720 frames decodes fine with one image
+        and crashed a production job with two, 736 fails identically (so the
+        render-extra-and-trim dodge is useless here), while 120/240/360 pass.
+        Measured 20 Aug 2026; `_TWO_IMAGE_SAFE_FRAMES` is the evidence.
+
+        Returning None is not a degraded render: the pass keeps the seam frame
+        at full strength and the compiled captions restate identity — the
+        exact configuration the 60s two-section validation ran clean. A log
+        line records the drop so an identity-drift report can be correlated
+        with it.
+        """
+        frames = self._frame_count(pass_seconds)
+        reference_frame = min(frames - 1, max(1, frames // 3))
+        strength = job.execution_float("i2v_reference_strength", 0.2)
+        if strength <= 0 or reference_frame <= 0:
+            return None
+        if frames not in _TWO_IMAGE_SAFE_FRAMES:
+            logger.info(
+                "identity_anchor_skipped",
+                extra={
+                    "workflow_id": job.workflow_id,
+                    "frames": frames,
+                    "reason": "count not measured safe for a second "
+                    "conditioning image",
+                },
+            )
+            return None
+        return ConditioningFrame(still, reference_frame, strength)
 
     # ── The renderer handed to the chain ─────────────────────────────────
 

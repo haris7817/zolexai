@@ -517,6 +517,11 @@ async def test_an_i2v_director_chain_keeps_the_upload_as_the_identity_anchor(
     log = render_stub(
         tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 2.0, audio=True)
     )
+    # 48-frame test passes are not a measured two-image count; admit them so
+    # this test keeps proving the anchor path (the drop path has its own test).
+    monkeypatch.setattr(
+        "worker.adapters.ltx._TWO_IMAGE_SAFE_FRAMES", frozenset({48, 120, 240, 360})
+    )
 
     result, reported = await collect(
         i2v_director_job(

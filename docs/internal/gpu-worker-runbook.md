@@ -2271,7 +2271,31 @@ docker exec zolexai-prod-api-1 grep -n -A2 '^execution:' \
 
 No migrations — the lineage lives in the existing `request_params` JSONB.
 
-### 45.4 Gate before telling anyone
+### 45.4 Incident on go-live night: the two-image decoder cell (FIXED)
+
+The first production 60s Image-to-Video after activation (job `2502edeb`)
+crashed in pass 2: `CUBLAS_STATUS_INTERNAL_ERROR` → illegal memory access in
+the VAE decoder. The new geometry made I2V's second pass carry TWO
+conditioning images for the first time at 720 frames — the seam frame plus
+the mid-window identity anchor — and every "720 conditioned = safe" cell in
+the tables was a SINGLE-image measurement.
+
+Probed the same night with `frame_probe2.py` (adapter's own command builder,
+production two-image shape), 1024x576:
+
+    FAIL: 720 (deterministic — the production crash), 736 (the
+          render-extra-and-trim dodge does NOT work for this cell family)
+    PASS: 120, 240, 360
+
+Fix: `_TWO_IMAGE_SAFE_FRAMES` — the identity anchor rides only measured
+two-image counts; everywhere else the pass carries the seam frame alone
+(`identity_anchor_skipped` in the log), which is the single-image shape the
+60s validation ran clean. Consequence to know when reading an
+identity-drift report: **30-second chain passes carry no photo anchor** —
+identity there rides the seam frame and the captions. Growing the set is a
+`frame_probe2.py` measurement, not an opinion.
+
+### 45.5 Gate before telling anyone
 
 Through zolexai.com, sound on:
 

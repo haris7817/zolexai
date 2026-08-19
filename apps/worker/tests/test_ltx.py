@@ -543,6 +543,13 @@ async def test_a_long_image_to_video_conditions_the_first_pass_on_the_still(
     fixture = await make_clip(tmp_path / "render.mp4", 2.0, audio=True)
     log = render_stub(tmp_path, monkeypatch, fixture)
 
+    # Test-scale passes are 48 frames — not a count anyone has measured with
+    # a second conditioning image, so the anchor gate would (correctly) drop
+    # it. Admit the test count so this test keeps proving the ANCHOR path;
+    # the drop path has its own test.
+    monkeypatch.setattr(
+        "worker.adapters.ltx._TWO_IMAGE_SAFE_FRAMES", frozenset({48, 120, 240, 360})
+    )
     job = make_i2v_job(
         workspace,
         still,

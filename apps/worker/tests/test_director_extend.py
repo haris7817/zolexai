@@ -205,6 +205,11 @@ async def test_a_director_lineage_extension_renders_the_continuation_plan(
     log = render_stub(
         tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 2.0, audio=True)
     )
+    # Admit the 48-frame test count to the two-image safe set — see the same
+    # patch in the i2v chain tests.
+    monkeypatch.setattr(
+        "worker.adapters.ltx._TWO_IMAGE_SAFE_FRAMES", frozenset({48, 120, 240, 360})
+    )
 
     base = make_extension_job(workspace, source)
     job = make_extension_job(

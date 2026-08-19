@@ -388,3 +388,83 @@ async def test_a_sectioned_director_chain_keeps_the_departed_out_of_pass_two(
     assert "The woman stays fully visible in the frame" in second
     # Continuity across the seam is the predecessor frame, as ever.
     assert conditioning_of(calls[1])[0][1] == 0
+
+
+# ── The identity anchor obeys the two-image decoder measurements ─────────
+
+
+def test_the_identity_anchor_rides_only_measured_two_image_counts(
+    workspace,
+) -> None:
+    """20 Aug 2026, the night 60s I2V first chained in production: a
+    720-frame pass with TWO conditioning images crashed the VAE decoder
+    (CUBLAS_STATUS_INTERNAL_ERROR), 736 failed identically — so the
+    render-extra-and-trim dodge is useless for this cell family — and
+    120/240/360 passed. The anchor is therefore gated on the measured set:
+    everywhere else the pass carries the seam frame alone, which is the
+    single-image shape proven clean by the 60s validation."""
+    from pathlib import Path
+
+    from tests.conftest import make_job
+    from worker.adapters.ltx import LtxAdapter
+
+    adapter = LtxAdapter()
+    job = make_job(workspace, execution={"runtime": "ltx"})
+    still = Path("still.png")
+
+    # Measured-safe counts carry the anchor, mid-window, at 0.2.
+    for seconds, frames in ((5.0, 120), (10.0, 240), (15.0, 360)):
+        anchor = adapter._identity_anchor(job, still, seconds)
+        assert anchor is not None, f"{frames} frames should carry the anchor"
+        assert anchor.frame_index == frames // 3
+        assert anchor.strength == pytest.approx(0.2)
+
+    # The production crash shape: 30s = 720 frames. Anchor dropped.
+    assert adapter._identity_anchor(job, still, 30.0) is None
+
+    # Strength zero is the existing off-switch, unchanged.
+    off = make_job(
+        workspace, execution={"runtime": "ltx", "i2v_reference_strength": 0}
+    )
+    assert off._cancelled is None  # jobs are plain dataclasses in tests
+    assert adapter._identity_anchor(off, still, 5.0) is None
+
+
+async def test_an_unmeasured_pass_keeps_the_seam_frame_alone(
+    workspace, fake_models, stub_repo, tmp_path, monkeypatch
+) -> None:
+    """The whole-job proof at test scale: WITHOUT admitting the test count to
+    the safe set, pass two of an I2V chain carries exactly one image — the
+    predecessor frame — and the render completes."""
+    from tests.conftest import (
+        collect,
+        conditioning_of,
+        invocations,
+        make_clip,
+        render_stub,
+    )
+    from tests.test_ltx import make_i2v_job
+    from worker.media import ffmpeg
+
+    still = workspace / "still.png"
+    await ffmpeg(
+        ["-f", "lavfi", "-i", "testsrc2=size=896x512:rate=1", "-frames:v", "1", str(still)]
+    )
+    log = render_stub(
+        tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 2.0, audio=True)
+    )
+
+    await collect(
+        make_i2v_job(
+            workspace,
+            still,
+            parameters={"duration": "4s", "aspect_ratio": "16:9", "quality": "High"},
+            execution={"runtime": "ltx", "max_segment_seconds": 2},
+        )
+    )
+
+    calls = invocations(log)
+    assert conditioning_of(calls[0]) == [(str(still), 0, 1.0)]
+    second = conditioning_of(calls[1])
+    assert len(second) == 1, "unmeasured count must carry the seam frame alone"
+    assert second[0][1] == 0 and second[0][2] == 1.0
