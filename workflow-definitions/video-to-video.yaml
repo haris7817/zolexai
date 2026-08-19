@@ -189,6 +189,16 @@ execution:
   #   * a matting failure fails the job — never a delivered video carrying
   #     the source person under a claim of replacement.
   #
+  #   v2v_identity_describe_reference: the worker LOOKS at the reference
+  #                                    (gemma vision, ~6s once per job) and
+  #                                    appends a caption of the person after
+  #                                    the user's verbatim prompt (default
+  #                                    true). Exists because the first
+  #                                    production identity job shipped a
+  #                                    prompt of meta-instructions naming no
+  #                                    visible attribute, and the render was
+  #                                    neither the source nor the reference.
+  #                                    Failures degrade to the bare prompt.
   #   v2v_identity_anchor_strength:    reference at frame 0, first pass
   #                                    (default 0.65)
   #   v2v_identity_refresh_strength:   reference re-shown per later pass

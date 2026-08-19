@@ -44,7 +44,7 @@ from worker.director.provider import (
     source_anchored,
     wants_director,
 )
-from worker.director.vision import source_image_facts
+from worker.director.vision import reference_person_facts, source_image_facts
 
 __all__ = [
     "CerebrasDirectorProvider",
@@ -60,6 +60,7 @@ __all__ = [
     "pacing_problems",
     "parse_plan",
     "source_anchored",
+    "reference_person_facts",
     "source_image_facts",
     "target_spoken_lines",
     "wants_director",

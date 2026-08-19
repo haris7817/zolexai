@@ -62,6 +62,29 @@ _USER_PROMPT = (
 _MAX_FACTS_CHARS = 900
 
 
+#: The identity describer's brief — one caption-voice sentence about the
+#: PERSON, because its output is appended to a generation prompt rather than
+#: fed to a planner. Identity replacement lives or dies on this description:
+#: the measured failure it exists to prevent is a customer prompt full of
+#: meta-instructions ("preserve the exact face… no flicker") that names no
+#: visible attribute of the person at all, which the model reads as content
+#: vocabulary and renders as neither the source nor the reference.
+_IDENTITY_SYSTEM_PROMPT = """You describe the person in a photograph for a film crew that must cast
+their exact double. State only what is VISIBLE. Never guess names, emotions,
+backstory or anything outside the frame.
+
+Answer with ONE sentence, nothing else: the person's age group, build, hair
+(colour, length, style), headwear if any, and clothing with exact colours."""
+
+_IDENTITY_USER_PROMPT = (
+    "Describe the person in this photograph in one concrete sentence."
+)
+
+#: A prompt suffix, not a planning document. One sentence fits well inside
+#: this; a runaway description would dilute the user's own text.
+_MAX_IDENTITY_CHARS = 350
+
+
 async def source_image_facts(job: AdapterJob) -> str:
     """Visible facts about the job's source image, or "" when unavailable.
 
@@ -73,13 +96,44 @@ async def source_image_facts(job: AdapterJob) -> str:
     item = job.input_for("source_image")
     if item is None or item.path is None:
         return ""
+    return await _describe(
+        str(item.path),
+        system_prompt=_SYSTEM_PROMPT,
+        user_prompt=_USER_PROMPT,
+        max_chars=_MAX_FACTS_CHARS,
+    )
 
+
+async def reference_person_facts(image_path) -> str:
+    """One caption-voice sentence describing the person in `image_path`.
+
+    Serves `v2v_reference_identity`, and is deliberately NOT gated on
+    `settings.director_vision_enabled` — that switch governs whether Director
+    planning may look at a source image, a separate product decision. This
+    path's safety is its degradation: every failure returns "", the prompt
+    goes to the model exactly as the user typed it, and the render proceeds.
+
+    Measured on the production box 19 Aug 2026: the on-box gemma-4-e2b-it
+    checkpoint loads as an image-text model in ~4s and answered in ~1s —
+    "Woman: adult, dark hair, black leather jacket" for exactly that photo.
+    """
+    return await _describe(
+        str(image_path),
+        system_prompt=_IDENTITY_SYSTEM_PROMPT,
+        user_prompt=_IDENTITY_USER_PROMPT,
+        max_chars=_MAX_IDENTITY_CHARS,
+    )
+
+
+async def _describe(
+    image_path: str, *, system_prompt: str, user_prompt: str, max_chars: int
+) -> str:
     payload = json.dumps(
         {
             "gemma_root": str(settings.director_gemma_root),
-            "image_path": str(item.path),
-            "system_prompt": _SYSTEM_PROMPT,
-            "user_prompt": _USER_PROMPT,
+            "image_path": image_path,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
             "max_new_tokens": 400,
             "begin_marker": _FACTS_BEGIN,
             "end_marker": _FACTS_END,
@@ -124,13 +178,13 @@ async def source_image_facts(job: AdapterJob) -> str:
         )
         return ""
 
-    facts = _extract_facts(text)
+    facts = _extract_facts(text, max_chars)
     if facts:
         logger.info("director_vision_facts", extra={"characters": len(facts)})
     return facts
 
 
-def _extract_facts(text: str) -> str:
+def _extract_facts(text: str, max_chars: int = _MAX_FACTS_CHARS) -> str:
     """The completion between the markers, tidied and bounded."""
     match = re.search(
         re.escape(_FACTS_BEGIN) + r"(.*?)" + re.escape(_FACTS_END), text, re.DOTALL
@@ -139,4 +193,4 @@ def _extract_facts(text: str) -> str:
         return ""
     lines = [line.strip() for line in match.group(1).splitlines() if line.strip()]
     facts = "\n".join(lines)
-    return facts[:_MAX_FACTS_CHARS].strip()
+    return facts[:max_chars].strip()

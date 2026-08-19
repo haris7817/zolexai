@@ -50,6 +50,10 @@ def identity_job(workspace: Path, source: Path, reference: Path | None, **overri
         "runtime": "ltx",
         "v2v_engine": "transform",
         "v2v_reference_identity": True,
+        # Off by default IN THE TESTS (the product default is on): most of
+        # this suite is about conditioning and masking, and the describer is
+        # a subprocess these tests stub explicitly when it is the subject.
+        "v2v_identity_describe_reference": False,
     }
     execution.update(overrides.pop("execution", {}))
     inputs = [staged_input("source_video", "video", "video/mp4", source)]
@@ -257,6 +261,125 @@ async def test_the_matte_matches_the_frames_actually_rendered(
     (argv,) = invocations(log)
     rendered = int(argv[argv.index("--num-frames") + 1])
     assert [call["frames"] for call in mattes] == [rendered]
+
+
+# ── The worker describes the reference itself ────────────────────────────
+
+
+def stub_describer(monkeypatch: pytest.MonkeyPatch, facts: str) -> list[Path]:
+    """Replaces the vision subprocess; records which image it was shown."""
+    calls: list[Path] = []
+
+    async def fake(image_path) -> str:
+        calls.append(Path(image_path))
+        return facts
+
+    monkeypatch.setattr("worker.adapters.ltx.reference_person_facts", fake)
+    return calls
+
+
+@needs_ffmpeg
+async def test_the_worker_describes_the_reference_into_every_pass_prompt(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The model reads the reference as pixels and the prompt as words, and
+    identity needs both to agree. The first production identity job proved
+    what happens when they don't: a prompt of meta-instructions that named no
+    visible attribute rendered neither the source person nor the reference.
+    So the worker looks at the photo and appends what it sees — after the
+    user's own text, which stays verbatim and first."""
+    source = await make_clip(workspace / "source.mp4", 3.7)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    stub_matte(monkeypatch)
+    shown = stub_describer(
+        monkeypatch, "an adult woman with long dark hair, black leather jacket"
+    )
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = identity_job(
+        workspace, source, reference,
+        execution={
+            "transform_pass_seconds": 1,
+            "v2v_identity_describe_reference": True,
+        },
+    )
+    await collect(job)
+
+    assert shown == [reference], "described once, and it is the REFERENCE it describes"
+    for argv in invocations(log):
+        prompt = argv[argv.index("--prompt") + 1]
+        assert prompt.startswith(
+            "keep the performance and the camera, use the person from the reference"
+        ), "the user's text survives verbatim, first"
+        assert "long dark hair, black leather jacket" in prompt
+        assert "The same person, with the same face, hair and clothing" in prompt
+
+
+@needs_ffmpeg
+async def test_a_failed_description_leaves_the_prompt_untouched(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The description is reinforcement, not a dependency: "" means the
+    prompt goes to the model exactly as typed, and the job proceeds."""
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    stub_matte(monkeypatch)
+    stub_describer(monkeypatch, "")
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = identity_job(
+        workspace, source, reference,
+        execution={"v2v_identity_describe_reference": True},
+    )
+    await collect(job)
+
+    (argv,) = invocations(log)
+    assert argv[argv.index("--prompt") + 1] == job.prompt
+
+
+@needs_ffmpeg
+async def test_the_describer_is_optional_and_off_means_off(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    stub_matte(monkeypatch)
+    shown = stub_describer(monkeypatch, "should never be asked")
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = identity_job(
+        workspace, source, reference,
+        execution={"v2v_identity_describe_reference": False},
+    )
+    await collect(job)
+
+    assert shown == []
+    (argv,) = invocations(log)
+    assert argv[argv.index("--prompt") + 1] == job.prompt
+
+
+@needs_ffmpeg
+async def test_without_identity_mode_nothing_is_described(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A plain transform with a look-hint reference must not pay a vision
+    subprocess it gets nothing from."""
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    shown = stub_describer(monkeypatch, "should never be asked")
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = identity_job(workspace, source, reference)
+    job.execution.pop("v2v_reference_identity")
+    await collect(job)
+
+    assert shown == []
+    (argv,) = invocations(log)
+    assert argv[argv.index("--prompt") + 1] == job.prompt
 
 
 # ── Nothing silently pretends ────────────────────────────────────────────

@@ -1,13 +1,15 @@
 # V2V reference identity + the V2V lip-sync drift: trace, root causes, fixes
 
-**Date:** 2026-08-19 · **Status:** both fixes implemented, unit-proven, and
-**GPU-verified on the RTX PRO 6000 the same day** (§10, §12–§14). NOT
-deployed, NOT committed; the box's checkout was restored to its pre-session
-state after the runs (test artifacts kept in `/workspace/idtest/`). The
-lip-sync fix is a correctness change active on the V2V delivery path.
-Identity replacement is behind `execution.v2v_reference_identity`, OFF
-everywhere — enabling it is a product decision that also requires the
-consent gate (§17).
+**Date:** 2026-08-19 · **Status:** implemented, unit-proven, **GPU-verified
+on the RTX PRO 6000 and DEPLOYED TO PRODUCTION the same day** — worker via
+`git pull` + supervised restart (commits `2ba698e`/`7d99e41`/`e6e26dc`,
+runbook §44), VPS api+web rebuilt by hand with `v2v_reference_identity:
+true` live in the baked YAML. The lip-sync fix is active for every V2V job.
+Test artifacts from the verification runs live in `/workspace/idtest/` on
+the box. The consent-gate recommendation (§17) was NOT implemented; shipping
+without it was a deliberate product decision. See the evening addendum for
+the first production identity job and the reference-describer improvement it
+produced.
 
 ---
 
@@ -347,3 +349,54 @@ untouched).
 - Phoneme-level accuracy is not claimed; what is fixed is the pipeline's
   timing. Model-side articulation fidelity under identity conditioning is
   matrix test B's explicit question.
+
+---
+
+## Addendum (19 Aug, evening): the first production identity job, and what it taught
+
+**The job:** source = a dancer with a fully MASKED face, full-body wide shot,
+fast motion; reference = a man in a maroon suit; prompt = a wall of
+meta-instructions ("Replace the person… Preserve the exact face… no face
+drift, duplicates, deformities, flickering"). Output: an invented shirtless
+man — neither source nor reference.
+
+**Why, precisely:** LTX prompts are captions, not commands. Every word of
+those instructions entered the model as CONTENT vocabulary on a pipeline
+(`ic_lora`) that has **no negative prompt** — and the prompt named not one
+visible attribute of the reference person. Add the adversarial source (the
+face the identity anchor must land on is masked and tiny in frame) and the
+result was fully predictable from the benchmark's own limits.
+
+**The client's ComfyUI JSON, audited:** its mechanism is latent img2img over
+the source video (denoise 0.5–0.6) on the dev model with CFG 2.0 / STG 1.2 /
+negative prompt. Verified against the installed `ltx_pipelines` sources:
+that combination **does not exist in any official CLI** — `ic_lora` exposes
+no CFG, no negative prompt, no STG, no denoise dial (checked argparse and
+`__call__`); `retake` is temporal inpainting of a time window, not a
+restyle; the only partial-denoise machinery is stage-2's internal
+`noise_scale`. The JSON itself cannot run as written (CheckpointLoaderSimple
+cannot produce a CLIP for LTX — LTX encodes with Gemma; the "advanced
+configuration" node is not a core node), and it contains **no reference
+image input at all** — its identity is text-described. Same verdict family
+as the 17 Aug ComfyUI claims audit: one genuinely correct idea (captions
+describing the person work; 97 = 8k+1), the rest unusable as specification.
+
+**The improvement shipped from this:** `v2v_identity_describe_reference`
+(default ON inside identity mode). The worker looks at the reference photo —
+`reference_person_facts` in `worker/director/vision.py`, the I2V Director
+describer generalized — and appends a one-sentence caption of the person
+after the user's verbatim prompt. **Measured on the box first:** the on-box
+gemma-4-e2b-it checkpoint, whose image-input ability was recorded as
+"unmeasured" in the I2V Director report, loads as an image-text model in
+4.3s and answered in 1.1s — "Woman: adult, dark hair, black leather jacket"
+for the benchmark reference. That measurement also unblocks
+`DIRECTOR_VISION_ENABLED` as a separate decision. Every failure of the
+describer degrades to the bare prompt; four tests pin append/verbatim-prefix/
+off-switch/bypass.
+
+**Honest limits restated for this job class:** a masked-face, full-body,
+fast-motion source is the hardest cell in the matrix (F/G territory) — the
+description fix removes the prompt sabotage, but face-anchored identity onto
+a face-covered dancer remains beyond what the native mechanism has ever
+demonstrated. `v2v_identity_subject_attention: 0.65` is the measured dial
+for motion-heavy sources.

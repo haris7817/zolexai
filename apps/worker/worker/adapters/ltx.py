@@ -120,6 +120,7 @@ from worker.director import (
     DirectorFailure,
     compile_section_prompts,
     create_director_plan,
+    reference_person_facts,
     wants_director,
 )
 from worker.longform import (
@@ -1363,6 +1364,30 @@ class LtxAdapter:
                 ),
                 retriable=False,
             )
+
+        if identity and job.execution.get("v2v_identity_describe_reference", True):
+            # The model never sees the reference as anything but pixels, and
+            # pixels lose to a prompt that says nothing about the person —
+            # the first production identity job proved it: a customer prompt
+            # made of meta-instructions ("preserve the exact face… no
+            # flicker") named no visible attribute, and the render was
+            # neither the source person nor the reference. So the worker
+            # LOOKS at the photo and appends what it sees, in caption voice,
+            # after the user's own text — which stays verbatim, first.
+            # "" on any failure means the prompt simply goes through
+            # unchanged; the description is reinforcement, not a dependency.
+            facts = await cancellable(job, reference_person_facts(reference))
+            if facts:
+                described = " ".join(facts.split()).rstrip(".")
+                job = replace(
+                    job,
+                    prompt=(
+                        f"{job.prompt}\n\n"
+                        f"The person from the reference image, exactly as "
+                        f"photographed: {described}. The same person, with the "
+                        "same face, hair and clothing, is visible throughout."
+                    ),
+                )
         strength = job.execution_float("v2v_control_strength", _V2V_CONTROL_STRENGTH)
         lora_strength = job.execution_float("v2v_lora_strength", _V2V_LORA_STRENGTH)
         continuity = job.execution_float("v2v_continuity_strength", _V2V_CONTINUITY_STRENGTH)
