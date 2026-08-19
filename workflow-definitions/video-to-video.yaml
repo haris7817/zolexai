@@ -28,18 +28,19 @@ inputs:
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
 
-  # Optional reference image — requested by the client for a later milestone.
-  #
-  # M1 scope is the CONTRACT ONLY: the input is accepted, validated, stored and
-  # handed to the worker. It does NOT perform identity or character
-  # replacement; that behaviour belongs to M2. The `help` line below is what the
-  # customer reads, and it deliberately promises nothing beyond style guidance.
+  # Optional reference image. M1 shipped the contract only (accepted, stored,
+  # handed to the worker as a weak look hint); since 19 Aug 2026 it drives
+  # person identity — see `v2v_reference_identity` in the execution block.
+  # The help line is the customer promise: it says who the person will be,
+  # and sets the single-person expectation, because a source with several
+  # people has all of them re-imagined (measured, not a guess).
   - role: reference_image
     kind: image
     required: false
     label: REFERENCE IMAGE
     drop_hint: an optional reference image
-    help: Optional. Guides the look of the result.
+    help: Optional. The person in the result follows this image. Works best
+      when your video shows one person.
     accept: ["image/jpeg", "image/png", "image/webp"]
     max_size_mb: 25
 
@@ -161,6 +162,51 @@ execution:
   # Requires the matting model on the node. NOT YET ENABLED: proven on one
   # 8-second window, not across a chained multi-pass job, and the matte's
   # behaviour on several people, occlusion and fast motion is unmeasured.
+
+  # ── Reference identity (ON since 19 Aug 2026) ───────────────────────────
+  #
+  # GPU-verified the day it was built (research-2026-08-19): a 15s speaking
+  # man + a reference photo of a woman returned HER — face, hair, jacket —
+  # performing his speech in his kitchen, stable across pass seams; a 30s
+  # multi-pass source held the identity to the last section. Costs ~27s of
+  # matting per pass on top of the transform.
+  v2v_reference_identity: true
+  #
+  # Person lock's mirror image: the person should NOT survive — the uploaded
+  # reference image says who they are, the footage keeps saying what they do.
+  # Three levers move together (transform engine only; the flag with a
+  # reference on any other engine is refused rather than silently ignored,
+  # and without a reference image it is inert):
+  #
+  #   * the reference anchors frame 0 of the first pass and is RE-SHOWN at an
+  #     interior frame of every later pass — the I2V identity-persistence
+  #     mechanism, because a continuity frame alone decays back toward the
+  #     source person over chained sections;
+  #   * each pass mattes its people (BiRefNet, as person lock) and weights the
+  #     control signal BELOW the scene inside that region, so the canny edges
+  #     stop re-imposing the source person's facial geometry while pose and
+  #     placement still track the footage;
+  #   * a matting failure fails the job — never a delivered video carrying
+  #     the source person under a claim of replacement.
+  #
+  #   v2v_identity_anchor_strength:    reference at frame 0, first pass
+  #                                    (default 0.65)
+  #   v2v_identity_refresh_strength:   reference re-shown per later pass
+  #                                    (default 0.35)
+  #   v2v_identity_subject_attention:  edge-map grip over the person
+  #                                    (default 0.5 — toward 1 re-imposes the
+  #                                    source's face, toward 0 loses their
+  #                                    motion)
+  #
+  # Mutually exclusive with v2v_person_lock — carrying both is refused.
+  # Honest scope until the matrix says more: single/primary person; a
+  # multi-person source mattes ALL people, so identity assignment there is
+  # undefined. A versioned, server-enforced consent checkbox for identity
+  # replacement (the reference engine's pattern) remains the recorded
+  # recommendation; enabling without it was a deliberate product decision on
+  # 19 Aug 2026. `scripts/v2v_identity_matrix.sh` re-measures these defaults
+  # when footage says they need moving; the sweep clips backing the current
+  # values are on the GPU box in /workspace/idtest/.
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

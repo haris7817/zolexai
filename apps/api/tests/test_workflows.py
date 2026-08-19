@@ -68,15 +68,23 @@ async def test_music_declares_no_frame_and_no_extend(client: AsyncClient) -> Non
 
 
 async def test_video_to_video_has_an_optional_reference_image(client: AsyncClient) -> None:
-    """The M1 contract for the client's requested M2 feature (directive §14)."""
+    """The reference image drives person identity (live since 19 Aug 2026).
+
+    M1 pinned the OPPOSITE promise here — the help text was forbidden from
+    mentioning identity while the input was only a look hint. Now that
+    `v2v_reference_identity` ships, the copy must say who the person will be
+    and set the single-person expectation, because a multi-person source has
+    everyone re-imagined (measured on the GPU, 19 Aug 2026).
+    """
     workflow = (await client.get("/api/v1/workflows/video-to-video")).json()
     roles = {item["role"]: item for item in workflow["inputs"]}
 
     assert roles["source_video"]["required"] is True
     assert roles["reference_image"]["required"] is False
     assert roles["reference_image"]["kind"] == "image"
-    # The copy must not promise identity or character replacement — that is M2.
-    assert "identity" not in roles["reference_image"]["help"].lower()
+    help_text = roles["reference_image"]["help"]
+    assert "person" in help_text.lower()
+    assert "one person" in help_text.lower()
 
 
 async def test_unknown_workflow_is_a_clean_404(client: AsyncClient) -> None:
