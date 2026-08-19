@@ -391,14 +391,28 @@ export function valuesFromJob(
   workflow: Workflow,
   prompt: string,
   parameters: Record<string, unknown>,
+  inputs: readonly { role: string; asset_id: string }[] = [],
 ): GenerationFormValues {
   const defaults = defaultValuesFor(workflow);
 
   const pick = (value: unknown, allowed: readonly string[], fallback: string | null) =>
     typeof value === "string" && allowed.includes(value) ? value : fallback;
 
+  // The job's media inputs are settings too, and losing them here is not
+  // symmetric: a wiped required input visibly disables Generate, while a
+  // wiped OPTIONAL one — the v2v reference image — leaves the form valid and
+  // the next submit silently posts without it. Only roles this workflow still
+  // declares are restored; the Dropzone resolves an id it did not upload.
+  const declared = new Set(workflow.inputs.map((input) => input.role));
+  const restored = Object.fromEntries(
+    inputs
+      .filter((input) => declared.has(input.role))
+      .map((input) => [input.role, input.asset_id]),
+  );
+
   return {
     ...defaults,
+    inputs: { ...defaults.inputs, ...restored },
     prompt,
     duration: pick(parameters.duration, workflow.supported_durations, defaults.duration),
     aspectRatio: pick(

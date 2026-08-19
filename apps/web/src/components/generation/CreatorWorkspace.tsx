@@ -202,7 +202,12 @@ export function CreatorWorkspace({
   const reuseSettings = useCallback(() => {
     if (!selectedJob) return;
     form.reset(
-      valuesFromJob(workflow, selectedJob.prompt, selectedJob.parameters as Record<string, unknown>),
+      valuesFromJob(
+        workflow,
+        selectedJob.prompt,
+        selectedJob.parameters as Record<string, unknown>,
+        selectedJob.inputs,
+      ),
     );
     if (isCompact) setPanelOpen(true);
   }, [selectedJob, workflow, form, isCompact]);
