@@ -1,0 +1,207 @@
+"""The composited identity anchor for `v2v_reference_identity`, GPU-side.
+
+A reference photograph is the WRONG SHAPE to anchor a video pass: the photo
+is a portrait, the pass's first frame is whatever the footage is — often a
+full-body wide shot where the face occupies forty pixels. Anchored raw, the
+model takes the photo's colours and mood and invents the person, which is
+exactly what the first full-body production jobs delivered. The reference
+engine's answer, shipped in their product at strength 1.0, is to build the
+anchor instead of borrowing it:
+
+  1. take the source video's opening frame, on the pass's own grid;
+  2. matte the person in it (BiRefNet — the same model person lock uses)
+     and REMOVE them (OpenCV TELEA inpaint) — any leftover pixels of the
+     original person are a first-frame cue pulling the render back to them;
+  3. matte the person in the reference photo and cut them out;
+  4. scale the cutout to the source person's own box, feet to the same
+     ground, and composite.
+
+The result is a frame whose COMPOSITION is the footage's and whose PERSON is
+the reference's — an anchor that can be applied at full strength without
+hijacking the shot. Deliberately a CLI in the LTX environment, like
+`person_matte.py`: the worker has no torch and no OpenCV, and must not grow
+them to prepare a picture.
+
+    uv run python scripts/person_anchor.py \\
+        --source clip.mp4 --reference person.png --dest anchor.png \\
+        --start-seconds 0 --width 576 --height 1024
+
+Exit codes: 0 success; 3 no person found in the source frame (the caller
+falls back to the raw-photo anchor); anything else is a real failure.
+"""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+#: Matting resolution — BiRefNet is trained square; see person_matte.py.
+MATTE_SIDE = 1024
+
+#: A matte below this fraction of the frame is noise, not a person, and
+#: compositing a person onto noise puts them in a random corner.
+MIN_PERSON_AREA = 0.02
+
+#: The cutout fills this much of the source person's box. Slightly inside it
+#: (the reference engine uses 0.90 x 0.96) so the new person never overhangs
+#: the silhouette the control signal is about to enforce.
+FIT_WIDTH, FIT_HEIGHT = 0.90, 0.96
+
+#: How far the removal mask is grown before inpainting, in pixels at the
+#: working grid. Leftover slivers of the original person are exactly the
+#: first-frame cue this exists to remove; over-inpainting costs nothing
+#: because the composite covers most of it again.
+INPAINT_DILATION = 9
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, required=True, help="source video")
+    parser.add_argument("--reference", type=Path, required=True, help="person photo")
+    parser.add_argument("--dest", type=Path, required=True, help="output PNG")
+    parser.add_argument("--start-seconds", type=float, default=0.0)
+    parser.add_argument("--width", type=int, required=True)
+    parser.add_argument("--height", type=int, required=True)
+    parser.add_argument("--model", default="ZhengPeng7/BiRefNet")
+    return parser.parse_args(argv)
+
+
+def extract_frame(args: argparse.Namespace, dest: Path) -> Path:
+    """The source's opening frame, on the render's exact grid."""
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-ss", f"{max(0.0, args.start_seconds):.3f}",
+            "-i", str(args.source),
+            "-frames:v", "1",
+            "-vf", (
+                f"scale={args.width}:{args.height}:force_original_aspect_ratio=increase,"
+                f"crop={args.width}:{args.height}"
+            ),
+            str(dest),
+        ],
+        check=True,
+    )
+    if not dest.exists() or dest.stat().st_size == 0:
+        raise SystemExit("no opening frame could be extracted")
+    return dest
+
+
+def load_matter(model_id: str):
+    from transformers import AutoModelForImageSegmentation
+
+    model = AutoModelForImageSegmentation.from_pretrained(
+        model_id, trust_remote_code=True
+    )
+    model.to("cuda").eval().half()
+    return model
+
+
+def matte_of(model, image) -> object:
+    """A float mask in [0,1] at the image's own size."""
+    import numpy as np
+    import torch
+    from PIL import Image
+    from torchvision import transforms
+
+    prepare = transforms.Compose(
+        [
+            transforms.Resize((MATTE_SIDE, MATTE_SIDE)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        ]
+    )
+    with torch.no_grad():
+        tensor = prepare(image).unsqueeze(0).to("cuda").half()
+        prediction = model(tensor)[-1].sigmoid().float().cpu()[0, 0].numpy()
+    mask = Image.fromarray((prediction * 255).astype("uint8")).resize(image.size)
+    return np.asarray(mask).astype("float32") / 255.0
+
+
+def bbox_of(mask, min_area: float) -> tuple[int, int, int, int] | None:
+    """(x0, y0, x1, y1) of the matte, or None when there is no real person."""
+    import numpy as np
+
+    binary = mask > 0.5
+    if binary.mean() < min_area:
+        return None
+    rows = np.any(binary, axis=1)
+    cols = np.any(binary, axis=0)
+    y0, y1 = int(np.argmax(rows)), int(len(rows) - np.argmax(rows[::-1]))
+    x0, x1 = int(np.argmax(cols)), int(len(cols) - np.argmax(cols[::-1]))
+    return x0, y0, x1, y1
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    for path in (args.source, args.reference):
+        if not path.is_file():
+            raise SystemExit(f"not found: {path}")
+
+    workspace = Path(tempfile.mkdtemp(prefix="person-anchor-"))
+    try:
+        import cv2
+        import numpy as np
+        from PIL import Image
+
+        frame_path = extract_frame(args, workspace / "frame.png")
+        frame = Image.open(frame_path).convert("RGB")
+        reference = Image.open(args.reference).convert("RGB")
+
+        model = load_matter(args.model)
+        print("matting the source frame", flush=True)
+        source_mask = matte_of(model, frame)
+        print("matting the reference", flush=True)
+        reference_mask = matte_of(model, reference)
+
+        source_box = bbox_of(source_mask, MIN_PERSON_AREA)
+        reference_box = bbox_of(reference_mask, MIN_PERSON_AREA)
+        if source_box is None or reference_box is None:
+            where = "source frame" if source_box is None else "reference"
+            print(f"no person found in the {where}", flush=True)
+            return 3
+
+        # Remove the original person entirely before compositing: any visible
+        # sliver of them is a first-frame cue for their clothes and skin.
+        frame_bgr = cv2.cvtColor(np.asarray(frame), cv2.COLOR_RGB2BGR)
+        removal = (source_mask > 0.3).astype("uint8") * 255
+        kernel = np.ones((INPAINT_DILATION, INPAINT_DILATION), np.uint8)
+        removal = cv2.dilate(removal, kernel)
+        inpainted = cv2.inpaint(frame_bgr, removal, 7, cv2.INPAINT_TELEA)
+        canvas = Image.fromarray(cv2.cvtColor(inpainted, cv2.COLOR_BGR2RGB))
+
+        # The reference person, cut out and scaled INTO the source person's
+        # own box — bottom-aligned so their feet meet the same ground.
+        rx0, ry0, rx1, ry1 = reference_box
+        cutout = reference.crop((rx0, ry0, rx1, ry1))
+        alpha = Image.fromarray(
+            (np.clip(reference_mask[ry0:ry1, rx0:rx1], 0, 1) * 255).astype("uint8")
+        )
+        sx0, sy0, sx1, sy1 = source_box
+        box_w, box_h = sx1 - sx0, sy1 - sy0
+        scale = min(FIT_WIDTH * box_w / cutout.width, FIT_HEIGHT * box_h / cutout.height)
+        size = (max(1, round(cutout.width * scale)), max(1, round(cutout.height * scale)))
+        cutout = cutout.resize(size, Image.LANCZOS)
+        alpha = alpha.resize(size, Image.LANCZOS)
+
+        paste_x = sx0 + (box_w - size[0]) // 2
+        paste_y = sy1 - size[1]
+        canvas.paste(cutout, (paste_x, paste_y), alpha)
+
+        args.dest.parent.mkdir(parents=True, exist_ok=True)
+        canvas.save(args.dest)
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+    if not args.dest.exists() or args.dest.stat().st_size == 0:
+        raise SystemExit("no anchor was written")
+    print(f"anchor written to {args.dest}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -50,10 +50,12 @@ def identity_job(workspace: Path, source: Path, reference: Path | None, **overri
         "runtime": "ltx",
         "v2v_engine": "transform",
         "v2v_reference_identity": True,
-        # Off by default IN THE TESTS (the product default is on): most of
-        # this suite is about conditioning and masking, and the describer is
-        # a subprocess these tests stub explicitly when it is the subject.
+        # Off by default IN THE TESTS (the product defaults are on): most of
+        # this suite is about conditioning and masking, and the describer and
+        # anchor builder are subprocesses these tests stub explicitly when
+        # they are the subject.
         "v2v_identity_describe_reference": False,
+        "v2v_identity_composited_anchor": False,
     }
     execution.update(overrides.pop("execution", {}))
     inputs = [staged_input("source_video", "video", "video/mp4", source)]
@@ -202,22 +204,107 @@ async def test_the_interior_anchor_is_still_a_knob_for_footage_that_drifts(
         assert refresh[2] == pytest.approx(0.2)
 
 
+def stub_anchor(monkeypatch: pytest.MonkeyPatch, *, succeed: bool = True) -> list[dict]:
+    """Replaces the anchor-builder subprocess; records what it was asked for."""
+    from worker.media import ffmpeg as run_ffmpeg
+
+    calls: list[dict] = []
+
+    async def fake(
+        source: Path, reference: Path, dest: Path, *,
+        start_seconds: float, width: int, height: int, **kwargs,
+    ) -> Path | None:
+        calls.append(
+            {"source": source, "reference": reference,
+             "start_seconds": start_seconds, "width": width, "height": height}
+        )
+        if not succeed:
+            return None
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        await run_ffmpeg(
+            ["-f", "lavfi", "-i", f"color=red:s={width}x{height}",
+             "-frames:v", "1", str(dest)]
+        )
+        return dest
+
+    monkeypatch.setattr("worker.adapters.ltx.build_identity_anchor", fake)
+    return calls
+
+
+@needs_ffmpeg
+async def test_the_composited_anchor_opens_the_video_at_full_strength(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raw portrait against a full-body opening frame lands its face on
+    forty pixels and the model invents the person — measured twice in
+    production. The anchor is therefore BUILT: the footage's own opening
+    frame with the reference person composited into the source person's box,
+    safe at full strength because its composition IS the shot."""
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    stub_matte(monkeypatch)
+    anchors = stub_anchor(monkeypatch)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    await collect(identity_job(
+        workspace, source, reference,
+        execution={"v2v_identity_composited_anchor": True},
+    ))
+
+    assert len(anchors) == 1, "built once per job, before any pass"
+    assert anchors[0]["reference"] == reference
+    (argv,) = invocations(log)
+    (opening,) = conditioning_of(argv)
+    assert opening[0].endswith("identity-anchor.png")
+    assert opening[1] == 0
+    assert opening[2] == pytest.approx(1.0)
+
+
+@needs_ffmpeg
+async def test_an_unbuildable_anchor_falls_back_to_the_raw_photo_capped(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No person at frame 0, matting unavailable — the job still runs, with
+    the raw photo at the capped strength: weaker identity, never a failure,
+    and never a raw photo at 1.0 replacing the shot instead of the person."""
+    source = await make_clip(workspace / "source.mp4", 2.0)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    stub_matte(monkeypatch)
+    stub_anchor(monkeypatch, succeed=False)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    await collect(identity_job(
+        workspace, source, reference,
+        execution={"v2v_identity_composited_anchor": True},
+    ))
+
+    (argv,) = invocations(log)
+    assert conditioning_of(argv) == [(str(reference), 0, 0.65)]
+    assert (workspace / "output.mp4").exists()
+
+
 @needs_ffmpeg
 async def test_the_identity_strengths_are_tunable_per_workflow(
     workspace: Path, fake_models: Path, stub_repo: Path,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The right values are a GPU judgement; the sweep script sets them
-    through the same private keys every other conditioning dial uses."""
+    through the same private keys every other conditioning dial uses. The
+    anchor dial governs the COMPOSITED anchor; the raw fallback stays capped
+    regardless, because a raw photo at high strength replaces the shot."""
     source = await make_clip(workspace / "source.mp4", 3.7)
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
+    stub_anchor(monkeypatch)
     log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
 
     job = identity_job(
         workspace, source, reference,
         execution={
             "transform_pass_seconds": 1,
+            "v2v_identity_composited_anchor": True,
             "v2v_identity_anchor_strength": 0.8,
             "v2v_identity_refresh_strength": 0.5,
         },

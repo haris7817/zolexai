@@ -197,12 +197,20 @@ class WorkerSettings(BaseSettings):
     `execution.v2v_person_lock`. Empty means "the script shipped in this
     checkout, run in the LTX environment" — see `person_matte_argv`.
 
+    `person_anchor_command` below is its sibling for the composited identity
+    anchor (`scripts/person_anchor.py`), on the same seam for the same
+    reason.
+
     A command rather than an import for the same reason the pipelines are: the
     matting model needs torch and CUDA, and this worker deliberately has
     neither. It runs in the LTX environment (`ltx_repo_dir` is the working
     directory) and speaks a small, stable CLI, so the segmentation model behind
     it can be replaced without touching a line of worker code.
     """
+
+    person_anchor_command: str = ""
+    """How to build the composited identity anchor for
+    `execution.v2v_reference_identity` — see `person_anchor_argv`."""
 
     director_planner_command: str = ""
     """
@@ -604,6 +612,14 @@ class WorkerSettings(BaseSettings):
         if self.person_matte_command:
             return shlex.split(self.person_matte_command)
         script = Path(__file__).resolve().parents[2] / "scripts" / "person_matte.py"
+        return ["uv", "run", "python", str(script)]
+
+    @property
+    def person_anchor_argv(self) -> list[str]:
+        """The composited-identity-anchor command, as argv — same pattern."""
+        if self.person_anchor_command:
+            return shlex.split(self.person_anchor_command)
+        script = Path(__file__).resolve().parents[2] / "scripts" / "person_anchor.py"
         return ["uv", "run", "python", str(script)]
 
     @property

@@ -74,7 +74,8 @@ their exact double. State only what is VISIBLE. Never guess names, emotions,
 backstory or anything outside the frame.
 
 Answer with ONE sentence, nothing else: the person's age group, build, hair
-(colour, length, style), headwear if any, and clothing with exact colours.
+(colour, LENGTH, style), facial hair (always name a beard or moustache when
+one is visible), headwear if any, and clothing with exact colours.
 Ignore jewellery, chains, necklaces and other accessories entirely — a chain
 described near a face comes back rendered as braided hair. Never mention the
 photograph, the background or the setting."""

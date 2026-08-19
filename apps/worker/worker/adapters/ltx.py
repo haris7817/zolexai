@@ -145,6 +145,7 @@ from worker.media import (
     audio_onsets,
     build_attention_mask,
     build_hybrid_control,
+    build_identity_anchor,
     build_person_matte,
     concat_segments,
     duration_tolerance,
@@ -540,13 +541,23 @@ the contract the customer reads says it "guides the look", and a strength that
 made it the opening frame would be replacing the source's intent with it.
 Setting this to 0 in a workflow drops reference conditioning entirely."""
 
-_V2V_IDENTITY_ANCHOR_STRENGTH = 0.65
-"""The reference image at frame 0 of the FIRST pass, under
-`v2v_reference_identity`. High enough to seed the replacement — the reference
-engine's own head-start value on this pipeline family is 0.65 on retry, ≤1.0
-otherwise — and below full strength because the edge map still owns the
-opening composition and a reference that outweighed it would replace the
-shot, not the person."""
+_V2V_IDENTITY_ANCHOR_STRENGTH = 1.0
+"""The COMPOSITED anchor at frame 0 of the first pass, under
+`v2v_reference_identity`. Full strength, and safe at full strength for the
+same reason the reference engine ships it there: the anchor is built from
+the footage's own opening frame (`scripts/person_anchor.py` — source person
+removed, reference person composited into their box), so its composition IS
+the shot and there is nothing for the anchor to hijack. The measured
+alternative is what this replaced: a raw portrait anchored against a
+full-body opening frame lands its face on forty pixels, and the model
+invents the person — the first full-body production jobs, twice."""
+
+_V2V_IDENTITY_RAW_ANCHOR_STRENGTH = 0.65
+"""The FALLBACK strength when the composited anchor cannot be built (no
+person visible at frame 0, matting unavailable) and the raw photo anchors
+instead. Capped below the composited value because a raw photo at 1.0
+replaces the shot, not the person — the composition-hijack failure the
+brief warned about. 0.65 is the reference engine's own raw-anchor value."""
 
 _V2V_IDENTITY_REFRESH_STRENGTH = 0.0
 """The reference image re-shown at an interior frame of later passes.
@@ -1411,6 +1422,32 @@ class LtxAdapter:
         anchor_strength = job.execution_float(
             "v2v_identity_anchor_strength", _V2V_IDENTITY_ANCHOR_STRENGTH
         )
+        # The composited anchor: the footage's own opening frame with the
+        # reference person standing where the source person stood, anchored
+        # at full strength. Built once per job, before any pass renders.
+        # Falls back to the raw photo at the capped strength — the previously
+        # shipped behaviour — when it cannot be built; the log says why.
+        anchor = reference
+        if identity and job.execution.get("v2v_identity_composited_anchor", True):
+            built = await cancellable(
+                job,
+                build_identity_anchor(
+                    staged,
+                    reference,
+                    job.workspace / "identity-anchor.png",
+                    start_seconds=0.0,
+                    width=grid[0],
+                    height=grid[1],
+                ),
+            )
+            if built is not None:
+                anchor = built
+            else:
+                anchor_strength = min(
+                    anchor_strength, _V2V_IDENTITY_RAW_ANCHOR_STRENGTH
+                )
+        elif identity:
+            anchor_strength = min(anchor_strength, _V2V_IDENTITY_RAW_ANCHOR_STRENGTH)
         refresh_strength = job.execution_float(
             "v2v_identity_refresh_strength", _V2V_IDENTITY_REFRESH_STRENGTH
         )
@@ -1434,7 +1471,7 @@ class LtxAdapter:
                 # suggests, which is the source person. Ascending frame order,
                 # as `_command` requires.
                 if step.previous_frame is None:
-                    return [ConditioningFrame(reference, 0, anchor_strength)]
+                    return [ConditioningFrame(anchor, 0, anchor_strength)]
                 items = [ConditioningFrame(step.previous_frame, 0, continuity)]
                 if refresh_strength > 0:
                     frames = self._frame_count(step.seconds)

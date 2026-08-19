@@ -37,6 +37,7 @@ from worker.media.masks import (
     BACKGROUND_ATTENTION,
     build_attention_mask,
     build_hybrid_control,
+    build_identity_anchor,
     build_person_matte,
     extract_source_window,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "audio_onsets",
     "build_attention_mask",
     "build_hybrid_control",
+    "build_identity_anchor",
     "build_person_matte",
     "concat_segments",
     "crossfade_concat",

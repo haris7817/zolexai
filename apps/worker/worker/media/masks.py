@@ -143,6 +143,74 @@ async def build_person_matte(
     return dest
 
 
+async def build_identity_anchor(
+    source: Path,
+    reference: Path,
+    dest: Path,
+    *,
+    start_seconds: float,
+    width: int,
+    height: int,
+    timeout: float = 600.0,
+) -> Path | None:
+    """A first-frame anchor whose COMPOSITION is the footage's and whose
+    PERSON is the reference's, or None when it cannot be built.
+
+    A raw reference photo anchored at frame 0 carries the wrong composition —
+    a portrait against a full-body opening frame lands its face on forty
+    pixels and the model invents the rest, which is what the first full-body
+    production identity jobs delivered. `scripts/person_anchor.py` mattes
+    both images, REMOVES the source person (any leftover pixel of them is a
+    first-frame cue for their clothes), and composites the reference person
+    into the source person's own box — the reference engine ships exactly
+    this, anchored at full strength.
+
+    None — not an exception — on every failure, including "no person found"
+    (a person may enter the footage after frame 0). The caller falls back to
+    the raw-photo anchor, which is the previously shipped behaviour: weaker
+    identity, never a lie, and the WHY lands in the log either way.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        *settings.person_anchor_argv,
+        "--source", str(source),
+        "--reference", str(reference),
+        "--dest", str(dest),
+        "--start-seconds", f"{max(0.0, start_seconds):.3f}",
+        "--width", str(width),
+        "--height", str(height),
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(settings.ltx_repo_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except OSError as error:
+        logger.warning("identity_anchor_unavailable", extra={"reason": str(error)})
+        return None
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        logger.warning("identity_anchor_timeout", extra={"timeout_seconds": timeout})
+        dest.unlink(missing_ok=True)
+        return None
+
+    if process.returncode != 0 or not dest.exists() or dest.stat().st_size == 0:
+        tail = (stdout or b"").decode("utf-8", "replace").strip().splitlines()[-5:]
+        logger.warning(
+            "identity_anchor_fallback",
+            extra={"returncode": process.returncode, "tail": " | ".join(tail)},
+        )
+        dest.unlink(missing_ok=True)
+        return None
+    logger.info("identity_anchor_built", extra={"anchor": dest.name})
+    return dest
+
+
 async def extract_source_window(
     source: Path,
     dest: Path,
