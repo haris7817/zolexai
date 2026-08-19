@@ -170,6 +170,18 @@ class DirectorPlan:
     ambience: str
     characters: tuple[DirectorCharacter, ...]
     timeline: tuple[DirectorEvent, ...]
+    source_anchored: bool = False
+    """True when the video starts from an uploaded image (Image to Video).
+
+    An anchored plan's visual truth is the IMAGE, not the text: characters may
+    carry an empty `appearance` (the compiler then anchors their identity to
+    the video's first frame — which literally is the upload, pinned at full
+    conditioning strength — instead of to a described look), and the planner
+    is briefed never to invent visible detail the idea does not state. A
+    caption describing a red coat over a photograph of a blue one would be
+    drift pressure in text form; this flag is how the pipeline refuses to
+    produce one."""
+
     continuity: tuple[str, ...] = ()
     """Facts that must look the same in every frame — a red hat that stays the
     same red hat after it is taken off and put back on, a jacket that does not
@@ -232,12 +244,17 @@ def parse_plan(
     idea: str,
     duration_seconds: float,
     language: str,
+    source_anchored: bool = False,
 ) -> DirectorPlan:
     """Parses and validates the planner's JSON into a `DirectorPlan`.
 
     Raises `DirectorPlanError` naming every violated rule at once, so a retry
     prompt (or a log reader) sees the full diagnosis rather than the first
     symptom.
+
+    `source_anchored` (Image to Video) relaxes exactly one rule: a character
+    may have an empty `appearance`, because on that path the uploaded image is
+    the appearance and a made-up description would contradict it.
     """
     problems: list[str] = []
     if not isinstance(raw, dict):
@@ -249,7 +266,9 @@ def parse_plan(
     if not scene:
         problems.append("the plan has no scene description")
 
-    characters = _parse_characters(raw.get("characters"), problems)
+    characters = _parse_characters(
+        raw.get("characters"), problems, appearance_required=not source_anchored
+    )
     timeline = _parse_timeline(
         raw.get("timeline"), {c.id for c in characters}, duration_seconds, problems
     )
@@ -265,6 +284,7 @@ def parse_plan(
         ambience=ambience,
         characters=tuple(characters),
         timeline=tuple(timeline),
+        source_anchored=source_anchored,
         continuity=_parse_continuity(raw.get("continuity")),
     )
     plan = _enforce_speech_budget(plan, idea)
@@ -275,7 +295,9 @@ def parse_plan(
 # ── Parsing pieces ───────────────────────────────────────────────────────
 
 
-def _parse_characters(raw: object, problems: list[str]) -> list[DirectorCharacter]:
+def _parse_characters(
+    raw: object, problems: list[str], *, appearance_required: bool = True
+) -> list[DirectorCharacter]:
     if not isinstance(raw, list) or not raw:
         problems.append("the plan has no characters")
         return []
@@ -302,7 +324,7 @@ def _parse_characters(raw: object, problems: list[str]) -> list[DirectorCharacte
         if identifier in seen:
             problems.append(f"character id '{identifier}' appears twice")
             continue
-        if not role or not appearance:
+        if not role or (appearance_required and not appearance):
             problems.append(f"character '{identifier}' is missing a role or appearance")
             continue
         seen.add(identifier)

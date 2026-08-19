@@ -143,15 +143,18 @@ def install_provider(monkeypatch: pytest.MonkeyPatch, provider) -> None:
 # ── The mode is opt-in and scoped ────────────────────────────────────────
 
 
-def test_only_text_to_video_with_the_parameter_wants_director(workspace: Path) -> None:
-    """Image to Video shares the generation handler, so the scope check is the
-    worker-side belt to the API's validation braces."""
+def test_only_declared_workflows_with_the_parameter_want_director(workspace: Path) -> None:
+    """Every video workflow shares handlers, so this scope check is the
+    worker-side belt to the API's validation braces. Text to Video and Image
+    to Video declare the control (see their YAML); nothing else does."""
     assert wants_director(director_job(workspace))
+    assert wants_director(director_job(workspace, workflow_id="image-to-video"))
     assert not wants_director(make_job(workspace))
     assert not wants_director(
         director_job(workspace, parameters={"duration": "2s", "prompt_mode": "standard"})
     )
-    assert not wants_director(director_job(workspace, workflow_id="image-to-video"))
+    for undeclared in ("extend-video", "video-to-video", "music-video"):
+        assert not wants_director(director_job(workspace, workflow_id=undeclared))
 
 
 @needs_ffmpeg

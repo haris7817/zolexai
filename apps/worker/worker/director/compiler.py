@@ -94,7 +94,9 @@ def _compile_section(
     sentences: list[str] = [_sentence(plan.scene)]
 
     if first:
-        if plan.characters:
+        if plan.characters and plan.source_anchored:
+            sentences.append(_anchored_cast_sentence(plan.characters, introduced))
+        elif plan.characters:
             sentences.append(_cast_sentence(plan.characters, introduced))
     else:
         sentences.append(
@@ -185,12 +187,28 @@ def _continuity_sentences(plan: DirectorPlan) -> list[str]:
     sentences: list[str] = []
     if plan.characters:
         subjects = _join_roles([_subject(c) for c in plan.characters])
-        sentences.append(
-            _sentence(
-                _capfirst(subjects)
-                + " keep exactly the same faces, clothing and voices for the entire video"
+        if plan.source_anchored:
+            # Constancy anchored to the FRAME rather than to a described look:
+            # on this path the text was forbidden to invent appearances, so
+            # the conditioned image is the only honest referent. In sections
+            # after the first, "the first frame" resolves to that pass's own
+            # conditioned frame 0 — the predecessor's final image — which
+            # carries the same identity forward, so the sentence stays true at
+            # every seam.
+            sentences.append(
+                _sentence(
+                    _capfirst(subjects)
+                    + " keep exactly the same faces, clothing, hair, colours and "
+                    "voices they have in the first frame, for the entire video"
+                )
             )
-        )
+        else:
+            sentences.append(
+                _sentence(
+                    _capfirst(subjects)
+                    + " keep exactly the same faces, clothing and voices for the entire video"
+                )
+            )
         # Continuous presence, stated as presence. The flicker is a person
         # briefly absent, so the constraint is that they are always there.
         sentences.append(
@@ -231,6 +249,27 @@ def _cast_sentence(characters: tuple[DirectorCharacter, ...], introduced: set[st
     """
     parts = [_full_subject(entry, introduced) for entry in characters]
     return _sentence(_capfirst(_join_roles(parts) + " are here from the first frame"))
+
+
+def _anchored_cast_sentence(
+    characters: tuple[DirectorCharacter, ...], introduced: set[str]
+) -> str:
+    """The cast of a source-anchored plan: the picture is the description.
+
+    The video's first frame IS the uploaded photograph, pinned at full
+    conditioning strength — so the strongest honest identity statement is
+    "exactly as this frame shows them", not a text description the planner was
+    forbidden to invent. Appearance the idea itself stated still rides along
+    via `_full_subject`; a character without one is named by role alone.
+    """
+    parts = [_full_subject(entry, introduced) for entry in characters]
+    return _sentence(
+        _capfirst(
+            _join_roles(parts)
+            + " are already present in the opening frame, and they keep exactly "
+            "the appearance that frame shows for the whole video"
+        )
+    )
 
 
 def _event_sentence(
@@ -450,7 +489,11 @@ def _full_subject(character: DirectorCharacter, introduced: set[str]) -> str:
         return _subject(character)
     introduced.add(character.id)
     appearance = character.appearance.strip().rstrip(".")
-    appearance = appearance[0].lower() + appearance[1:] if appearance else ""
+    if not appearance:
+        # Anchored plans may leave appearance empty on purpose — the uploaded
+        # image is the description, and "the woman, ," is not a sentence.
+        return _subject(character)
+    appearance = appearance[0].lower() + appearance[1:]
     return f"{_subject(character)}, {appearance},"
 
 

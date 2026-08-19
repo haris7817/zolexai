@@ -140,7 +140,7 @@ class CerebrasDirectorProvider:
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": system_prompt()},
+                {"role": "system", "content": system_prompt(request)},
                 {"role": "user", "content": user_prompt(request)},
             ],
             "max_completion_tokens": self._max_completion_tokens(request),

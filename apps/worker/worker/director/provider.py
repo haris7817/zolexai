@@ -49,6 +49,7 @@ from worker.director.plan import (
     target_spoken_lines,
     vocabulary_problems,
 )
+from worker.director.vision import source_image_facts
 
 logger = get_logger(__name__)
 
@@ -80,6 +81,21 @@ class DirectorRequest:
     sample: bool
     """False for the deterministic first attempt; True adds temperature on the
     retry so a refused plan is not regenerated token for token."""
+
+    source_anchored: bool = False
+    """True when the video starts from an uploaded image (Image to Video).
+
+    Switches the brief into its anchored register: the photograph owns WHO and
+    WHAT, the idea owns WHAT HAPPENS, and invented visual detail is forbidden.
+    A text-to-video request is byte-identical to what shipped before this
+    field existed."""
+
+    image_facts: str = ""
+    """What the photograph visibly shows, when the vision step produced it.
+
+    Empty is normal (the step is off by default) and the anchored brief is
+    written to survive it — the planner then simply may not describe what it
+    cannot see."""
 
     notes: tuple[str, ...] = ()
     """What was wrong with the previous draft, in the planner's own terms.
@@ -174,6 +190,36 @@ Hard rules:
   hat stays the same red felt hat every time it appears", not "the hat does not change".
 """
 
+#: Appended to the brief for Image to Video only. The register change is the
+#: whole feature: on this path a text model is planning around a photograph it
+#: cannot see, and the one catastrophic failure is CONFIDENT INVENTION — a
+#: described red coat over a photographed blue one is drift pressure written
+#: into the caption. Every rule below is a way of saying "describe nothing the
+#: idea or the facts block does not state".
+_ANCHORED_RULES = """
+SOURCE IMAGE MODE — this video starts from a photograph the user uploaded:
+- The photograph is the video's exact first frame and its visual truth. The
+  photograph decides WHO and WHAT is in the scene; the IDEA decides what happens
+  next. You cannot see the photograph unless a PHOTOGRAPH FACTS block is given.
+- Cast exactly the people and things the idea (and the PHOTOGRAPH FACTS block,
+  when given) says are in the photograph. Never add or remove anyone.
+- NEVER invent visible details. "appearance" may carry ONLY visual facts stated
+  by the idea or the PHOTOGRAPH FACTS block; when neither states any for a
+  character, set "appearance" to "" — their identity then comes from the
+  photograph itself. The same rule applies to "scene": name the setting as
+  stated, and add no imagined visual detail.
+- CONTINUITY on this path: always include how many people are present, plus
+  every visual fact the idea or the PHOTOGRAPH FACTS block states. Do not
+  describe clothing or props neither of them mentions.
+- The action moves FORWARD from the photographed moment. Do not re-stage or
+  restart what the photograph already shows; the first event begins exactly
+  where the photograph leaves off.
+- Camera: the video opens on the photograph's own framing. Keep every shot
+  inside the space the photograph establishes — a static camera, a subtle
+  push-in, or cuts between the people already in frame. Never call for a
+  reveal of anything the photograph does not show.
+"""
+
 
 def _user_prompt(request: DirectorRequest) -> str:
     language = (
@@ -187,6 +233,15 @@ def _user_prompt(request: DirectorRequest) -> str:
         f"IDEA: {request.idea}",
         f"DURATION: {request.duration_seconds:g} seconds",
         f"DIALOGUE LANGUAGE: {language}",
+    ]
+    if request.source_anchored and request.image_facts:
+        lines.append(
+            "PHOTOGRAPH FACTS — what the uploaded photograph visibly shows, "
+            "measured by a vision model. Treat these as true and copy their "
+            "visual details into appearance and continuity:\n"
+            + request.image_facts
+        )
+    lines += [
         # Computed rather than left as arithmetic in the brief: a small
         # instruct model reliably obeys a number and unreliably derives one.
         #
@@ -214,14 +269,19 @@ def _user_prompt(request: DirectorRequest) -> str:
     return "\n".join(lines)
 
 
-def system_prompt() -> str:
+def system_prompt(request: DirectorRequest) -> str:
     """The planning brief. One text, shared by every provider.
 
     Exposed so a hosted provider sends the same instructions as the local one:
     if the two drifted apart, a fallback would quietly produce a differently
     shaped plan than the primary and the difference would only ever show up in
     a customer's video.
+
+    A text-to-video request receives the original brief byte for byte; only a
+    source-anchored (Image to Video) request appends the anchored register.
     """
+    if request.source_anchored:
+        return _SYSTEM_PROMPT + _ANCHORED_RULES
     return _SYSTEM_PROMPT
 
 
@@ -237,7 +297,7 @@ class GemmaDirectorProvider:
         payload = json.dumps(
             {
                 "gemma_root": str(settings.director_gemma_root),
-                "system_prompt": _SYSTEM_PROMPT,
+                "system_prompt": system_prompt(request),
                 "user_prompt": _user_prompt(request),
                 "sample": request.sample,
                 "seed": request.seed,
@@ -298,19 +358,36 @@ def _extract_plan_json(text: str) -> dict[str, Any]:
 # ── Orchestration ────────────────────────────────────────────────────────
 
 
+#: The workflows whose YAML declares `settings.prompt_modes`, mirrored here so
+#: a mis-routed parameter cannot switch modes on a workflow that never offered
+#: the choice. Extend, video-to-video and music video stay OUT deliberately:
+#: their prompts describe continuations and restyles, not scenes to invent.
+_DIRECTOR_WORKFLOWS = frozenset({"text-to-video", "image-to-video"})
+
+
 def wants_director(job: AdapterJob) -> bool:
     """Whether this job asked for Director mode.
 
-    Scoped to text-to-video by construction: image-to-video shares the same
-    generation handler, and a prompt mode leaking across workflows would be the
-    exact class of surprise this feature is built not to cause. The API only
-    admits `prompt_mode` on workflows whose YAML declares it, so this check is
-    the worker-side belt to that server-side braces.
+    Scoped to the workflows that declare the control by construction: every
+    video workflow shares the same generation handler, and a prompt mode
+    leaking across workflows would be the exact class of surprise this feature
+    is built not to cause. The API only admits `prompt_mode` on workflows
+    whose YAML declares it, so this check is the worker-side belt to that
+    server-side braces.
     """
     return (
-        job.workflow_id == "text-to-video"
+        job.workflow_id in _DIRECTOR_WORKFLOWS
         and str(job.parameters.get("prompt_mode") or "").strip().lower() == "director"
     )
+
+
+def source_anchored(job: AdapterJob) -> bool:
+    """Whether this Director job starts from an uploaded image.
+
+    Keyed on the WORKFLOW, not on which inputs happen to be present — the same
+    dispatch rule the adapter itself follows.
+    """
+    return job.workflow_id == "image-to-video"
 
 
 def requested_language(job: AdapterJob) -> str:
@@ -353,6 +430,10 @@ async def create_director_plan(
     chain = providers or ([provider] if provider is not None else default_providers())
     language = requested_language(job)
     seed = zlib.crc32(f"{job.job_id}:director".encode())
+    anchored = source_anchored(job)
+    # Optional, off by default, and absorbed on failure: the plan must be as
+    # valid without the facts as with them (see worker/director/vision.py).
+    facts = await source_image_facts(job) if anchored else ""
 
     failures: list[str] = []
     best: DirectorPlan | None = None
@@ -369,6 +450,8 @@ async def create_director_plan(
                 language=language,
                 seed=seed + attempt,
                 sample=sample,
+                source_anchored=anchored,
+                image_facts=facts,
                 notes=notes,
             )
             try:
@@ -378,6 +461,7 @@ async def create_director_plan(
                     idea=job.prompt,
                     duration_seconds=duration_seconds,
                     language=language,
+                    source_anchored=anchored,
                 )
             except DirectorProviderUnavailable as unavailable:
                 # Not a failed attempt — this provider was never usable. Move
