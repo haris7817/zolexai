@@ -2107,3 +2107,66 @@ Rollback of the VPS half is a YAML edit, not a redeploy: set
 `web`. The toggle disappears from Image to Video, Text to Video keeps its own,
 and any in-flight director job still completes because the worker keeps
 serving the parameter it was already given.
+
+---
+
+## 44. Deploy: V2V reference identity + frame-exact seam delivery (19 Aug 2026)
+
+Full findings and measurements:
+[`research-2026-08-19-v2v-reference-identity-and-lipsync.md`](./research-2026-08-19-v2v-reference-identity-and-lipsync.md).
+Commits `2ba698e` (worker), `7d99e41` (YAML + API test), `e6e26dc` (web).
+
+### 44.1 What changed, per half
+
+**Worker (DONE 19 Aug, this box):** frame-exact section delivery on the V2V
+path — active for every V2V job the moment the worker restarted, no flag —
+and `v2v_reference_identity`, which only activates when the API sends the
+flag AND the job carries a reference image. Deployed by `git pull --ff-only`
+to `e6e26dc` and `supervisorctl restart zolexai-worker`; the worker drained
+(0 active jobs), came back `worker_ready` with all six workflows, and the
+checkout imports the identity constants.
+
+**VPS (PENDING — being done by hand):** the flag rides in the baked YAML, so
+this is the standard §16 dance, with the extra care that
+`video-to-video.yaml` now changes in Git UNDER the local edits:
+
+1. `cd /opt/zolexai && git diff` — read the six locally-modified YAMLs FIRST
+   (§16: two edits each — runtime flip + mock-output deletion).
+2. `git stash && git pull && git stash pop` — video-to-video.yaml is the one
+   that may conflict; its resolution must keep BOTH the local runtime edits
+   AND the new `v2v_reference_identity: true` + the new help line.
+3. Rebuild **api AND web** (`docker compose ... build api web` then
+   `up -d --no-deps --force-recreate api web`) — api for the YAML, web for
+   the Reuse-Settings inputs fix and the SSR catalog's copy of the help text.
+4. Verify inside the container:
+   `docker exec zolexai-prod-api-1 grep -A2 v2v_reference_identity /workflow-definitions/video-to-video.yaml`
+   and that `/api/v1/workflows/video-to-video` serves the new help line
+   ("The person in the result follows this image").
+
+### 44.2 Node prerequisite
+
+Identity jobs matte every pass: BiRefNet in the LTX environment
+(`scripts/person_matte.py`, §40). Already proven on THIS box — the 19 Aug
+matrix runs used it. A future node without the weights fails identity jobs
+with a clear internal detail rather than delivering the source person; that
+is deliberate (`test_a_matting_failure_fails_the_job_not_the_promise`).
+
+### 44.3 Gate before telling anyone
+
+Through zolexai.com, with sound on, a V2V job with a clip of ONE person
+speaking + a reference photo of a different person:
+
+1. The output person resembles the reference at the START and the END.
+2. The mouth still articulates the source's speech — no frozen face.
+3. A V2V job WITHOUT a reference behaves as before (restyle, source audio).
+4. Reuse Settings on the finished job keeps the reference image thumbnail.
+
+Known limits, shipped knowingly: a multi-person source has ALL people
+re-imagined toward the reference (help text warns); identity adds ~27s of
+matting per pass; the recorded recommendation for a consent checkbox
+(reference-engine pattern) is NOT yet implemented.
+
+Rollback, worker half: `git revert` or checkout `883ff86`, restart worker.
+Rollback, VPS half: remove `v2v_reference_identity: true` from the baked
+YAML and rebuild api — the worker then never receives the flag and V2V is
+exactly the 18 Aug transform engine (the seam fix stays, and should).
