@@ -74,7 +74,10 @@ their exact double. State only what is VISIBLE. Never guess names, emotions,
 backstory or anything outside the frame.
 
 Answer with ONE sentence, nothing else: the person's age group, build, hair
-(colour, length, style), headwear if any, and clothing with exact colours."""
+(colour, length, style), headwear if any, and clothing with exact colours.
+Ignore jewellery, chains, necklaces and other accessories entirely — a chain
+described near a face comes back rendered as braided hair. Never mention the
+photograph, the background or the setting."""
 
 _IDENTITY_USER_PROMPT = (
     "Describe the person in this photograph in one concrete sentence."
@@ -117,12 +120,18 @@ async def reference_person_facts(image_path) -> str:
     checkpoint loads as an image-text model in ~4s and answered in ~1s —
     "Woman: adult, dark hair, black leather jacket" for exactly that photo.
     """
-    return await _describe(
+    caption = await _describe(
         str(image_path),
         system_prompt=_IDENTITY_SYSTEM_PROMPT,
         user_prompt=_IDENTITY_USER_PROMPT,
         max_chars=_MAX_IDENTITY_CHARS,
     )
+    if caption:
+        # The caption text itself, not just its length: when a render grows
+        # braids nobody asked for, the first question is what the describer
+        # actually said about the photo, and this line is the only answer.
+        logger.info("reference_person_described", extra={"caption": caption})
+    return caption
 
 
 async def _describe(

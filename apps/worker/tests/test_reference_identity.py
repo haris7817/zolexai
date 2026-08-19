@@ -136,14 +136,17 @@ def mask_of(argv: list[str]) -> tuple[str, float] | None:
 
 
 @needs_ffmpeg
-async def test_the_reference_anchors_the_opening_and_refreshes_every_pass(
+async def test_later_passes_carry_the_seam_and_never_the_raw_photo(
     workspace: Path, fake_models: Path, stub_repo: Path,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Long-form is where the old contract failed: one weak showing on pass
-    one, then every later pass chained off renders alone and walked back to
-    the source person. Identity mode re-shows the picture itself, every pass,
-    away from the seam."""
+    """The interior photo-anchor is OFF by default, on production evidence:
+    the first customer identity job got the reference PHOTOGRAPH cut into
+    their dance video at exactly the anchor's timestamp — at 0.35, and again
+    at I2V's "safe" 0.2, because unlike I2V the photo's composition is alien
+    to the footage. Identity persistence across passes is carried by the
+    continuity frame (which shows the REPLACED person) and the describer's
+    caption; the raw photo conditions the opening pass only."""
     source = await make_clip(workspace / "source.mp4", 3.7)
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
@@ -165,18 +168,37 @@ async def test_the_reference_anchors_the_opening_and_refreshes_every_pass(
 
     for argv in passes[1:]:
         items = conditioning_of(argv)
-        paths = [path for path, _, _ in items]
-        assert str(reference) in paths, "a pass without the reference drifts back"
-        seam = items[0]
-        assert seam[0] != str(reference) and seam[1] == 0, (
-            "frame 0 stays the seam's; the reference must not fight it"
+        assert str(reference) not in [path for path, _, _ in items], (
+            "the raw photo mid-pass is the flash defect, not an identity aid"
         )
-        refresh = next(item for item in items if item[0] == str(reference))
-        assert refresh[1] > 0
-        # 0.2 — I2V's value. 0.35 flashed the reference PHOTOGRAPH into a
-        # customer's video at pass two's interior anchor (19 Aug 2026): here,
-        # unlike I2V, the photo's composition is alien to the footage, and
-        # the anchor must whisper the identity, never show the shot.
+        seam = items[0]
+        assert seam[1] == 0, "frame 0 stays the seam's"
+
+
+@needs_ffmpeg
+async def test_the_interior_anchor_is_still_a_knob_for_footage_that_drifts(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = await make_clip(workspace / "source.mp4", 3.7)
+    reference = await extract_final_frame(source, workspace / "reference.png")
+    stub_matte(monkeypatch)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = identity_job(
+        workspace, source, reference,
+        execution={
+            "transform_pass_seconds": 1,
+            "v2v_identity_refresh_strength": 0.2,
+        },
+    )
+    await collect(job)
+
+    for argv in invocations(log)[1:]:
+        refresh = next(
+            item for item in conditioning_of(argv) if item[0] == str(reference)
+        )
+        assert refresh[1] > 0, "away from frame 0 — it must never fight the seam"
         assert refresh[2] == pytest.approx(0.2)
 
 
@@ -318,6 +340,10 @@ async def test_the_worker_describes_the_reference_into_every_pass_prompt(
         ), "the user's text survives verbatim, first"
         assert "long dark hair, black leather jacket" in prompt
         assert "The same person, with the same face, hair and clothing" in prompt
+        # No photograph vocabulary: "image" and "photographed" in a prompt are
+        # CONTENT to the model, and content is rendered — a posed photo shot
+        # cut into the customer's video.
+        assert "photographed" not in prompt and "reference image" not in prompt
 
 
 @needs_ffmpeg

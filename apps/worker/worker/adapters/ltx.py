@@ -548,28 +548,25 @@ otherwise — and below full strength because the edge map still owns the
 opening composition and a reference that outweighed it would replace the
 shot, not the person."""
 
-_V2V_IDENTITY_REFRESH_STRENGTH = 0.2
-"""The reference image again, in EVERY later pass, at an interior frame.
+_V2V_IDENTITY_REFRESH_STRENGTH = 0.0
+"""The reference image re-shown at an interior frame of later passes.
 
-This is the long-form half of identity replacement, and it is the exact
-mechanism image-to-video already uses to stop a chained render forgetting its
-subject (`i2v_reference_strength`): the continuity frame carries temporal
-state but is a decaying identity anchor — each pass reproduces the previous
-pass's rendering of the person, and small errors compound back toward
-whatever the control signal suggests, which is the source person. Re-showing
-the reference itself every pass is what stops the drift. Away from frame 0 so
-it never fights the seam.
+OFF, on the strength of two production failures in one evening, 19 Aug 2026,
+on the same customer job at the same timestamp: the anchor for pass two
+lands at requested_frames // 3 = 10.17s of that upload, and the output
+snapped to the reference PHOTOGRAPH itself for a beat — a posed studio
+portrait cut into a dance video — at 0.35, and again after the "safe" I2V
+value of 0.2 was deployed. The borrowed mechanism does not transfer: in I2V
+the reference IS the video's opening frame, so re-showing it reinforces a
+composition the render already has, while here the photo's composition is
+ALIEN to the footage and ANY strength that helps identity also invites the
+shot.
 
-0.2 — I2V's own value — and the difference from I2V is why it must not be
-higher. There the reference IS the video's opening frame, so re-showing it
-mid-pass reinforces a composition the render already has. Here the photo's
-composition is ALIEN to the footage, and at 0.35 that difference became a
-production defect on the first real customer job, 19 Aug 2026: at ~10s —
-exactly the interior anchor of pass two — the output snapped to the
-reference photograph itself for a beat, a posed studio portrait cut into a
-dance video. The anchor must whisper the identity, never show the shot; the
-describer's caption and the continuity chain (which now carries the
-REPLACED person forward) do the rest of the holding."""
+What holds identity across passes instead, both measured on the same
+footage: the continuity frame — which carries the REPLACED person forward,
+not the source person — and the describer's caption re-stating the person in
+words on every pass. The knob remains for footage where those two provably
+drift, to be raised only with the 10.17s flash in mind."""
 
 _V2V_IDENTITY_SUBJECT_ATTENTION = 0.5
 """How hard the edge map still steers the PERSON under identity replacement.
@@ -1389,14 +1386,20 @@ class LtxAdapter:
             # unchanged; the description is reinforcement, not a dependency.
             facts = await cancellable(job, reference_person_facts(reference))
             if facts:
+                # Caption voice, and NO photograph vocabulary. "The person
+                # from the reference image, exactly as photographed" reads as
+                # meta to a human and as CONTENT to the model — words like
+                # "image" and "photographed" in the prompt invite a posed
+                # photo-shoot shot, which is one of the two ways the first
+                # customer job got a portrait cut into a dance video.
                 described = " ".join(facts.split()).rstrip(".")
                 job = replace(
                     job,
                     prompt=(
                         f"{job.prompt}\n\n"
-                        f"The person from the reference image, exactly as "
-                        f"photographed: {described}. The same person, with the "
-                        "same face, hair and clothing, is visible throughout."
+                        f"The person is {described}. The same person, with the "
+                        "same face, hair and clothing, stays on screen for the "
+                        "whole video."
                     ),
                 )
         strength = job.execution_float("v2v_control_strength", _V2V_CONTROL_STRENGTH)
@@ -2481,6 +2484,22 @@ class LtxAdapter:
             "--seed", str(seed),
             "--output-path", str(output),
         ]
+        if pipeline.distilled_lora:
+            # The guided family (dev transformer + distilled LoRA) is the ONLY
+            # place these exist — the distilled and ic_lora entry points have
+            # no guiders, and sending the flags there is a crash, not a hint.
+            # Both stay unset by default: the pipeline's own defaults are the
+            # measured baseline, and a guidance change is a quality/cost
+            # judgement that belongs in a workflow's execution block.
+            negative = str(job.execution.get("negative_prompt") or "").strip()
+            if negative:
+                cmd += ["--negative-prompt", negative]
+            guidance = job.execution.get("guidance_scale")
+            if guidance is not None:
+                cmd += [
+                    "--video-cfg-guidance-scale",
+                    str(round(float(guidance), 3)),
+                ]
         if job.execution.get("enhance_prompt"):
             # LTX's own enhancer expands a terse prompt into a detailed one,
             # which is the only adherence lever the distilled entry point

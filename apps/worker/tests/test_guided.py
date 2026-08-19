@@ -238,3 +238,70 @@ async def test_a_missing_dev_checkpoint_fails_before_any_gpu_time(
     assert raised.value.retriable is False
     assert "transformer_dev" in raised.value.internal_detail
     assert invocations(log) == []
+
+
+# ── Guidance knobs: only where guiders exist ─────────────────────────────
+
+
+@needs_ffmpeg
+async def test_the_guided_tier_carries_negative_prompt_and_cfg_when_asked(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one place a negative prompt exists in this model family is the
+    guided tier — the distilled and ic_lora entry points have no guiders at
+    all, which is why "add negative prompting" is a tier decision, not a
+    flag. Unset, the pipeline's own defaults remain the measured baseline."""
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 2.0, audio=True))
+
+    await collect(guided_job(
+        workspace,
+        execution={
+            "negative_prompt": "deformed limbs, flickering, subject vanishing",
+            "guidance_scale": 4.5,
+        },
+    ))
+
+    argv = invocations(log)[0]
+    assert value_of(argv, "--negative-prompt") == (
+        "deformed limbs, flickering, subject vanishing"
+    )
+    assert value_of(argv, "--video-cfg-guidance-scale") == "4.5"
+
+
+@needs_ffmpeg
+async def test_guidance_keys_never_reach_a_pipeline_without_guiders(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A workflow that sets the keys while running the distilled tier gets
+    the flags dropped, not forwarded — an unknown argument is a crashed
+    render, and 'the model ignored my negative prompt' must never become
+    'the job failed'."""
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 2.0, audio=True))
+
+    await collect(make_job(
+        workspace,
+        execution={
+            "runtime": "ltx",
+            "negative_prompt": "deformed limbs",
+            "guidance_scale": 4.5,
+        },
+    ))
+
+    argv = invocations(log)[0]
+    assert "--negative-prompt" not in argv
+    assert "--video-cfg-guidance-scale" not in argv
+
+
+@needs_ffmpeg
+async def test_a_blank_negative_prompt_is_not_sent(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 2.0, audio=True))
+
+    await collect(guided_job(workspace, execution={"negative_prompt": "   "}))
+
+    argv = invocations(log)[0]
+    assert "--negative-prompt" not in argv
