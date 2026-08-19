@@ -1,8 +1,9 @@
 # Image-to-Video Director mode: source-anchored planning
 
-**Date:** 2026-08-19 · **Status:** implemented, unit-tested, **GPU-measured and
-deployed to the worker** (`a1fd9a8`). The VPS half is owner-performed and
-pending — see runbook §43.
+**Date:** 2026-08-19 · **Status:** implemented, unit-tested, GPU-measured,
+and **LIVE in production** — worker at `a1fd9a8`, VPS rebuilt the same day.
+See runbook §43. The customer-facing gate (is it the same person at the end
+as at the start?) is the remaining step.
 **Scope rule:** Standard Image to Video stays byte-identical. The mode is
 opt-in per request, exactly as it is on Text to Video. No other workflow gains
 a prompt mode.

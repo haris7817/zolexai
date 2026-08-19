@@ -568,29 +568,45 @@ Current Git production definitions normally route through:
 runtime: mock
 ```
 
-For internal RTX testing, we locally changed these three workflows:
+**Corrected 19 Aug 2026 against the live VPS.** This section long described
+three workflows and one edit. It is now SIX workflows and TWO edits per file —
+found while deploying §43, because the recorded expectation no longer matched
+what `git status` actually printed.
 
 ```text
-workflow-definitions/text-to-video.yaml
-workflow-definitions/image-to-video.yaml
-workflow-definitions/extend-video.yaml
+workflow-definitions/text-to-video.yaml     runtime: ltx
+workflow-definitions/image-to-video.yaml    runtime: ltx
+workflow-definitions/extend-video.yaml      runtime: ltx
+workflow-definitions/video-to-video.yaml    runtime: ltx  (+ v2v_engine: transform)
+workflow-definitions/music-video.yaml       runtime: ltx
+workflow-definitions/music.yaml             runtime: music   <- its own runtime
 ```
 
-to:
+Each file carries BOTH of these edits, not just the first:
 
 ```yaml
 execution:
   # SERVER TEST ROUTING ONLY — do not commit this change.
-  runtime: ltx
+  runtime: ltx          # was: mock
+
+  # ...and the two M1 mock-output lines are DELETED:
+  #   output_content_type: image/png
+  #   output_kind: image
 ```
 
-Current real GPU test workflows:
+**The deletion is not optional and is easy to miss.** Those two lines are the
+M1 placeholder that makes the API sign the worker's upload as a PNG; leaving
+them in place while routing to a real GPU signs a video as an image. They are
+still committed in the repo (M2 has not removed them), so every production
+YAML edit removes them locally.
 
-```text
-Text-to-Video
-Image-to-Video
-Video Extension
-```
+`video-to-video.yaml` additionally moves the committed `v2v_engine: transform`
+key up beside `runtime`, and `music-video.yaml` / `video-to-video.yaml` have
+had their long explanatory comment blocks stripped locally. Both are cosmetic —
+the keys resolve identically — but it means the on-VPS files no longer carry
+the "how to enable audio conditioning / person lock" notes. The repo does.
+
+Current real GPU workflows: all six.
 
 ---
 
@@ -691,12 +707,16 @@ extend-video   → runtime: ltx
 
 ## 16. Current VPS Git Status
 
-Current expected status:
+Current expected status (**verified on the box 19 Aug 2026** — this listed
+three YAMLs until then, see §12):
 
 ```text
  M workflow-definitions/extend-video.yaml
  M workflow-definitions/image-to-video.yaml
+ M workflow-definitions/music-video.yaml
+ M workflow-definitions/music.yaml
  M workflow-definitions/text-to-video.yaml
+ M workflow-definitions/video-to-video.yaml
 
 ?? infrastructure/compose/docker-compose.prod.yml
 ?? infrastructure/minio-cors.xml
@@ -705,8 +725,16 @@ Current expected status:
 Meaning:
 
 ```text
-3 modified YAML files = temporary internal GPU routing
+6 modified YAML files = production GPU routing (+ mock-output removal, §12)
 2 untracked files      = intentional production-only configuration
+```
+
+Before any `git stash` on this checkout, print the local edits and confirm
+they are only those two known changes — a stash you cannot describe is a stash
+you should not pop:
+
+```bash
+runuser -u zolexai -- git --no-pager diff workflow-definitions/   | grep -E "^(diff|[+-][^+-])"
 ```
 
 Do **NOT** blindly run:
@@ -1993,10 +2021,32 @@ first, then one environment variable.
 Distilled tier throughout — **the guided tier must not be enabled for this
 feature**, same as §41.3.
 
-### 43.5 The VPS half (owner-performed) — what actually turns it on
+### 43.5 The VPS half — DONE 19 Aug 2026
 
-Identical in shape to §41.4, and this release touches `image-to-video.yaml`
-and `text-to-video.yaml` (a comment only), so the stash dance still applies:
+Performed by the owner the same day, from `725fcc5` (the VPS was thirteen
+commits behind, so this also brought the auto-lyrics release of §42 — which
+needs nothing here, being worker-only). Both YAMLs auto-merged and the stash
+popped clean, because the pull touches only the `settings:` blocks while every
+local edit is in `execution:`:
+
+```text
+Auto-merging workflow-definitions/image-to-video.yaml
+Auto-merging workflow-definitions/text-to-video.yaml
+Dropped refs/stash@{0}
+```
+
+Verified after the rebuild — all four, and the fourth is the one that matters:
+
+```text
+API image  /workflow-definitions/image-to-video.yaml   prompt_modes: true
+routing    same file                                   runtime: ltx
+API serves GET /api/v1/workflows                       'prompt_modes': True
+WEB image  /app/workflow-definitions/image-to-video…   prompt_modes: true
+```
+
+The procedure, for the next time. Identical in shape to §41.4, and this
+release touches `image-to-video.yaml` and `text-to-video.yaml` (a comment
+only), so the stash dance still applies:
 
 ```bash
 cd /opt/zolexai
