@@ -27,7 +27,10 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
+from worker.core.logging import get_logger
 from worker.director.plan import DirectorCharacter, DirectorEvent, DirectorPlan
+
+logger = get_logger(__name__)
 
 _TRANSITIONS = ("A moment later", "Then", "A beat later", "Next", "Soon after")
 
@@ -75,15 +78,59 @@ def compile_section_prompts(
         index = min(section_total - 1, max(0, int(midpoint / window)))
         buckets[index].append(event)
 
-    return [
+    # Presence follows the BUCKETS, not the clock. An exit event whose nominal
+    # end spills a few seconds past a boundary still RENDERS entirely in the
+    # section that owns it — so from the next section's first frame the
+    # character is gone, whatever the plan's timestamps say. Who a section
+    # opens with is everyone not exited in an earlier bucket; who survives it
+    # is everyone not exited in this bucket either.
+    departed: set[str] = set()
+    casts: list[list[DirectorCharacter]] = []
+    survivor_sets: list[list[DirectorCharacter]] = []
+    for events in buckets:
+        casts.append([c for c in plan.characters if c.id not in departed])
+        for event in events:
+            departed.update(event.exits)
+        survivor_sets.append([c for c in plan.characters if c.id not in departed])
+
+    captions = [
         _compile_section(
             plan,
             events,
             first=index == 0,
+            cast=casts[index],
+            survivors=survivor_sets[index],
             window_end=(index + 1) * window,
         )
         for index, events in enumerate(buckets)
     ]
+    # The semantic state each section renders under, in the log — this is the
+    # first question a repetition or reappearance report needs answered, and
+    # the captions themselves are too long to read at a glance.
+    logger.info(
+        "director_sections",
+        extra={
+            "sections": section_total,
+            "language": plan.language,
+            "per_section": [
+                {
+                    "index": index,
+                    "events": len(events),
+                    "spoken_lines": sum(
+                        1 for e in events if (e.dialogue or "").strip()
+                    ),
+                    "present": [c.id for c in casts[index]],
+                    "departed": [
+                        c.id
+                        for c in plan.characters
+                        if c.id not in {x.id for x in casts[index]}
+                    ],
+                }
+                for index, events in enumerate(buckets)
+            ],
+        },
+    )
+    return captions
 
 
 # ── One section ──────────────────────────────────────────────────────────
@@ -94,25 +141,48 @@ def _compile_section(
     events: list[DirectorEvent],
     *,
     first: bool,
+    cast: list[DirectorCharacter],
+    survivors: list[DirectorCharacter],
     window_end: float,
 ) -> str:
+    """One caption. `cast` is who the section OPENS with; `survivors` is who
+    is still there when it ends.
+
+    Presence is the state this compiler exists to keep straight: every
+    sentence that asserts constancy is scoped to survivors, because "present
+    and solid in every single frame", said about a man who walks out
+    mid-video, is a rendered ghost — measured on the GPU, 20 Aug 2026, where
+    he stood back in the kitchen for the final twelve seconds while the
+    soundtrack said he was gone.
+    """
     introduced: set[str] = set()
     sentences: list[str] = [_sentence(plan.scene)]
 
     if first:
-        if plan.characters and plan.source_anchored:
-            sentences.append(_anchored_cast_sentence(plan.characters, introduced))
-        elif plan.characters:
-            sentences.append(_cast_sentence(plan.characters, introduced))
-    else:
+        if cast and plan.source_anchored:
+            sentences.append(_anchored_cast_sentence(tuple(cast), introduced))
+        elif cast:
+            sentences.append(_cast_sentence(tuple(cast), introduced))
+    elif cast:
+        verb = "continues" if len(cast) == 1 else "continue"
         sentences.append(
             _sentence(
                 _capfirst(
-                    _join_roles([_full_subject(c, introduced) for c in plan.characters])
-                    + " continue mid-scene, identical to before in face, clothing and "
-                    "voice, without repeating any earlier action or line"
+                    _join_roles([_full_subject(c, introduced) for c in cast])
+                    + f" {verb} mid-scene, identical to before in face, clothing "
+                    "and voice, without repeating any earlier action or line"
                 )
             )
+        )
+        if len(cast) < len(plan.characters):
+            # Someone left in an earlier section. The scene is restated in
+            # terms of who REMAINS — never by naming the departed, because on
+            # this runtime a name in the caption is a request for its owner.
+            sentences.append(_remaining_sentence(cast))
+    else:
+        sentences.append(
+            "The room continues on its own, calm and still, exactly the same "
+            "place as before."
         )
 
     if not events:
@@ -143,16 +213,22 @@ def _compile_section(
                 )
             )
             previous_spoke = speaks
+            if event.exits:
+                # The action said what happened; this says what is TRUE from
+                # here on. Resulting state, not repeated action — "From this
+                # moment, only the woman remains" gives the model a scene to
+                # hold, where re-describing the departure would be an
+                # invitation to perform it again.
+                remaining = [
+                    c for c in plan.characters if c.id in plan.present_ids(event.end)
+                ]
+                sentences.append(_after_exit_sentence(remaining))
         # A tail the plan says nothing about is not neutral: on TC2 the model
         # filled ~10 uncovered seconds by READING the caption's camera and
         # ambience sentences aloud as narration. Describe the tail as lived
         # silence so the soundtrack has an owner all the way to the last frame.
         if window_end - events[-1].end > 2.5:
-            sentences.append(
-                "For the remaining seconds the exchange settles: they hold each "
-                "other's gaze with small natural movements, and the room's "
-                "ambience is the only sound."
-            )
+            sentences.append(_settle_sentence(survivors))
 
     # Each line said once, stated POSITIVELY.
     #
@@ -171,11 +247,68 @@ def _compile_section(
         )
 
     sentences.append(_ambience_sentence(plan))
-    sentences.extend(_continuity_sentences(plan))
+    sentences.extend(_continuity_sentences(plan, survivors))
     return " ".join(filter(None, sentences))
 
 
-def _continuity_sentences(plan: DirectorPlan) -> list[str]:
+def _remaining_sentence(cast: list[DirectorCharacter]) -> str:
+    """Who the scene holds now, after an earlier departure — stated as what IS."""
+    roles = _join_roles([_subject(c) for c in cast])
+    if len(cast) == 1:
+        return _sentence(
+            _capfirst(f"{roles} is alone in the scene now, and stays alone")
+        )
+    return _sentence(
+        _capfirst(f"only {roles} are in the scene now, and it stays that way")
+    )
+
+
+def _after_exit_sentence(remaining: list[DirectorCharacter]) -> str:
+    """The resulting state the moment a departure completes."""
+    if not remaining:
+        return (
+            "From this moment the room stands quiet and empty, and the scene "
+            "continues on its own."
+        )
+    roles = _join_roles([_subject(c) for c in remaining])
+    if len(remaining) == 1:
+        return _sentence(
+            _capfirst(f"from this moment, {roles} is alone in the scene")
+        )
+    return _sentence(
+        _capfirst(f"from this moment, only {roles} remain in the scene")
+    )
+
+
+def _settle_sentence(survivors: list[DirectorCharacter]) -> str:
+    """The described-silence closing beat, worded for who is actually left.
+
+    "They hold each other's gaze" was written for a scene that still has two
+    people in it; said over a woman alone at the sink it re-invents a partner
+    to hold the gaze of.
+    """
+    if len(survivors) == 1:
+        subject = _subject(survivors[0])
+        return (
+            f"For the remaining seconds the scene settles: {subject} holds the "
+            "moment with small natural movements, and the room's ambience is "
+            "the only sound."
+        )
+    if not survivors:
+        return (
+            "For the remaining seconds the room rests quiet and still, and its "
+            "ambience is the only sound."
+        )
+    return (
+        "For the remaining seconds the exchange settles: they hold each "
+        "other's gaze with small natural movements, and the room's "
+        "ambience is the only sound."
+    )
+
+
+def _continuity_sentences(
+    plan: DirectorPlan, survivors: list[DirectorCharacter]
+) -> list[str]:
     """What must not drift, restated at the end of every section.
 
     Three customer-reported symptoms share one cause and one lever. A person
@@ -189,10 +322,19 @@ def _continuity_sentences(plan: DirectorPlan) -> list[str]:
     Everything here is phrased as what STAYS, never as what to avoid: this
     runtime has no negation mechanism, so "the hat does not change" reads as a
     changing hat.
+
+    Scoped to `survivors` — who is still in the scene when this section ends —
+    because these are the strongest sentences in the caption and they must
+    never argue with a departure. "Present and solid in every single frame",
+    said about the man who walked out, is precisely the rendered ghost the
+    20 Aug measurement caught.
     """
     sentences: list[str] = []
-    if plan.characters:
-        subjects = _join_roles([_subject(c) for c in plan.characters])
+    if survivors:
+        subjects = _join_roles([_subject(c) for c in survivors])
+        one = len(survivors) == 1
+        keeps, stays = ("keeps", "stays") if one else ("keep", "stay")
+        faces, voices = ("face", "voice") if one else ("faces", "voices")
         if plan.source_anchored:
             # Constancy anchored to the FRAME rather than to a described look:
             # on this path the text was forbidden to invent appearances, so
@@ -204,15 +346,16 @@ def _continuity_sentences(plan: DirectorPlan) -> list[str]:
             sentences.append(
                 _sentence(
                     _capfirst(subjects)
-                    + " keep exactly the same faces, clothing, hair, colours and "
-                    "voices they have in the first frame, for the entire video"
+                    + f" {keeps} exactly the same {faces}, clothing, hair, colours "
+                    f"and {voices} they have in the first frame, for the entire video"
                 )
             )
         else:
             sentences.append(
                 _sentence(
                     _capfirst(subjects)
-                    + " keep exactly the same faces, clothing and voices for the entire video"
+                    + f" {keeps} exactly the same {faces}, clothing and {voices} "
+                    "for the entire video"
                 )
             )
         # Continuous presence, stated as presence. The flicker is a person
@@ -220,8 +363,8 @@ def _continuity_sentences(plan: DirectorPlan) -> list[str]:
         sentences.append(
             _sentence(
                 _capfirst(subjects)
-                + " stay fully visible in the frame from the first frame to the last, "
-                "present and solid in every single frame"
+                + f" {stays} fully visible in the frame from the first frame to "
+                "the last, present and solid in every single frame"
             )
         )
     for fact in plan.continuity:

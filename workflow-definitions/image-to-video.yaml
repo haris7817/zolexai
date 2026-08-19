@@ -61,6 +61,14 @@ execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
 
+  # Single-pass ceiling: 30 seconds — same measured reason as
+  # text-to-video.yaml (the model does not hold 60s of story in one pass;
+  # 30s passes are the measured-clean regime). 60s becomes two chained
+  # sections; every shorter duration is unchanged. The uploaded still opens
+  # pass one and rides later passes as the identity reference, exactly as the
+  # chain has always conditioned I2V.
+  max_segment_seconds: 30
+
   # Deterministic prompt structuring — see text-to-video.yaml for the full
   # note and apps/worker/worker/longform/enhance.py for the rules.
   prompt_structuring: true

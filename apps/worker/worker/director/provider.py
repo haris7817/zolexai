@@ -83,12 +83,26 @@ class DirectorRequest:
     retry so a refused plan is not regenerated token for token."""
 
     source_anchored: bool = False
-    """True when the video starts from an uploaded image (Image to Video).
+    """True when the video starts from an existing picture — an uploaded image
+    (Image to Video), or the final frame of the video being extended.
 
-    Switches the brief into its anchored register: the photograph owns WHO and
+    Switches the brief into its anchored register: the picture owns WHO and
     WHAT, the idea owns WHAT HAPPENS, and invented visual detail is forbidden.
     A text-to-video request is byte-identical to what shipped before this
     field existed."""
+
+    prior_idea: str = ""
+    """Non-empty when this plan EXTENDS a finished Director video: the idea
+    that video was generated from. The brief then switches into its
+    continuation register — everything the prior idea describes has already
+    happened on screen before second 0 of this plan, and the plan may only
+    move the story FORWARD. A director extension is always source-anchored
+    too: the finished video's last frame is the opening frame here, and it
+    defines who and what exists exactly the way an uploaded photograph does."""
+
+    prior_seconds: float = 0.0
+    """How much finished video precedes this plan — so the planner knows the
+    story it is continuing has already had room to play out in full."""
 
     image_facts: str = ""
     """What the photograph visibly shows, when the vision step produced it.
@@ -142,7 +156,9 @@ Output ONLY a JSON object, no markdown fences, no commentary, with this exact sh
      "camera": "<one of: medium shot | medium close-up | close-up | two-shot |
        over-the-shoulder shot | wide shot; plus 'static' or a subtle move>",
      "speaker": "<character id or null>", "dialogue": "<the exact spoken words, or null>",
-     "delivery": "<audible manner, e.g. 'low and accusing', or null>"}}
+     "delivery": "<audible manner, e.g. 'low and accusing', or null>",
+     "exits": ["<character ids who leave the scene at this event and stay gone;
+       usually an empty list>"]}}
   ]
 }}
 
@@ -181,11 +197,19 @@ Hard rules:
 - VOCABULARY: every line uses different words. If one line says "excellent", no other
   line may say "excellent" — pick another word. Reusing a distinctive word across lines
   is the single thing that makes generated dialogue sound generated.
+- DEPARTURES: when the idea has someone leave the scene for good, give the event
+  where they go an "exits" list with their character id. A departure is permanent:
+  after that event the character never speaks, never acts and never appears again
+  in any later event. If they would come back, they never left — use exits only
+  for a real goodbye.
 - CONTINUITY: list 2-5 facts that must look identical in every single frame. Always
   include what each person is wearing and how many people are present. If any prop is
   picked up, taken off, put down or handled during the scene, describe it there in
   concrete detail (exact colour, material, shape) — a thing that leaves the frame and
   comes back is where the picture drifts.
+- Every continuity fact must stay true for the WHOLE video. If someone leaves
+  partway through, the number of people changes — leave people-counts out of
+  continuity and let the timeline carry the departure.
 - Write continuity facts as things that STAY, never as things to avoid: "the red felt
   hat stays the same red felt hat every time it appears", not "the hat does not change".
 """
@@ -220,6 +244,27 @@ SOURCE IMAGE MODE — this video starts from a photograph the user uploaded:
   reveal of anything the photograph does not show.
 """
 
+#: Appended when the plan EXTENDS a finished Director video. The one failure
+#: this register exists to prevent: the continuation re-telling the story it
+#: is supposed to continue — re-asking the opening question, re-staging the
+#: farewell — which is what a planner does when handed the same idea with no
+#: sense that it has already played out.
+_CONTINUATION_RULES = """
+CONTINUATION MODE — this plan extends a video that is already finished:
+- THE STORY SO FAR (given below) has ALREADY happened, completely, on screen,
+  before second 0 of your timeline. Every question it implies has been asked,
+  every answer given, every farewell said. None of it is re-staged, re-asked
+  or re-answered.
+- Second 0 of your timeline is the exact moment the finished video ends. The
+  IDEA describes what happens next; plan only that, moving the same people in
+  the same place FORWARD into new ground — new lines, new beats, the next
+  stage of the same story.
+- Keep the same characters, the same relationships and the same language the
+  finished video established. Anyone the story so far sent away stays away.
+- The photograph rules above apply: the opening frame is the finished video's
+  last moment, and it decides who and what is in the scene.
+"""
+
 
 def _user_prompt(request: DirectorRequest) -> str:
     language = (
@@ -234,6 +279,13 @@ def _user_prompt(request: DirectorRequest) -> str:
         f"DURATION: {request.duration_seconds:g} seconds",
         f"DIALOGUE LANGUAGE: {language}",
     ]
+    if request.prior_idea:
+        lines.insert(
+            1,
+            "THE STORY SO FAR — already fully shown in the "
+            f"{request.prior_seconds:g} seconds of finished video this plan "
+            f"continues from: {request.prior_idea}",
+        )
     if request.source_anchored and request.image_facts:
         lines.append(
             "PHOTOGRAPH FACTS — what the uploaded photograph visibly shows, "
@@ -278,11 +330,15 @@ def system_prompt(request: DirectorRequest) -> str:
     a customer's video.
 
     A text-to-video request receives the original brief byte for byte; only a
-    source-anchored (Image to Video) request appends the anchored register.
+    source-anchored (Image to Video) request appends the anchored register,
+    and only an extension appends the continuation register on top of it.
     """
+    brief = _SYSTEM_PROMPT
     if request.source_anchored:
-        return _SYSTEM_PROMPT + _ANCHORED_RULES
-    return _SYSTEM_PROMPT
+        brief += _ANCHORED_RULES
+    if request.prior_idea:
+        brief += _CONTINUATION_RULES
+    return brief
 
 
 def user_prompt(request: DirectorRequest) -> str:
@@ -408,12 +464,32 @@ def default_providers() -> list[DirectorProvider]:
     return [hosted, GemmaDirectorProvider()] if hosted.available else [GemmaDirectorProvider()]
 
 
+def continuation_lineage(job: AdapterJob) -> dict[str, Any] | None:
+    """The Director lineage the API attached to an extension, when there is one.
+
+    The API walks `source asset → producing job` at creation time and injects
+    the snapshot into the stored parameters, so a video generated in Director
+    mode keeps behaving like one when extended — and a video with no such
+    ancestry (an upload, a standard generation, a pre-Director job) extends
+    exactly as it always has. Absence is the graceful path, not an error.
+    """
+    lineage = job.parameters.get("director_lineage")
+    if (
+        isinstance(lineage, dict)
+        and str(lineage.get("prompt_mode") or "").strip().lower() == "director"
+        and str(lineage.get("idea") or "").strip()
+    ):
+        return lineage
+    return None
+
+
 async def create_director_plan(
     job: AdapterJob,
     duration_seconds: float,
     *,
     provider: DirectorProvider | None = None,
     providers: list[DirectorProvider] | None = None,
+    lineage: dict[str, Any] | None = None,
 ) -> DirectorPlan:
     """Idea → validated DirectorPlan, or a clean `DirectorFailure`.
 
@@ -428,12 +504,26 @@ async def create_director_plan(
     only in this process and in the log.
     """
     chain = providers or ([provider] if provider is not None else default_providers())
-    language = requested_language(job)
     seed = zlib.crc32(f"{job.job_id}:director".encode())
-    anchored = source_anchored(job)
-    # Optional, off by default, and absorbed on failure: the plan must be as
-    # valid without the facts as with them (see worker/director/vision.py).
-    facts = await source_image_facts(job) if anchored else ""
+    if lineage is not None:
+        # An extension continues its ancestor's world: the ancestor's language
+        # (never a silent fall-back to English), the ancestor's idea as the
+        # story-so-far, and the anchored register — the finished video's last
+        # frame is this plan's opening frame, and it owns WHO and WHAT.
+        raw_language = str(lineage.get("dialogue_language") or "auto").strip().lower()
+        language = raw_language if raw_language in DIALOGUE_LANGUAGES else "auto"
+        anchored = True
+        prior_idea = str(lineage.get("idea") or "").strip()
+        prior_seconds = float(lineage.get("prior_seconds") or 0.0)
+        facts = ""
+    else:
+        language = requested_language(job)
+        anchored = source_anchored(job)
+        prior_idea = ""
+        prior_seconds = 0.0
+        # Optional, off by default, and absorbed on failure: the plan must be
+        # as valid without the facts as with them (see worker/director/vision.py).
+        facts = await source_image_facts(job) if anchored else ""
 
     failures: list[str] = []
     best: DirectorPlan | None = None
@@ -451,6 +541,8 @@ async def create_director_plan(
                 seed=seed + attempt,
                 sample=sample,
                 source_anchored=anchored,
+                prior_idea=prior_idea,
+                prior_seconds=prior_seconds,
                 image_facts=facts,
                 notes=notes,
             )
@@ -464,8 +556,10 @@ async def create_director_plan(
                     source_anchored=anchored,
                     # The measured facts are grounding, not just prompt
                     # material: a description the planner copied out of them
-                    # is one someone actually looked at, and survives.
-                    grounding=facts,
+                    # is one someone actually looked at, and survives — and on
+                    # an extension the prior idea grounds the same way, since
+                    # its vocabulary already exists in the finished footage.
+                    grounding=f"{prior_idea}\n{facts}".strip(),
                 )
             except DirectorProviderUnavailable as unavailable:
                 # Not a failed attempt — this provider was never usable. Move

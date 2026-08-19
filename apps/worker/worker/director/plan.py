@@ -160,6 +160,22 @@ class DirectorEvent:
     """Audible manner of the line ("low and accusing") — becomes ".. says in a
     low and accusing voice" in the compiled caption."""
 
+    exits: tuple[str, ...] = ()
+    """Character ids who leave the scene at this event and STAY gone.
+
+    This is the semantic state the 60-second measurement proved a caption
+    cannot live without (GPU, 20 Aug 2026): a plan had the man walk out at
+    ~38s, and because nothing recorded that he was gone, the standing
+    constancy sentence — "present and solid in every single frame" — summoned
+    him straight back. He flickered at 43-48s and stood fully returned for the
+    final twelve seconds while the soundtrack said "He is finally gone."
+
+    An exit is the one irreversible state a plan can express, and the compiler
+    treats it as one: after this event the character is out of every cast
+    sentence, out of every constancy sentence, and the scene is restated in
+    terms of who REMAINS — never in terms of who left, because on this
+    runtime naming the departed is inviting them back."""
+
 
 @dataclass(frozen=True)
 class DirectorPlan:
@@ -221,6 +237,30 @@ class DirectorPlan:
         """
         lines = self.spoken_lines
         return round(self.duration_seconds / lines, 1) if lines else None
+
+    def exit_time(self, character_id: str) -> float | None:
+        """When this character leaves the scene for good, or None if they stay.
+
+        The departure is complete at the exit event's END: during the event
+        they are on screen performing it, after it they are gone.
+        """
+        for event in self.timeline:
+            if character_id in event.exits:
+                return event.end
+        return None
+
+    def present_ids(self, at_seconds: float) -> tuple[str, ...]:
+        """Characters still in the scene at this moment, in cast order."""
+        return tuple(
+            character.id
+            for character in self.characters
+            if (leaves := self.exit_time(character.id)) is None
+            or leaves > at_seconds + 1e-6
+        )
+
+    @property
+    def has_exits(self) -> bool:
+        return any(event.exits for event in self.timeline)
 
 
 def required_quotes(idea: str) -> list[str]:
@@ -291,6 +331,8 @@ def parse_plan(
         source_anchored=source_anchored,
         continuity=_parse_continuity(raw.get("continuity")),
     )
+    if plan.has_exits:
+        plan = _drop_presence_counts(plan)
     if source_anchored:
         plan = _ground_visual_claims(plan, f"{idea}\n{grounding}")
     plan = _enforce_speech_budget(plan, idea)
@@ -387,6 +429,7 @@ def _parse_timeline(
             speaker = None
         dialogue = str(entry.get("dialogue") or "").strip().strip('"“”') or None
         delivery = str(entry.get("delivery") or "").strip() or None
+        exits = _parse_exits(entry.get("exits"), character_ids, label, problems)
 
         if dialogue and not speaker:
             problems.append(f"{label} has dialogue with no speaker")
@@ -406,11 +449,65 @@ def _parse_timeline(
                 speaker=speaker,
                 dialogue=dialogue,
                 delivery=delivery,
+                exits=exits,
             )
         )
 
     events.sort(key=lambda event: (event.start, event.end))
+    _check_exit_consistency(events, problems)
     return events
+
+
+def _parse_exits(
+    raw: object, character_ids: set[str], label: str, problems: list[str]
+) -> tuple[str, ...]:
+    """The event's departures, normalised the way character ids are."""
+    if not raw:
+        return ()
+    if not isinstance(raw, list):
+        problems.append(f"{label} has an exits field that is not a list")
+        return ()
+    exits: list[str] = []
+    for entry in raw:
+        identifier = re.sub(r"\W+", "_", str(entry or "").strip().lower()).strip("_")
+        if not identifier or identifier in ("null", "none"):
+            continue
+        if identifier not in character_ids:
+            problems.append(f"{label} exits unknown character '{identifier}'")
+            continue
+        if identifier not in exits:
+            exits.append(identifier)
+    return tuple(exits)
+
+
+def _check_exit_consistency(events: list[DirectorEvent], problems: list[str]) -> None:
+    """A departure is irreversible, so the plan may not contradict one.
+
+    The two contradictions worth refusing: leaving twice, and speaking after
+    leaving. Both mean the planner has not actually decided whether the
+    character is gone — and an undecided plan is exactly what rendered the
+    ghost this machinery exists to prevent. The retry carries the problem
+    verbatim, so the planner can either drop the exit or drop the later line.
+    """
+    departed: dict[str, float] = {}
+    for index, event in enumerate(events):
+        for identifier in event.exits:
+            if identifier in departed:
+                problems.append(
+                    f"character '{identifier}' exits twice — a departure is permanent"
+                )
+        if (
+            event.speaker
+            and event.speaker in departed
+            and event.start >= departed[event.speaker] - 1e-6
+        ):
+            problems.append(
+                f"event {index + 1} has '{event.speaker}' speaking at "
+                f"{event.start:g}s after they left the scene at "
+                f"{departed[event.speaker]:g}s — remove the exit or the line"
+            )
+        for identifier in event.exits:
+            departed.setdefault(identifier, event.end)
 
 
 # ── Post-parse contracts ─────────────────────────────────────────────────
@@ -451,6 +548,33 @@ def _enforce_speech_budget(plan: DirectorPlan, idea: str) -> DirectorPlan:
 #: own scene sentence turns out to be invented. The opening frame IS the
 #: setting, so pointing at it is both the honest statement and the useful one.
 ANCHORED_SCENE = "The scene continues exactly as the opening frame shows it"
+
+#: A continuity fact that pins how many people are on screen. True only while
+#: everyone stays; the moment a plan carries an exit, restating it per section
+#: is an order to keep the departed in frame.
+_PRESENCE_COUNT = re.compile(
+    r"\b(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|both)\b"
+    r"[^.]{0,40}?"
+    r"\b(?:people|person|persons|characters?|figures?|men|women|man|woman|"
+    r"boys?|girls?|child|children|adults?|individuals?)\b",
+    re.IGNORECASE,
+)
+
+
+def _drop_presence_counts(plan: DirectorPlan) -> DirectorPlan:
+    """Removes people-count continuity facts from a plan where someone leaves.
+
+    The compiler repeats every continuity fact at the end of every section —
+    that repetition is the measured anti-drift lever — so a fact that stops
+    being true mid-video is repeated exactly where it does damage. "Two people
+    are in the kitchen", restated after the man has gone, is the ghost from
+    the 20 Aug measurement wearing different words. Presence is owned by the
+    exits machinery now; counts only survive in plans where nobody leaves.
+    """
+    kept = tuple(
+        fact for fact in plan.continuity if not _PRESENCE_COUNT.search(fact)
+    )
+    return plan if kept == plan.continuity else replace(plan, continuity=kept)
 
 
 def _ground_visual_claims(plan: DirectorPlan, grounding: str) -> DirectorPlan:

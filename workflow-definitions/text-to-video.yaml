@@ -67,6 +67,19 @@ execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
 
+  # ── Single-pass ceiling: 30 seconds (measured, 20 Aug 2026) ──
+  #
+  # The GPU sustains a 60s pass, but the MODEL does not sustain 60s of story:
+  # a single-pass 60s render had the departed man flicker back at 43-48s and
+  # stand fully returned for the final twelve seconds while the soundtrack
+  # said he was gone, and single-pass 60s dialogue never measured cleaner
+  # than one repeated line in 22. Thirty-second passes are the measured-clean
+  # regime (0 repeats), so 60s renders as two of them through the long-form
+  # chain — the machinery that gives each section only its own events and
+  # carries state across the seam. 5/15/30s remain byte-identical single
+  # passes; only 60s changes shape.
+  max_segment_seconds: 30
+
   # Deterministic prompt structuring (worker-side). The user's text reaches the
   # model verbatim as the first block; the worker appends derived continuity
   # rules (counts, colours, persistence) — the measured fix for identity and
