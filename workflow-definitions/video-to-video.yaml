@@ -202,7 +202,10 @@ execution:
   #   v2v_identity_anchor_strength:    reference at frame 0, first pass
   #                                    (default 0.65)
   #   v2v_identity_refresh_strength:   reference re-shown per later pass
-  #                                    (default 0.35)
+  #                                    (default 0.2 — 0.35 flashed the
+  #                                    reference PHOTO into a customer video
+  #                                    at a pass's interior anchor, 19 Aug;
+  #                                    raise only with that failure in mind)
   #   v2v_identity_subject_attention:  edge-map grip over the person
   #                                    (default 0.5 — toward 1 re-imposes the
   #                                    source's face, toward 0 loses their

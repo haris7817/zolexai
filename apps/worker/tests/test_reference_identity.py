@@ -173,7 +173,11 @@ async def test_the_reference_anchors_the_opening_and_refreshes_every_pass(
         )
         refresh = next(item for item in items if item[0] == str(reference))
         assert refresh[1] > 0
-        assert refresh[2] == pytest.approx(0.35)
+        # 0.2 — I2V's value. 0.35 flashed the reference PHOTOGRAPH into a
+        # customer's video at pass two's interior anchor (19 Aug 2026): here,
+        # unlike I2V, the photo's composition is alien to the footage, and
+        # the anchor must whisper the identity, never show the shot.
+        assert refresh[2] == pytest.approx(0.2)
 
 
 @needs_ffmpeg

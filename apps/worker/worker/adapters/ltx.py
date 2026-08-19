@@ -548,7 +548,7 @@ otherwise — and below full strength because the edge map still owns the
 opening composition and a reference that outweighed it would replace the
 shot, not the person."""
 
-_V2V_IDENTITY_REFRESH_STRENGTH = 0.35
+_V2V_IDENTITY_REFRESH_STRENGTH = 0.2
 """The reference image again, in EVERY later pass, at an interior frame.
 
 This is the long-form half of identity replacement, and it is the exact
@@ -558,7 +558,18 @@ state but is a decaying identity anchor — each pass reproduces the previous
 pass's rendering of the person, and small errors compound back toward
 whatever the control signal suggests, which is the source person. Re-showing
 the reference itself every pass is what stops the drift. Away from frame 0 so
-it never fights the seam."""
+it never fights the seam.
+
+0.2 — I2V's own value — and the difference from I2V is why it must not be
+higher. There the reference IS the video's opening frame, so re-showing it
+mid-pass reinforces a composition the render already has. Here the photo's
+composition is ALIEN to the footage, and at 0.35 that difference became a
+production defect on the first real customer job, 19 Aug 2026: at ~10s —
+exactly the interior anchor of pass two — the output snapped to the
+reference photograph itself for a beat, a posed studio portrait cut into a
+dance video. The anchor must whisper the identity, never show the shot; the
+describer's caption and the continuity chain (which now carries the
+REPLACED person forward) do the rest of the holding."""
 
 _V2V_IDENTITY_SUBJECT_ATTENTION = 0.5
 """How hard the edge map still steers the PERSON under identity replacement.
