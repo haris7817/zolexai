@@ -97,6 +97,34 @@ class GenerationRepository:
             )
         ).scalar_one_or_none()
 
+    async def producing_job_for_asset(
+        self, asset_id: uuid.UUID, user_id: uuid.UUID
+    ) -> GenerationJob | None:
+        """The user's own completed job whose output this asset is, if any.
+
+        This is video lineage: an Extend whose source came from the library
+        was uploaded by hand and has no ancestry, while one reached through
+        the result's Extend button is the child of the job that rendered it —
+        and everything Director-aware extension needs (mode, language, the
+        original idea, the original inputs) is already on that ancestor's row.
+        Ownership is in the WHERE clause for the same reason it is everywhere.
+        """
+        return (
+            await self.session.execute(
+                select(GenerationJob)
+                .join(
+                    GenerationJobOutput,
+                    GenerationJobOutput.job_id == GenerationJob.id,
+                )
+                .where(
+                    GenerationJobOutput.asset_id == asset_id,
+                    GenerationJob.user_id == user_id,
+                    GenerationJob.status == JobStatus.COMPLETED,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
     async def list_for_user(
         self,
         user_id: uuid.UUID,

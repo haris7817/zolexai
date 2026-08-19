@@ -119,6 +119,7 @@ from worker.core.logging import get_logger
 from worker.director import (
     DirectorFailure,
     compile_section_prompts,
+    continuation_lineage,
     create_director_plan,
     reference_person_facts,
     wants_director,
@@ -1110,24 +1111,72 @@ class LtxAdapter:
             limit_seconds=float(settings.ltx_max_extend_source_seconds),
         )
         extension_seconds = self._requested_seconds(job)
+
+        # A video generated in Director mode keeps behaving like one when
+        # extended. The API walked the source asset back to the job that made
+        # it and attached the lineage; from it the CONTINUATION is planned —
+        # same language, same people, the prior idea as the story-so-far —
+        # and compiled through the same section compiler. The plan is
+        # source-anchored by construction: the finished video's last frame is
+        # the opening frame here, and it owns WHO and WHAT the way an
+        # uploaded photograph does. A source with no lineage (an upload, a
+        # standard generation, a pre-Director job) takes the path below,
+        # byte-identical to what has always served extensions.
+        lineage = continuation_lineage(job)
+        continuation_plan = None
+        if lineage is not None:
+            await reporter.report(
+                "preparing", 14, "Directing the continuation…", {"phase": "preparing"}
+            )
+            try:
+                continuation_plan = await create_director_plan(
+                    job, extension_seconds, lineage=lineage
+                )
+            except DirectorFailure as failure:
+                raise AdapterError(
+                    failure.user_message,
+                    internal_detail=failure.internal_detail,
+                    retriable=False,
+                ) from failure
+
         prompt_plan: list[str] | None = None
 
         def prompt_for_step(step: ChainStep) -> str:
             nonlocal prompt_plan
             if prompt_plan is None:
-                # Timestamps in an extension prompt are relative to the
-                # EXTENSION, which is the only timeline the user is writing for.
-                prompt_plan = plan_section_prompts(
-                    job.prompt, step.total, total_seconds=extension_seconds
-                )
+                if continuation_plan is not None:
+                    prompt_plan = compile_section_prompts(
+                        continuation_plan, step.total, total_seconds=extension_seconds
+                    )
+                else:
+                    # Timestamps in an extension prompt are relative to the
+                    # EXTENSION, which is the only timeline the user is
+                    # writing for.
+                    prompt_plan = plan_section_prompts(
+                        job.prompt, step.total, total_seconds=extension_seconds
+                    )
             return prompt_plan[step.index]
 
         await reporter.probing("Reading your video…")
         seed_frame = await self._final_frame_of(job, staged)
+        # Present only on Director-lineage extensions of Image to Video: the
+        # ORIGINAL uploaded image, carried forward by the API so the identity
+        # anchor survives any number of extensions — the same low-strength
+        # mid-window reference every I2V pass after the first has always used.
+        identity = await self._conditioning_image(job, "identity_image")
 
         def conditioning(step: ChainStep) -> list[ConditioningFrame]:
             frame = step.previous_frame
-            return [ConditioningFrame(frame, 0, 1.0)] if frame else []
+            items = [ConditioningFrame(frame, 0, 1.0)] if frame else []
+            if identity:
+                frames = self._frame_count(step.seconds)
+                reference_frame = min(frames - 1, max(1, frames // 3))
+                strength = job.execution_float("i2v_reference_strength", 0.2)
+                if strength > 0 and reference_frame > 0:
+                    items.append(
+                        ConditioningFrame(identity, reference_frame, strength)
+                    )
+            return items
 
         # The grid follows the SOURCE's aspect, not the request's: the I2V
         # benchmark showed a mismatched aspect makes the model keep the style
@@ -1136,10 +1185,20 @@ class LtxAdapter:
         # shape actually rendered rather than the requested aspect's.
         grid = grid_for_source(source.width, source.height)
 
+        per_pass = self._per_pass_seconds(job, grid)
+        if continuation_plan is not None:
+            # Directed passes hold their story for 30 seconds and not for 60 —
+            # the same measurement that sectioned 60s generation (20 Aug 2026:
+            # single-pass 60s dialogue repeated lines and returned departed
+            # people; 30s passes measured clean). A long director extension
+            # renders in the clean regime; standard extensions keep the
+            # geometry they have always had.
+            per_pass = min(per_pass, 30.0)
+
         rendered = await render_chain(
             job,
             extension_seconds,
-            per_pass_seconds=self._per_pass_seconds(job, grid),
+            per_pass_seconds=per_pass,
             render=self._renderer(
                 job, reporter,
                 dimensions=grid,

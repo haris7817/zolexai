@@ -62,6 +62,26 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _duration_seconds(value: Any) -> float | None:
+    """"30s" → 30.0, "2m" → 120.0 — the worker's own reading of a duration.
+
+    Used for the lineage's prior-seconds accounting only; a value that does
+    not parse contributes nothing rather than failing a creation."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    multiplier = 1.0
+    if text.endswith("m"):
+        multiplier, text = 60.0, text[:-1]
+    elif text.endswith("s"):
+        text = text[:-1]
+    try:
+        seconds = float(text) * multiplier
+    except ValueError:
+        return None
+    return seconds if seconds > 0 else None
+
+
 class GenerationService:
     def __init__(
         self,
@@ -118,15 +138,34 @@ class GenerationService:
         # rather than a misleading "too many running".
         await rate_limit.check_generation_concurrency(self.session, user)
 
+        stored_params = params.model_dump(mode="json")
+        job_inputs = dict(request.inputs)
+        if definition.id == "extend-video":
+            # Video lineage, resolved once at creation and stored with the job:
+            # a source that is itself a Director generation (or an extension of
+            # one) makes this a Director-aware extension — the worker continues
+            # the same story in the same language instead of treating the
+            # footage as an anonymous clip. A source with no ancestry (an
+            # upload, a standard generation) stores nothing and extends exactly
+            # as before.
+            lineage, identity_asset = await self._director_lineage(user, request)
+            if lineage is not None:
+                stored_params["director_lineage"] = lineage
+                if identity_asset is not None:
+                    # The ORIGINAL Image-to-Video upload rides along as a
+                    # server-attached input, so the identity anchor survives
+                    # any number of extensions.
+                    job_inputs["identity_image"] = identity_asset
+
         job = await self.repo.create_job(
             user_id=user.id,
             workflow_id=definition.id,
             workflow_version=definition.version,
             prompt=request.prompt.strip(),
-            request_params=params.model_dump(mode="json"),
+            request_params=stored_params,
             max_attempts=settings.job_max_attempts,
             idempotency_key=idempotency_key,
-            inputs=request.inputs,
+            inputs=job_inputs,
         )
         job.stage_hint = "Waiting for an available slot…"
 
@@ -158,6 +197,90 @@ class GenerationService:
             await queue.notify_job_available(self.redis, job.id)
 
         return job
+
+    async def _director_lineage(
+        self, user: User, request: GenerationCreateRequest
+    ) -> tuple[dict[str, Any] | None, uuid.UUID | None]:
+        """The Director ancestry of an extension's source, or (None, None).
+
+        Everything a continuation needs is already on the ancestor's row —
+        `request_params` has carried `prompt_mode` and `dialogue_language`
+        since the feature launched, and `prompt` is the idea verbatim — so
+        this works retroactively for every Director video ever generated, and
+        needs no schema change. An extension OF an extension reads the
+        lineage its parent stored and accumulates the seconds, so the third
+        +10s still knows the whole story began four videos ago.
+
+        Absence at any step is the graceful answer, never an error: a source
+        without ancestry extends the way sources always have.
+        """
+        source_id = request.inputs.get("source_video")
+        if source_id is None:
+            return None, None
+        parent = await self.repo.producing_job_for_asset(source_id, user.id)
+        if parent is None:
+            return None, None
+        parent_params = parent.request_params or {}
+        parent_seconds = _duration_seconds(parent_params.get("duration"))
+
+        if parent.workflow_id == "extend-video":
+            inherited = parent_params.get("director_lineage")
+            if not isinstance(inherited, dict):
+                return None, None
+            lineage = dict(inherited)
+            lineage["prior_seconds"] = (
+                float(lineage.get("prior_seconds") or 0.0) + (parent_seconds or 0.0)
+            )
+            lineage["parent_job_id"] = str(parent.id)
+            return lineage, await self._usable_identity_asset(
+                user, lineage.get("identity_image_asset_id")
+            )
+
+        if str(parent_params.get("prompt_mode") or "").strip().lower() != "director":
+            return None, None
+        lineage = {
+            "prompt_mode": "director",
+            "dialogue_language": str(
+                parent_params.get("dialogue_language") or "auto"
+            ),
+            "idea": parent.prompt,
+            "prior_seconds": parent_seconds or 0.0,
+            "source_workflow": parent.workflow_id,
+            "parent_job_id": str(parent.id),
+        }
+        identity_id = next(
+            (item.asset_id for item in parent.inputs if item.role == "source_image"),
+            None,
+        )
+        if identity_id is not None:
+            lineage["identity_image_asset_id"] = str(identity_id)
+        return lineage, await self._usable_identity_asset(user, identity_id)
+
+    async def _usable_identity_asset(
+        self, user: User, asset_id: Any
+    ) -> uuid.UUID | None:
+        """The identity image, only if it is still the user's and still ready.
+
+        Injected inputs bypass `_validate_inputs` (they are not part of the
+        request), so the same checks run here — and a missing or unready image
+        drops the ANCHOR, never the lineage: a continuation without its
+        photograph is still a continuation.
+        """
+        if asset_id is None:
+            return None
+        try:
+            parsed = asset_id if isinstance(asset_id, uuid.UUID) else uuid.UUID(str(asset_id))
+        except ValueError:
+            return None
+        found = await self.assets.repo.get_many_for_user([parsed], user.id)
+        asset = found.get(parsed)
+        if asset is None or asset.status != AssetStatus.READY:
+            logger.info(
+                "director_lineage_identity_unavailable",
+                extra={"asset_id": str(parsed)},
+            )
+            return None
+        return parsed
 
     async def _validate_inputs(
         self, user: User, request: GenerationCreateRequest, definition: Any
