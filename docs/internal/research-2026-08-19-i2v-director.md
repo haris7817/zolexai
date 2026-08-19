@@ -1,7 +1,8 @@
 # Image-to-Video Director mode: source-anchored planning
 
-**Date:** 2026-08-19 · **Status:** implemented, unit-tested; NOT committed, NOT
-deployed, NOT GPU-measured
+**Date:** 2026-08-19 · **Status:** implemented, unit-tested, **GPU-measured and
+deployed to the worker** (`a1fd9a8`). The VPS half is owner-performed and
+pending — see runbook §43.
 **Scope rule:** Standard Image to Video stays byte-identical. The mode is
 opt-in per request, exactly as it is on Text to Video. No other workflow gains
 a prompt mode.
@@ -105,19 +106,72 @@ then one env var.
   cues are the T2V measurements and carry over unchanged until an I2V render
   says otherwise.
 
-## Honest limits / what a GPU session must answer
+## GPU measurements (RTX PRO 6000, 19 Aug 2026)
 
-1. Does the anchored register hold on the real model — does the planner
-   actually leave appearances empty rather than inventing, across many ideas?
-   (The validator cannot detect a plausible invention; only refusal-by-brief
-   prevents it.)
-2. Does "keep exactly the appearance they have in the first frame" hold
-   identity as well as the T2V appearance-restating captions did — especially
-   at section seams, where the 0.2 reference still is the only tie back to
-   the upload?
-3. Is `AutoModelForImageTextToText` viable on the on-box checkpoint, what
-   does it cost in wall clock, and are its facts accurate enough to inject as
-   "treat these as true"?
-4. Camera behaviour: does the anchored brief's stay-inside-the-frame rule
-   prevent the impossible-reveal failure, or does 2.5's multi-shot habit need
-   a harder rule?
+Source image: the final frame of a 5 s T2V render — a woman in a **yellow
+raincoat** beside a **silver** humanoid robot on a **wooden park bench**,
+autumn leaves, overcast. Idea: "the woman and the robot discuss the future of
+education". 10 s, forced to 2×5 s sections so the seam was exercised.
+
+**Question 1 answered, and the answer was NO — the brief does not hold.**
+This is the finding of the day. With SOURCE IMAGE MODE in force, saying in
+capitals never to invent visible detail:
+
+| | hosted planner (gemma-4-31b, clean first attempt) | local gemma-4-e2b-it |
+|---|---|---|
+| woman | "beige linen blouse" | "sleek silver jumpsuit" |
+| robot | "white ceramic plating, blue LED eyes" | "blue glowing accents" |
+| scene | "a modern minimalist study" | "futuristic classroom, holographic displays" |
+
+Two different models, two sizes, same failure — and both then pinned their
+inventions into `continuity`, which the compiler restates at the end of EVERY
+section. The anti-drift mechanism had become a drift engine aimed at the
+customer's own photograph. A prompt cannot fix this; a model handed a gap
+fills it.
+
+**Fixed by enforcement, not by rewording** (`_ground_visual_claims`): a visual
+claim survives only if the supplied text supports it — the user's idea plus
+the measured image facts when the vision step ran. Re-measured on the same
+image and idea, hosted planner, after the fix:
+
+    APPEARANCES: ['', '']                                   ← inventions gone
+    CONTINUITY : ('Two people are present: one woman and one robot',)
+    SCENE      : The scene continues exactly as the opening frame shows it
+
+The count fact survives because it is built from words the idea itself uses,
+which is exactly the fact worth keeping. Everything else fell away.
+
+**A latent compiler bug went load-bearing at the same moment.** That surviving
+count sentence compiled to "one **the** woman and one **the** robot": role
+substitution absorbed a preceding article but not a preceding quantifier —
+the same family as the "the the humanoid robot" fix of 18 Aug. Harmless while
+count facts were rare; unavoidable once grounding made them the fact that
+reliably survives. Fixed and pinned by a test.
+
+**End to end, deployed checkout, real GPU:** 10 s from an uploaded still,
+two chained sections, **52.9 s wall** (planning ~1 s on Cerebras; it was 80.4 s
+when the probe fell through to the local checkpoint, which costs ~30 s).
+Output verified: h264 1024x576 + aac, 9.96 s, both streams present. No plan
+rejections. Sections carried their own dialogue with the continuation
+preamble, and both passes conditioned on the upload as designed.
+
+## Honest limits / still unanswered
+
+1. **Identity across the seam is not yet proven by eye.** The renders
+   completed and the mechanism is correct, but nobody has compared frame 1 to
+   frame 250 to say the woman is the same woman. That is a human judgement on
+   a real customer image, and it is the gate before telling anyone.
+2. **Vision is still unmeasured and still off.** Whether
+   `AutoModelForImageTextToText` loads the on-box checkpoint at all is
+   untested; the grounding rule is what makes that safe to leave off, since
+   an ungrounded description is now discarded rather than rendered.
+3. **Actions are not grounded.** An event action can still smuggle an
+   adjective ("the woman in the silver jumpsuit leans in"). Filtering prose
+   that specific would cost more than it saves — stated, not half-solved.
+4. **Camera behaviour** — whether the stay-inside-the-frame rule prevents the
+   impossible-reveal failure, or whether 2.5's multi-shot habit needs a
+   harder rule, is unmeasured.
+5. Grounding is deliberately strict (every distinctive word must be
+   supported). A legitimate description phrased in words the idea does not
+   use is dropped; the cost is identity falling back to the frame, which is
+   the truth anyway.

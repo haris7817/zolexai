@@ -1915,3 +1915,145 @@ language: Spanish** — ears on it, confirm it sings Spanish. Then one with
 pasted lyrics and one instrumental as the regression checks: neither may call
 the lyrics service at all, and `grep -c cerebras_lyrics_attempt` over that
 window must be `0` for both.
+
+---
+
+## 43. Deploy: Director / Idea mode for Image to Video (19 Aug 2026)
+
+`e716a08` → `a1fd9a8` on the GPU node. Same two-half shape as §41, and the
+same warning applies with more force: **the activation switch is a public
+`settings` flag**, so the worker half deployed below is inert — invisible,
+not merely unrouted — until the VPS rebuilds `api` **and** `web`.
+
+Research and every measurement:
+[`research-2026-08-19-i2v-director.md`](./research-2026-08-19-i2v-director.md).
+
+### 43.1 The GPU half (done)
+
+```bash
+cd /workspace/zolexai && git pull --ff-only
+supervisorctl restart zolexai-worker
+```
+
+Verified after restart: `worker_draining` reported `active_jobs: 0` on every
+restart (the box is serving real traffic — a customer director job in Spanish
+had run at 09:10 the same morning); `worker_ready` as `ltx-6000-1` with all
+six workflows; `wants_director` true for image-to-video and text-to-video and
+false for extend/v2v/music-video; the Text-to-Video planning brief asserted
+byte-identical to the anchored one's prefix.
+
+Rollback is the previous commit plus a restart:
+
+```bash
+cd /workspace/zolexai && git checkout e716a08
+supervisorctl restart zolexai-worker
+```
+
+### 43.2 What the deploy measurement found, and why there are four commits
+
+The feature was deployed, measured on the box, **found broken in the exact way
+it was designed to prevent**, fixed, and re-measured. That sequence is the
+point of deploying to a GPU before telling anyone.
+
+The planning brief tells the model, in capitals, never to invent visible
+detail — the image is the visual truth. Given a photograph of a woman in a
+yellow raincoat beside a silver robot on a park bench, the hosted planner
+returned a "beige linen blouse", a robot in "white ceramic plating", and the
+scene moved to "a modern minimalist study"; the local checkpoint invented a
+silver jumpsuit and a futuristic classroom. Both then wrote those inventions
+into `continuity` — the block the compiler restates at the end of every
+section. The anti-drift mechanism was repeating a description of a different
+woman, once per pass, against the customer's own image.
+
+`_ground_visual_claims` now enforces in code what the prompt only asked for: a
+visual claim survives only if the supplied text supports it (the idea, plus
+the measured image facts when the vision step ran). Re-measured on the same
+input: appearances empty, scene replaced by a pointer at the opening frame,
+and the single grounded fact — the count of people — surviving.
+
+### 43.3 The image-facts step is OFF and needs no node prerequisite
+
+`DIRECTOR_VISION_ENABLED` defaults to false. Nothing to download: it would
+reuse the §41.2 Gemma checkpoint. It is off because whether that checkpoint
+accepts image input is unmeasured, and after 43.2 it is also **not load
+bearing** — an ungrounded description is discarded rather than rendered, so
+the feature is correct without it. Turning it on is a measurement session
+first, then one environment variable.
+
+### 43.4 Measured on this node
+
+| | |
+|---|---|
+| Planning (Cerebras, hosted) | ~1 s |
+| Planning (local fallback, incl. model load) | ~30 s |
+| 10 s I2V director video, 2 chained sections, end to end | **52.9 s** |
+| Output verified | h264 1024x576 + aac, 9.96 s, both streams |
+| Plan rejections (hosted) | 0 |
+
+Distilled tier throughout — **the guided tier must not be enabled for this
+feature**, same as §41.3.
+
+### 43.5 The VPS half (owner-performed) — what actually turns it on
+
+Identical in shape to §41.4, and this release touches `image-to-video.yaml`
+and `text-to-video.yaml` (a comment only), so the stash dance still applies:
+
+```bash
+cd /opt/zolexai
+runuser -u zolexai -- git stash
+runuser -u zolexai -- git pull --ff-only    # → a1fd9a8 (or later)
+runuser -u zolexai -- git stash pop         # re-applies the runtime flips
+runuser -u zolexai -- git status            # expect the same YAMLs, nothing else
+```
+
+Then the §14 rebuild — no migrations, this release has no schema changes:
+
+```bash
+cd /opt/zolexai
+COMPOSE="docker compose \
+  --env-file /opt/zolexai/.env \
+  -f infrastructure/compose/docker-compose.prod.yml"
+
+$COMPOSE build api web
+$COMPOSE up -d --no-deps --force-recreate api web
+sleep 8
+$COMPOSE ps api web
+curl -sS http://127.0.0.1:8100/api/v1/health
+```
+
+**`web` is not optional**, for the reason spelled out in §41.4:
+`catalog.server.ts` reads the YAML at build time and seeds the client query
+cache from it, so a stale web image ships `prompt_modes: false` to every
+browser and the API's correct answer never displaces it.
+
+Verify the switch inside the container, not on disk:
+
+```bash
+docker exec zolexai-prod-api-1 grep -n -A12 '^settings:' \
+  /workflow-definitions/image-to-video.yaml    # must show prompt_modes: true
+
+curl -sS http://127.0.0.1:8100/api/v1/workflows \
+  | python3 -c 'import json,sys; print([w["settings"] for w in json.load(sys.stdin)["workflows"] if w["id"]=="image-to-video"])'
+                                               # must contain prompt_modes: True
+```
+
+### 43.6 Gate before telling anyone
+
+Through zolexai.com, with sound on:
+
+1. **Image to Video, Idea (Director)** — upload a photo of one or two people,
+   idea "they discuss <something>". Then look at the thing no test can check:
+   **is it the same person as the photograph, at the start AND at the end?**
+   That is the whole promise of the mode and the one open question §43.2's fix
+   does not close by itself.
+2. **Image to Video, Standard** — the regression check. Its request is
+   byte-identical to what it was before this release.
+3. **Text to Video, Idea (Director)** — the other regression check. This
+   release refactored shared director code, and the T2V brief is asserted
+   unchanged; confirm a planned scene still speaks.
+
+Rollback of the VPS half is a YAML edit, not a redeploy: set
+`settings.prompt_modes: false` in `image-to-video.yaml`, rebuild `api` and
+`web`. The toggle disappears from Image to Video, Text to Video keeps its own,
+and any in-flight director job still completes because the worker keeps
+serving the parameter it was already given.
