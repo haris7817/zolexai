@@ -2221,7 +2221,16 @@ six workflows; and in `.venv-worker`,
 
 Rollback: checkout the previous commit, restart.
 
-### 45.3 The VPS half (owner-performed) — what actually turns it on
+### 45.3 The VPS half — DONE 20 Aug 2026
+
+Performed by the owner the same day, from `013c6d1` — which meant the pull
+ALSO brought the §44 V2V reference-identity release whose VPS half was
+pending, plus the `e6e26dc` web fix (Reuse Settings input restoration). So
+`web` was rebuilt after all (for `e6e26dc`, not for this release), and the
+rebuild activated `v2v_reference_identity: true` alongside this release's
+ceiling. All in-container checks passed: `max_segment_seconds: 30` in both
+generation YAMLs, `runtime: ltx` survived the stash dance, the v2v flag
+baked. The procedure, for the next time:
 
 The §16 stash dance (SIX locally-modified YAMLs, TWO edits each — read the
 diff before stashing), because this push touches `text-to-video.yaml` and
