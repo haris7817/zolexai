@@ -38,6 +38,14 @@ settings:
   motion_strength: false
   prompt_adherence: false
   seed: true
+  # Standard / Idea (Director) prompt-mode toggle, same control Text to Video
+  # declares. Standard is byte-identical to the pre-feature behaviour. In
+  # Director mode the text is an IDEA and the worker plans dialogue, actions
+  # and timing before generating — SOURCE-ANCHORED here: the uploaded image
+  # defines who and what exists (and remains the identity reference across
+  # chained sections), the plan defines only what happens next. See
+  # apps/worker/worker/director/.
+  prompt_modes: true
 
 capabilities:
   download: true

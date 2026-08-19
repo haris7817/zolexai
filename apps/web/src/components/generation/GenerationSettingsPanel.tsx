@@ -69,6 +69,16 @@ export function GenerationSettingsPanel({
   const directorMode =
     workflow.settings.prompt_modes && form.watch("promptMode") === "director";
 
+  /**
+   * Director mode on an image-fed workflow is source-anchored: the upload
+   * decides who and what is in the scene, the idea decides what happens.
+   * The copy says so — promising "AI will create the scene" over a photo
+   * the user chose would be promising the wrong thing.
+   */
+  const directorAnchored = workflow.inputs.some(
+    (input) => input.kind === "image" && input.required,
+  );
+
   return (
     <>
       <div className="flex-1 px-5 pt-5">
@@ -149,8 +159,9 @@ export function GenerationSettingsPanel({
             />
             {directorMode ? (
               <p className="text-zx-text-muted mb-4 text-[11.5px] leading-[1.5]">
-                Describe a simple idea — AI will create the scene, characters
-                and dialogue automatically.
+                {directorAnchored
+                  ? "Describe what should happen — your image defines who and what is in the scene, and AI plans the action and dialogue around it."
+                  : "Describe a simple idea — AI will create the scene, characters and dialogue automatically."}
               </p>
             ) : null}
           </>
@@ -165,7 +176,9 @@ export function GenerationSettingsPanel({
           {...form.register("prompt")}
           placeholder={
             directorMode
-              ? "Describe your idea — who is in the scene, where, and what happens…"
+              ? directorAnchored
+                ? "Describe what happens next in your image — who speaks, what they say and do…"
+                : "Describe your idea — who is in the scene, where, and what happens…"
               : workflow.prompt.placeholder
           }
           maxLength={workflow.prompt.max_length}

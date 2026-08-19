@@ -97,22 +97,47 @@ async def test_accepts_director_mode_on_text_to_video(
     assert job["parameters"]["dialogue_language"] == "spanish"
 
 
-async def test_rejects_prompt_mode_on_a_workflow_without_the_control(
-    client: AsyncClient,
-) -> None:
-    """Same policy as lyrics: present-and-unsupported is reported, never
-    silently dropped — Director mode must not leak past Text to Video."""
+async def test_accepts_director_mode_on_image_to_video(client: AsyncClient) -> None:
+    """Image to Video declares `settings.prompt_modes` too (source-anchored
+    Director). With the mode and language supplied, the ONLY failing field is
+    the fabricated asset — which is the registry saying yes to everything it
+    judges."""
     response = await client.post(
         "/api/v1/generations",
         json={
             "workflow_id": "image-to-video",
-            "prompt": "make it move",
+            "prompt": "A woman and a robot on a bench discuss the future of education.",
+            "parameters": {
+                "duration": "10s",
+                "aspect_ratio": "16:9",
+                "prompt_mode": "director",
+                "dialogue_language": "english",
+            },
+            "inputs": {"source_image": "00000000-0000-0000-0000-000000000000"},
+        },
+    )
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert fields == {"inputs.source_image"}
+
+
+async def test_rejects_prompt_mode_on_a_workflow_without_the_control(
+    client: AsyncClient,
+) -> None:
+    """Same policy as lyrics: present-and-unsupported is reported, never
+    silently dropped — Director mode must not leak past the workflows that
+    declare it."""
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "workflow_id": "extend-video",
+            "prompt": "keep the shot going",
             "parameters": {
                 "duration": "5s",
                 "aspect_ratio": "16:9",
                 "prompt_mode": "director",
             },
-            "inputs": {"source_image": "00000000-0000-0000-0000-000000000000"},
+            "inputs": {"source_video": "00000000-0000-0000-0000-000000000000"},
         },
     )
     assert response.status_code == 422

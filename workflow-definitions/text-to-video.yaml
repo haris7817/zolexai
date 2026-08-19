@@ -48,8 +48,9 @@ settings:
   # Standard / Idea (Director) prompt-mode toggle. Standard is the default and
   # is byte-identical to the pre-feature behaviour; Director treats the text
   # as an IDEA and has the worker plan characters, dialogue, delivery and
-  # timing before generating (see apps/worker/worker/director/). Declared only
-  # here — no other workflow accepts a prompt mode.
+  # timing before generating (see apps/worker/worker/director/). Declared here
+  # and on image-to-video (where the plan is source-anchored); no other
+  # workflow accepts a prompt mode.
   prompt_modes: true
 
 capabilities:
