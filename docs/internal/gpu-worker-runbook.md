@@ -2170,3 +2170,116 @@ Rollback, worker half: `git revert` or checkout `883ff86`, restart worker.
 Rollback, VPS half: remove `v2v_reference_identity: true` from the baked
 YAML and rebuild api — the worker then never receives the flag and V2V is
 exactly the 18 Aug transform engine (the seam fix stays, and should).
+
+---
+
+## 45. Deploy: 60-second continuity + Director-aware Extend (20 Aug 2026)
+
+Two-half deploy in the §41/§43 shape, with one structural difference worth
+reading twice: **this release has real API-side code** — the Extend lineage
+walk lives in `apps/api/app/services/generation.py` — so the VPS `api`
+rebuild is not just re-baking YAML this time. Research and every measurement:
+[`research-2026-08-20-60s-continuity-and-director-extend.md`](./research-2026-08-20-60s-continuity-and-director-extend.md).
+
+What the release does:
+
+- **60s T2V/I2V renders as two 30-second sections** instead of one 60s pass
+  (`execution.max_segment_seconds: 30` in both YAMLs). Measured reason: a
+  single 60s pass returned a departed man to the kitchen for the final twelve
+  seconds while the audio said he was gone; 30s passes are the measured-clean
+  regime, and 2×30 is ~33% FASTER than 1×60 (191s vs 285s). 5/15/30s argv is
+  byte-identical — pinned by test.
+- **Departures are state** (`DirectorEvent.exits`): a character who leaves is
+  out of every cast and constancy sentence from that point on, the scene is
+  restated as who REMAINS, and people-count continuity facts are dropped.
+- **Extend is Director-aware**: the API walks `source asset → producing job`
+  at creation, stores `director_lineage` (mode, language, idea, prior
+  seconds, identity image) in the extend job's params, and the worker plans a
+  CONTINUATION — same language, story moves forward, no re-telling, the
+  original I2V upload carried as the `identity_image` identity anchor.
+  Works retroactively for every Director video ever generated; a source with
+  no ancestry extends byte-identically to before.
+
+### 45.1 Split-deploy behaviour (safe in either order)
+
+Worker first, API-half pending (the state after 45.2): 60s jobs still arrive
+without the ceiling → still one pass, but the presence-aware captions are
+already active (the caption contradiction is gone even single-pass); extends
+arrive without lineage → byte-identical standard extends. Nothing breaks;
+the full feature turns on when the VPS api image is rebuilt.
+
+### 45.2 The GPU half
+
+```bash
+cd /workspace/zolexai && git pull --ff-only
+supervisorctl restart zolexai-worker
+```
+
+Verify: `worker_draining` reports `active_jobs: 0`; `worker_ready` lists all
+six workflows; and in `.venv-worker`,
+`from worker.director import continuation_lineage` imports.
+
+Rollback: checkout the previous commit, restart.
+
+### 45.3 The VPS half (owner-performed) — what actually turns it on
+
+The §16 stash dance (SIX locally-modified YAMLs, TWO edits each — read the
+diff before stashing), because this push touches `text-to-video.yaml` and
+`image-to-video.yaml`. Both edits land inside `execution:` this time, next to
+the local `runtime:` flips — they auto-merge because the stash's hunks and
+the pull's hunks touch different lines, but READ the `git stash pop` output
+and run the verification below regardless.
+
+```bash
+cd /opt/zolexai
+runuser -u zolexai -- git --no-pager diff workflow-definitions/ | grep -E "^(diff|[+-][^+-])"
+runuser -u zolexai -- git stash
+runuser -u zolexai -- git pull --ff-only
+runuser -u zolexai -- git stash pop
+runuser -u zolexai -- git status --short   # same six YAMLs + two untracked files
+grep -n "max_segment_seconds\|runtime:" workflow-definitions/text-to-video.yaml
+grep -n "max_segment_seconds\|runtime:" workflow-definitions/image-to-video.yaml
+# each must show BOTH max_segment_seconds: 30 AND runtime: ltx
+```
+
+Then rebuild **api** (§14). **`web` is NOT required this time** — the YAML
+change is `execution:`-private and stripped from every public response, and
+no web source changed. Rebuilding it anyway is harmless.
+
+```bash
+cd /opt/zolexai
+COMPOSE="docker compose --env-file /opt/zolexai/.env -f infrastructure/compose/docker-compose.prod.yml"
+$COMPOSE build api
+$COMPOSE up -d --no-deps --force-recreate api
+sleep 8 && $COMPOSE ps api
+curl -sS http://127.0.0.1:8100/api/v1/health
+
+docker exec zolexai-prod-api-1 grep -n "max_segment_seconds" \
+  /workflow-definitions/text-to-video.yaml /workflow-definitions/image-to-video.yaml
+docker exec zolexai-prod-api-1 grep -n -A2 '^execution:' \
+  /workflow-definitions/image-to-video.yaml   # runtime: ltx survived
+```
+
+No migrations — the lineage lives in the existing `request_params` JSONB.
+
+### 45.4 Gate before telling anyone
+
+Through zolexai.com, sound on:
+
+1. **T2V Director, 60s**, an idea where someone LEAVES partway ("...midway
+   through, X walks out and does not come back"). Watch the second half: the
+   departed person stays gone, no flash back, dialogue never restarts. The
+   worker log shows `passes: 2` in `longform_plan` and a `director_sections`
+   line with `departed` filled for section 2.
+2. **T2V standard, 30s** — regression; request and render byte-identical.
+3. **Extend a Director video +10s** — the extension continues the
+   conversation in the same language (job detail shows
+   `parameters.director_lineage`); extend the RESULT again and check
+   `prior_seconds` accumulated.
+4. **Extend a plain uploaded video** — regression: no `director_lineage` in
+   the job, behaviour unchanged.
+
+Rollback, worker half: previous commit + restart. Rollback, VPS half: revert
+the two `max_segment_seconds` lines in the baked YAML and rebuild api (60s
+returns to single-pass); the lineage code is inert for any video without
+Director ancestry and needs no separate switch.
