@@ -466,7 +466,7 @@ def _humanise(text: str, plan: DirectorPlan) -> str:
             # customer's caption carries every section.
             text = re.sub(
                 rf"\b({_QUANTIFIER})\s+(?:the\s+|an?\s+)?{re.escape(token)}\b",
-                lambda match: f"{match.group(1)} {bare}",
+                lambda match, bare=bare: f"{match.group(1)} {bare}",
                 text,
                 flags=re.IGNORECASE,
             )
