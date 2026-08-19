@@ -48,6 +48,12 @@ _PAUSE_TRANSITIONS = (
 _ARTICLE = re.compile(r"^(?:the|a|an)\s+", re.IGNORECASE)
 _PRONOUN = re.compile(r"^(?:he|she|they)\s+", re.IGNORECASE)
 
+#: Determiners that already introduce the noun they precede, so a role word
+#: substituted after one must NOT bring an article of its own.
+_QUANTIFIER = (
+    r"(?:one|two|three|four|five|six|both|each|every|another|either|neither|no)"
+)
+
 
 def compile_section_prompts(
     plan: DirectorPlan,
@@ -433,6 +439,7 @@ def _humanise(text: str, plan: DirectorPlan) -> str:
         character = plan.characters[index]
         role = _ARTICLE.sub("", character.role.strip())
         marker = f"\x00{index}\x00"
+        bare = f"\x01{index}\x01"
         # Every alternative absorbs an optional preceding article: replacing a
         # bare "robot" inside "the robot" with "the humanoid robot" without
         # eating its article produced "the the humanoid robot" (TC2, 18 Aug).
@@ -452,6 +459,17 @@ def _humanise(text: str, plan: DirectorPlan) -> str:
             if head not in others:
                 tokens.append(head)
         for token in tokens:
+            # A counted mention already has its determiner: "one woman" must
+            # not become "one the woman". Counting sentences are exactly what
+            # survives grounding on the anchored path ("Two people are
+            # present: one woman and one robot"), so this is the phrasing the
+            # customer's caption carries every section.
+            text = re.sub(
+                rf"\b({_QUANTIFIER})\s+(?:the\s+|an?\s+)?{re.escape(token)}\b",
+                lambda match: f"{match.group(1)} {bare}",
+                text,
+                flags=re.IGNORECASE,
+            )
             text = re.sub(
                 rf"\b(?:the\s+|an?\s+)?{re.escape(token)}\b",
                 marker,
@@ -460,6 +478,7 @@ def _humanise(text: str, plan: DirectorPlan) -> str:
             )
     for index, character in enumerate(plan.characters):
         text = text.replace(f"\x00{index}\x00", _subject(character))
+        text = text.replace(f"\x01{index}\x01", _bare_subject(character))
     # Replacements land lowercased; restore capitals at sentence starts.
     return re.sub(r"(^|[.!?]\s+)([a-z])", lambda m: m.group(1) + m.group(2).upper(), text)
 
@@ -474,8 +493,12 @@ def _humanised_event(event: DirectorEvent, plan: DirectorPlan) -> DirectorEvent:
 def _subject(character: DirectorCharacter) -> str:
     """ "the police chief" — lowercased, because roles are common nouns and a
     planner-capitalised "Interviewer" reads as a name mid-sentence."""
-    role = _ARTICLE.sub("", character.role.strip()).lower()
-    return f"the {role}"
+    return f"the {_bare_subject(character)}"
+
+
+def _bare_subject(character: DirectorCharacter) -> str:
+    """ "police chief" — for positions that supply their own determiner."""
+    return _ARTICLE.sub("", character.role.strip()).lower()
 
 
 def _full_subject(character: DirectorCharacter, introduced: set[str]) -> str:

@@ -317,6 +317,19 @@ def test_invented_continuity_is_dropped_because_every_section_repeats_it() -> No
         assert "they have in the first frame" in caption
 
 
+def test_a_counted_mention_keeps_its_own_determiner() -> None:
+    """A count fact is the one continuity fact that reliably survives
+    grounding, so it is the phrasing every anchored caption carries: "one
+    woman" must not be humanised into "one the woman"."""
+    plan = anchored_plan(continuity=["Two people are present: one woman and one robot"])
+    [caption] = compile_section_prompts(plan, 1, total_seconds=10.0)
+
+    assert "one the woman" not in caption and "one the robot" not in caption
+    assert "one woman and one robot" in caption
+    # The ordinary mentions still take their article.
+    assert "the woman" in caption and "the robot" in caption
+
+
 def test_measured_image_facts_ground_a_description_and_let_it_through() -> None:
     """The payoff for turning the vision step on: a description someone
     actually looked at is allowed to reach the caption, because it is now
