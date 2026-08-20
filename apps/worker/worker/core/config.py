@@ -212,6 +212,19 @@ class WorkerSettings(BaseSettings):
     """How to build the composited identity anchor for
     `execution.v2v_reference_identity` — see `person_anchor_argv`."""
 
+    wan_animate_command: str = ""
+    """How to invoke the Wan2.2-Animate identity provider, selected per job by
+    `execution.v2v_identity_provider: wan_animate` — see `wan_animate_argv`.
+
+    Empty means the provider is UNAVAILABLE on this node, and a job asking for
+    it is refused rather than quietly served by the LTX path: the two produce
+    different videos, and silently substituting one for the other is exactly
+    the misrepresentation this feature must not make.
+
+    A command rather than an import for the same reason as the matting
+    siblings, and more so — the model is 68 GB in its own environment with its
+    own torch. Nothing about it belongs in this process."""
+
     director_planner_command: str = ""
     """
     How to invoke the Director-mode scene planner, which turns a one-line idea
@@ -621,6 +634,18 @@ class WorkerSettings(BaseSettings):
             return shlex.split(self.person_anchor_command)
         script = Path(__file__).resolve().parents[2] / "scripts" / "person_anchor.py"
         return ["uv", "run", "python", str(script)]
+
+    @property
+    def wan_animate_argv(self) -> list[str]:
+        """The Wan2.2-Animate command, as argv, or empty when unconfigured.
+
+        No shipped-script default, unlike its siblings: the script here cannot
+        run in the worker's environment OR in the LTX one — it needs Wan's own
+        venv and a 68 GB checkpoint. A node either has it configured or does
+        not have the provider."""
+        if not self.wan_animate_command:
+            return []
+        return shlex.split(self.wan_animate_command)
 
     @property
     def director_gemma_root(self) -> Path:

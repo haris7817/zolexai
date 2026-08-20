@@ -2316,3 +2316,121 @@ Rollback, worker half: previous commit + restart. Rollback, VPS half: revert
 the two `max_segment_seconds` lines in the baked YAML and rebuild api (60s
 returns to single-pass); the lineage code is inert for any video without
 Director ancestry and needs no separate switch.
+
+---
+
+## 45. The Wan2.2-Animate identity provider (opt-in, off by default)
+
+A second engine for reference-identity video-to-video, selected per job by
+`execution.v2v_identity_provider: wan_animate`. Nothing routes to it unless a
+job asks and the node is configured; every existing V2V job is unaffected.
+
+**Why it exists.** Two mechanisms LTX has no equivalent for: a pose skeleton,
+which carries joint coordinates and therefore cannot leak the source person's
+hair silhouette or clothing the way a canny edge map does, and a face encoder
+driven by the source's own face crops. Full audit and benchmark:
+`docs/internal/research-2026-08-20-v2v-identity-transfer-audit.md`.
+
+### 45.1 LICENCE GATE — before this serves customer traffic
+
+The preprocessing checkpoint ships `det/yolov10m.onnx`. **YOLOv10 is AGPL-3.0
+upstream**, and redistribution inside an Apache-2.0 repo does not relicense it.
+AGPL's network-service clause is exactly the one a commercial SaaS cannot
+ignore. Evaluation behind an off-by-default flag is one thing; serving customer
+jobs is another.
+
+The detector supplies a person bounding box and nothing else — the least
+load-bearing component in the stack — and this repo already ships an
+MIT-licensed BiRefNet matte that could supply the same box. **Swap it before
+this is enabled for anyone but us.**
+
+Everything else is clean: Wan2.2-Animate code and weights Apache 2.0, SAM2
+Apache 2.0, ViTPose Apache 2.0. FLUX.1-Kontext-dev is non-commercial but is
+animation-mode retargeting only and is never fetched.
+
+### 45.2 Node setup
+
+```sh
+cd /workspace/idbench
+git clone --depth 1 https://github.com/Wan-Video/Wan2.2.git
+python3 -c "from huggingface_hub import snapshot_download; \
+  snapshot_download('Wan-AI/Wan2.2-Animate-14B', \
+  local_dir='/workspace/idbench/Wan2.2-Animate-14B', max_workers=8)"   # 68 GB
+
+cd Wan2.2
+uv venv --python 3.12 .venv && . .venv/bin/activate
+uv pip install torch torchvision torchaudio --torch-backend=cu128
+grep -v '^flash_attn' requirements.txt > /tmp/req.txt && uv pip install -r /tmp/req.txt
+uv pip install decord peft onnxruntime-gpu pandas matplotlib loguru sentencepiece \
+               moviepy einops librosa
+uv pip install "git+https://github.com/facebookresearch/sam2.git@0e78a118995e66bb27d78518c4bd9a3e95b4e266"
+```
+
+Three things the install does not do for you, all of which cost a render to
+discover:
+
+1. **SAM2's config YAMLs do not ship with that pinned commit.** `sam2_configs/`
+   installs empty and hydra dies on `sam2_hiera_l.yaml`. Clone the repo at that
+   commit and copy `sam2_configs/*.yaml` into the venv's `sam2_configs/`.
+2. **SAM2's hole-fill kernel is CUDA-only** and receives CPU-offloaded masks:
+   set `++model.fill_hole_area=0` in
+   `wan/modules/animate/preprocess/sam_utils.py`. It only skips filling
+   8-pixel holes.
+3. **Two attention call sites bypass the SDPA fallback** and assert on a node
+   without a FlashAttention build:
+   - `wan/modules/attention.py` — `flash_attention()` needs an early delegation
+     to an SDPA path that applies `q_scale` and `softmax_scale` (the module's
+     own `attention()` fallback silently drops both);
+   - `wan/modules/animate/face_blocks.py` — the face adapter's `mode="flash"`
+     branch. Do NOT switch it to `mode="torch"`: `pre_attn_layout` is fetched
+     from MEMORY_LAYOUT and never applied, so that branch assumes a different
+     tensor layout and fails on shape. Patch the flash branch itself and
+     transpose explicitly.
+
+   `scripts/wan_animate.py` checks for both markers and refuses up front rather
+   than failing forty minutes into a render.
+
+### 45.3 Enabling it on a node
+
+Append to `.env.gpu-worker` and restart the worker:
+
+```sh
+WAN_ANIMATE_COMMAND="/workspace/idbench/Wan2.2/.venv/bin/python /workspace/zolexai/apps/worker/scripts/wan_animate.py --repo /workspace/idbench/Wan2.2 --ckpt /workspace/idbench/Wan2.2-Animate-14B"
+```
+
+Unset, the provider is **unavailable** and a job asking for it is refused —
+never quietly served by the LTX path, because the two produce different videos.
+
+### 45.4 Running a job through it
+
+```sh
+cd /workspace/zolexai/apps/worker
+set -a; . /workspace/zolexai/.env.gpu-worker; set +a
+MODE=restyle VIDEO=<source.mp4> REFERENCE=<person.jpg> ASPECT_RATIO=16:9 \
+EXECUTION='{"v2v_engine":"transform","v2v_reference_identity":true,"v2v_identity_provider":"wan_animate"}' \
+.venv/bin/python scripts/ltx_smoke.py "<caption of the person and the scene>"
+```
+
+Reaching it from the product needs `v2v_identity_provider` in
+`workflow-definitions/video-to-video.yaml` **and a VPS rebuild** — the API
+image bakes the workflow definitions. Mind §44.1's stash-pop hazard on that
+file.
+
+### 45.5 What to expect
+
+Measured 20 Aug 2026 on the RTX PRO 6000, worker resident (~24 GB):
+
+| | Wan replacement | LTX identity |
+| --- | --- | --- |
+| 15 s speaking clip | 1642 s | 218 s |
+| 10 s dance clip | 1109 s | 176 s |
+| Peak VRAM (whole GPU) | ~81 GB | ~91 GB |
+| Lip-sync vs source | 0 ms, r .930 | 0 ms, r .947 |
+
+Roughly **6× the wall clock**, so a 29 s job is around 35–45 minutes; the
+workflow's 5400 s timeout covers it. Runtimes carry `--offload_model True
+--t5_cpu` and an SDPA fallback, so they are a pessimistic ceiling.
+
+Known limits: renders at 30 fps (the worker re-times on delivery), its mask
+extraction is **single-person only** by its own documentation, and on a
+full-body wide shot the face is resolution-bound exactly as LTX's is.
