@@ -525,13 +525,26 @@ def _enforce_speech_budget(plan: DirectorPlan, idea: str) -> DirectorPlan:
     if plan.spoken_words <= budget:
         return plan
 
-    protected = {_normalise_line(quote) for quote in required_quotes(idea)}
+    # A fragment of a user quote is as protected as the whole quote. Pacing
+    # SPLITS a long quoted line across events (see `_require_user_dialogue`),
+    # and matching whole quotes here made the two rules contradict: this trim
+    # deleted the split line's tail as "planner-invented", then the verbatim
+    # check failed the plan for the deletion — the second half of the twelve
+    # rejected planning attempts of 20 Aug 2026.
+    quote_words = [_words_of(quote) for quote in required_quotes(idea)]
+
+    def is_protected(dialogue: str) -> bool:
+        words = _words_of(dialogue)
+        return bool(words) and any(
+            _contains_run(quote, words) for quote in quote_words
+        )
+
     events = list(plan.timeline)
     for index in range(len(events) - 1, -1, -1):
         if plan.spoken_words <= budget:
             break
         event = events[index]
-        if not event.dialogue or _normalise_line(event.dialogue) in protected:
+        if not event.dialogue or is_protected(event.dialogue):
             continue
         stripped = replace(
             event,

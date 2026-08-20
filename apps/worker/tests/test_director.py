@@ -321,6 +321,39 @@ def test_a_split_line_with_a_dropped_middle_is_still_a_rewrite() -> None:
         )
 
 
+def test_the_word_budget_trims_around_a_split_user_line_not_through_it() -> None:
+    """The production shape of 20 Aug 2026: a 32-word quote in a 15-second
+    clip, over the word budget. The trim used to delete the split line's tail
+    as planner-invented and the verbatim check then failed the plan — twelve
+    attempts, deterministically. Planner-invented lines go first; the user's
+    fragments are untouchable even over budget, because over-packing their
+    own clip is the user's call."""
+    events = _monologue_events(
+        "El reggaetón de antes tenía más calle, perreo y letras que se quedaban contigo.",
+        "El de ahora tiene sonidos más modernos y domina el mundo,",
+        "pero dime tú: ¿cuál época fue mejor?",
+    )
+    for index, event in enumerate(events):
+        event["start"], event["end"] = index * 4, index * 4 + 4
+    events.append(
+        {
+            "start": 12, "end": 15,
+            "action": "He spreads his hands",
+            "camera": "mid-shot",
+            "speaker": "detective",
+            "dialogue": "Y ustedes qué opinan de todo esto",
+            "delivery": "warm",
+        }
+    )
+    plan = parse_plan(
+        raw_plan(timeline=events),
+        idea=_LONG_SPANISH_IDEA, duration_seconds=15.0, language="auto",
+    )
+    spoken = [e.dialogue for e in plan.timeline if e.dialogue]
+    assert len(spoken) == 3, "the invented closer is trimmed, the quote is not"
+    assert spoken[-1] == "pero dime tú: ¿cuál época fue mejor?"
+
+
 def test_a_quoted_line_handed_mid_sentence_to_another_speaker_is_refused() -> None:
     """Half the user's line in someone else's mouth is not the user's line."""
     events = _monologue_events(
