@@ -172,6 +172,33 @@ execution:
   # matting per pass on top of the transform.
   v2v_reference_identity: true
   #
+  # ── Which engine performs the replacement ────────────────────────────────
+  #
+  # Wan2.2-Animate in replacement mode, instead of this adapter's own path.
+  # It has two mechanisms LTX has no equivalent for: a pose skeleton, which
+  # carries joint coordinates and so cannot leak the source person's hair
+  # silhouette or clothing the way a canny edge map does, and a face encoder
+  # driven by the source's own face crops. Delivery is unchanged — the
+  # source's audio is still attached once and the result is still the
+  # source's length and frame rate.
+  #
+  # TWO THINGS TO KNOW BEFORE LEAVING THIS ON:
+  #
+  #   * COST. Measured 20 Aug 2026 on the RTX PRO 6000: ~2 minutes of compute
+  #     per second of video, against LTX's ~12 seconds. A 29s clip is ~60
+  #     minutes. Above roughly 45 seconds of source a job exceeds the 5400s
+  #     timeout above and FAILS — so this key and long uploads do not mix.
+  #   * LICENCE. Wan's preprocessing ships det/yolov10m.onnx, and YOLOv10 is
+  #     AGPL-3.0 upstream. Fine for our own evaluation; AGPL's network-service
+  #     clause is exactly the one a commercial SaaS cannot ignore, so the
+  #     detector must be replaced before this serves paying customers. It
+  #     supplies a person bounding box and nothing else, which the MIT
+  #     BiRefNet matte already on the node could supply. Runbook 45.1.
+  #
+  # Requires WAN_ANIMATE_COMMAND on the node; without it these jobs are
+  # REFUSED rather than quietly served by the LTX path.
+  v2v_identity_provider: wan_animate
+  #
   # Person lock's mirror image: the person should NOT survive — the uploaded
   # reference image says who they are, the footage keeps saying what they do.
   # Three levers move together (transform engine only; the flag with a
