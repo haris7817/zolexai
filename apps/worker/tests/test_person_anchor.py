@@ -74,11 +74,12 @@ def test_a_headshot_hangs_from_the_head_not_the_feet() -> None:
     assert paste_y + size[1] != sy1
 
 
-def test_a_headshot_is_scaled_across_the_shoulders() -> None:
-    """Width is the only correspondence a bust shares with a whole figure.
+def test_a_headshot_falls_back_to_the_box_width_without_head_bands() -> None:
+    """The fallback when either matte is not shaped like a person.
 
-    Fitting it by HEIGHT into a full-body box is what shrank it to a
-    torso-sized lump; the shoulders should instead match the person's width.
+    Fitting a bust by HEIGHT into a full-body box shrinks it to a torso-sized
+    lump, so the box's width is the better of the two crude options. Head
+    matching, below, is better than either.
     """
     size, _ = anchor.place_cutout(FULL_BODY_SOURCE, HEADSHOT_CUTOUT, truncated=True)
     box_w = FULL_BODY_SOURCE[2] - FULL_BODY_SOURCE[0]
@@ -132,3 +133,64 @@ def test_a_close_up_source_keeps_the_scale_it_already_had() -> None:
     )
     assert size[1] == pytest.approx(round(HEADSHOT_CUTOUT[1] * old_scale), rel=0.02)
     assert paste_y == close_up_source[1]
+
+
+# ── heads, not bounding boxes ─────────────────────────────────────────────
+
+
+# `head_band` itself walks a numpy matte, and this worker environment has no
+# numpy by design — the matting runs in the LTX environment behind a CLI. What
+# is testable here, and what actually shipped wrong, is the arithmetic that
+# consumes the bands.
+
+
+def test_a_matte_holding_more_than_a_person_no_longer_inflates_the_cutout() -> None:
+    """The measured regression: BiRefNet mattes the salient OBJECT.
+
+    On a seam frame of a woman standing beside a car it returned both as one
+    region, so the "person's box" spanned most of the frame. Scaling a bust to
+    that width produced a head half the frame high. Matching the HEADS instead
+    is indifferent to whatever else the matte swept up.
+    """
+    person_and_car = (100, 60, 900, 520)
+    bust = (500, 540)
+
+    box_only, _ = anchor.place_cutout(person_and_car, bust, truncated=True)
+    head_matched, _ = anchor.place_cutout(
+        person_and_car, bust, truncated=True,
+        source_head=(430, 500), reference_head=(120, 380),
+    )
+
+    assert box_only[1] > 700, "the old arithmetic really does produce a giant"
+    assert head_matched[1] < box_only[1] / 4
+    assert head_matched[1] < person_and_car[3] - person_and_car[1]
+
+
+def test_the_two_heads_line_up() -> None:
+    source_head = (430, 500)
+    reference_head = (120, 380)
+    size, (paste_x, _) = anchor.place_cutout(
+        (100, 60, 900, 520), (500, 540), truncated=True,
+        source_head=source_head, reference_head=reference_head,
+    )
+    scale = size[0] / 500
+    landed = paste_x + (reference_head[0] + reference_head[1]) / 2 * scale
+    assert landed == pytest.approx(sum(source_head) / 2, abs=1)
+
+
+def test_head_matching_still_hangs_from_the_top() -> None:
+    _, (_, paste_y) = anchor.place_cutout(
+        FULL_BODY_SOURCE, HEADSHOT_CUTOUT, truncated=True,
+        source_head=(470, 520), reference_head=(120, 380),
+    )
+    assert paste_y == FULL_BODY_SOURCE[1]
+
+
+def test_a_whole_figure_ignores_the_head_bands() -> None:
+    """Feet remain the landmark when the photo actually shows feet."""
+    cutout = (300, 900)
+    size, (_, paste_y) = anchor.place_cutout(
+        FULL_BODY_SOURCE, cutout, truncated=False,
+        source_head=(470, 520), reference_head=(120, 180),
+    )
+    assert paste_y + size[1] == FULL_BODY_SOURCE[3]

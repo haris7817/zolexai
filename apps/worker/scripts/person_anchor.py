@@ -72,6 +72,19 @@ INPAINT_DILATION = 9
 #: so this was the common case, not an edge case.
 REFERENCE_TRUNCATION_TOLERANCE = 0.02
 
+#: The fraction of a matte's height treated as "the head", measured down from
+#: its topmost pixel.
+#:
+#: A cropped reference is scaled by matching ITS head to the source person's
+#: head, rather than by matching bounding-box widths. The box is not reliably a
+#: person: BiRefNet mattes the salient OBJECT, and on a seam frame of someone
+#: standing beside a car it returns the person and the car as one region. Width
+#: matching against that box scaled a bust to half the frame and produced a
+#: giant floating head — measured 20 Aug 2026. The top of the matte is the
+#: person's head in every framing where a head is visible at all, so it is the
+#: one landmark worth trusting here.
+HEAD_BAND = 0.12
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -151,6 +164,27 @@ def bbox_of(mask, min_area: float) -> tuple[int, int, int, int] | None:
     return x0, y0, x1, y1
 
 
+def head_band(mask, box: tuple[int, int, int, int]) -> tuple[int, int] | None:
+    """(x0, x1) of the matte across the top `HEAD_BAND` of its height.
+
+    None when the band holds nothing, which means the matte is not shaped like
+    a person and the caller should not trust it.
+    """
+    import numpy as np
+
+    x0, y0, x1, y1 = box
+    band = max(1, round((y1 - y0) * HEAD_BAND))
+    sub = mask[y0 : y0 + band, x0:x1] > 0.5
+    columns = np.any(sub, axis=0)
+    if not columns.any():
+        return None
+    left = x0 + int(np.argmax(columns))
+    right = x0 + len(columns) - int(np.argmax(columns[::-1]))
+    if right - left < 2:
+        return None
+    return left, right
+
+
 def is_truncated(box: tuple[int, int, int, int], height: int) -> bool:
     """Does the reference's subject run off the bottom of their own photo?
 
@@ -166,34 +200,48 @@ def place_cutout(
     cutout_size: tuple[int, int],
     *,
     truncated: bool,
+    source_head: tuple[int, int] | None = None,
+    reference_head: tuple[int, int] | None = None,
 ) -> tuple[tuple[int, int], tuple[int, int]]:
     """How big the reference cutout should be, and where it goes.
 
-    Two cases, and they differ in which end of the person is trustworthy:
+    Two cases, and they differ in which part of the person is trustworthy:
 
     * A WHOLE reference figure shares its ground with the source person, so it
       is fitted inside their box and bottom-aligned — their feet meet the same
       floor.
-    * A TRUNCATED one (a headshot, a bust) has no feet to align. The only
-      correspondence left is across the shoulders, so it is scaled by WIDTH and
-      hung from the TOP of the source person's box, putting its head where the
-      head already is. Its body simply continues past the bottom of the box;
-      the control signal is what states the body's pose, and it does that for
-      every frame regardless.
+    * A TRUNCATED one (a headshot, a bust) has no feet to align. It is scaled
+      so its HEAD matches the source person's head and hung from the top of
+      their box. Its body continues past the bottom; the control signal states
+      the body's pose for every frame regardless.
+
+    Head matching rather than box-width matching, because the box is not
+    reliably a person — see `HEAD_BAND`. Both head bands are needed for it; if
+    either is missing, the box width is the fallback, which is the previously
+    shipped arithmetic.
     """
     sx0, sy0, sx1, sy1 = source_box
     box_w, box_h = sx1 - sx0, sy1 - sy0
     cut_w, cut_h = cutout_size
 
-    if truncated:
-        scale = FIT_WIDTH * box_w / cut_w
-    else:
+    if not truncated:
         scale = min(FIT_WIDTH * box_w / cut_w, FIT_HEIGHT * box_h / cut_h)
+        size = (max(1, round(cut_w * scale)), max(1, round(cut_h * scale)))
+        return size, (sx0 + (box_w - size[0]) // 2, sy1 - size[1])
 
+    if source_head and reference_head:
+        source_width = source_head[1] - source_head[0]
+        reference_width = reference_head[1] - reference_head[0]
+        scale = source_width / reference_width
+        size = (max(1, round(cut_w * scale)), max(1, round(cut_h * scale)))
+        # Line the two heads up horizontally, rather than the two boxes.
+        reference_centre = (reference_head[0] + reference_head[1]) / 2 * scale
+        paste_x = round((source_head[0] + source_head[1]) / 2 - reference_centre)
+        return size, (paste_x, sy0)
+
+    scale = FIT_WIDTH * box_w / cut_w
     size = (max(1, round(cut_w * scale)), max(1, round(cut_h * scale)))
-    paste_x = sx0 + (box_w - size[0]) // 2
-    paste_y = sy0 if truncated else sy1 - size[1]
-    return size, (paste_x, paste_y)
+    return size, (sx0 + (box_w - size[0]) // 2, sy0)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -243,8 +291,18 @@ def main(argv: list[str] | None = None) -> int:
             (np.clip(reference_mask[ry0:ry1, rx0:rx1], 0, 1) * 255).astype("uint8")
         )
         truncated = is_truncated(reference_box, reference.height)
+        # Head bands are measured in each image's own coordinates; the
+        # reference's is rebased onto the cutout, which is what gets scaled.
+        source_head = head_band(source_mask, source_box)
+        reference_head = head_band(reference_mask, reference_box)
+        if reference_head is not None:
+            reference_head = (reference_head[0] - rx0, reference_head[1] - rx0)
         size, (paste_x, paste_y) = place_cutout(
-            source_box, (cutout.width, cutout.height), truncated=truncated
+            source_box,
+            (cutout.width, cutout.height),
+            truncated=truncated,
+            source_head=source_head,
+            reference_head=reference_head,
         )
         print(
             f"reference is {'a crop' if truncated else 'a whole figure'}; "
