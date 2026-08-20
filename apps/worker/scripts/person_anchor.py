@@ -57,6 +57,21 @@ FIT_WIDTH, FIT_HEIGHT = 0.90, 0.96
 #: because the composite covers most of it again.
 INPAINT_DILATION = 9
 
+#: How close to the reference photo's bottom edge the matte must reach before
+#: the subject counts as TRUNCATED — a crop of a person rather than a whole
+#: one. As a fraction of the reference's height.
+#:
+#: This decides which edge the cutout is aligned by, and getting it wrong is
+#: not a subtle quality loss. Bottom-aligning assumes the cutout's lowest
+#: pixels are the person's FEET. For a head-and-shoulders photo they are a
+#: crop edge across the chest, so the bust gets planted at the source person's
+#: feet and scaled to their width — measured 20 Aug 2026 on a full-body dance
+#: source, which anchored on a disembodied bust sitting on the road, and the
+#: renders duly carried a woman standing in the street for the whole video
+#: alongside the dancer. A headshot is the commonest thing a customer uploads,
+#: so this was the common case, not an edge case.
+REFERENCE_TRUNCATION_TOLERANCE = 0.02
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -136,6 +151,51 @@ def bbox_of(mask, min_area: float) -> tuple[int, int, int, int] | None:
     return x0, y0, x1, y1
 
 
+def is_truncated(box: tuple[int, int, int, int], height: int) -> bool:
+    """Does the reference's subject run off the bottom of their own photo?
+
+    If it does, the cutout's lowest row is a crop edge and not a pair of feet,
+    which is what decides how the cutout may be placed (see
+    `REFERENCE_TRUNCATION_TOLERANCE`).
+    """
+    return box[3] >= height - max(1, round(REFERENCE_TRUNCATION_TOLERANCE * height))
+
+
+def place_cutout(
+    source_box: tuple[int, int, int, int],
+    cutout_size: tuple[int, int],
+    *,
+    truncated: bool,
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    """How big the reference cutout should be, and where it goes.
+
+    Two cases, and they differ in which end of the person is trustworthy:
+
+    * A WHOLE reference figure shares its ground with the source person, so it
+      is fitted inside their box and bottom-aligned — their feet meet the same
+      floor.
+    * A TRUNCATED one (a headshot, a bust) has no feet to align. The only
+      correspondence left is across the shoulders, so it is scaled by WIDTH and
+      hung from the TOP of the source person's box, putting its head where the
+      head already is. Its body simply continues past the bottom of the box;
+      the control signal is what states the body's pose, and it does that for
+      every frame regardless.
+    """
+    sx0, sy0, sx1, sy1 = source_box
+    box_w, box_h = sx1 - sx0, sy1 - sy0
+    cut_w, cut_h = cutout_size
+
+    if truncated:
+        scale = FIT_WIDTH * box_w / cut_w
+    else:
+        scale = min(FIT_WIDTH * box_w / cut_w, FIT_HEIGHT * box_h / cut_h)
+
+    size = (max(1, round(cut_w * scale)), max(1, round(cut_h * scale)))
+    paste_x = sx0 + (box_w - size[0]) // 2
+    paste_y = sy0 if truncated else sy1 - size[1]
+    return size, (paste_x, paste_y)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     for path in (args.source, args.reference):
@@ -174,22 +234,26 @@ def main(argv: list[str] | None = None) -> int:
         inpainted = cv2.inpaint(frame_bgr, removal, 7, cv2.INPAINT_TELEA)
         canvas = Image.fromarray(cv2.cvtColor(inpainted, cv2.COLOR_BGR2RGB))
 
-        # The reference person, cut out and scaled INTO the source person's
-        # own box — bottom-aligned so their feet meet the same ground.
+        # The reference person, cut out and placed against the source person's
+        # own box. WHICH EDGE they are aligned by depends on whether the photo
+        # shows a whole person or a crop of one — see `place_cutout`.
         rx0, ry0, rx1, ry1 = reference_box
         cutout = reference.crop((rx0, ry0, rx1, ry1))
         alpha = Image.fromarray(
             (np.clip(reference_mask[ry0:ry1, rx0:rx1], 0, 1) * 255).astype("uint8")
         )
-        sx0, sy0, sx1, sy1 = source_box
-        box_w, box_h = sx1 - sx0, sy1 - sy0
-        scale = min(FIT_WIDTH * box_w / cutout.width, FIT_HEIGHT * box_h / cutout.height)
-        size = (max(1, round(cutout.width * scale)), max(1, round(cutout.height * scale)))
+        truncated = is_truncated(reference_box, reference.height)
+        size, (paste_x, paste_y) = place_cutout(
+            source_box, (cutout.width, cutout.height), truncated=truncated
+        )
+        print(
+            f"reference is {'a crop' if truncated else 'a whole figure'}; "
+            f"anchored by the {'head' if truncated else 'feet'}",
+            flush=True,
+        )
         cutout = cutout.resize(size, Image.LANCZOS)
         alpha = alpha.resize(size, Image.LANCZOS)
 
-        paste_x = sx0 + (box_w - size[0]) // 2
-        paste_y = sy1 - size[1]
         canvas.paste(cutout, (paste_x, paste_y), alpha)
 
         args.dest.parent.mkdir(parents=True, exist_ok=True)
