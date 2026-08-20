@@ -169,10 +169,12 @@ Two findings:
 2. **An appended ambience sentence does NOT help — it measured worse.** The
    obvious lever fails its A/B; do not ship it on vibes later.
 
-What actually works: dialogue owns the soundtrack. Director-lineage
-extensions plan speech and inherit the measured-clean speech results;
-standard extensions can carry sound in the user's own prompt (speech,
-humming) but ambience prose alone is not a fix. The structural fix is
+What actually works — MEASURED on the same failing shape: one spoken line
+in the extension prompt. The speech arm came back at -30.8 dB (vs the hiss
+arms' -45) with the requested line transcribed verbatim ("There we go, all
+clean."). Dialogue owns the soundtrack; ambience prose alone is not a fix.
+Director-lineage extensions get this for free (the continuation plans
+speech); standard extensions get it by writing a line into the prompt. The structural fix is
 audio-conditioned extensions (a2vid hearing the source's tail) — guided
 family, ~4x cost, a pricing decision in the same class as music-video's
 `audio_conditioning`.
