@@ -54,8 +54,6 @@ from worker.media.validate import (
     verify_output,
 )
 
-from worker.media.wan_animate import replace_person
-
 __all__ = [
     "BACKGROUND_ATTENTION",
     "DEFAULT_EDGE_HIGH",
@@ -70,7 +68,6 @@ __all__ = [
     "build_attention_mask",
     "build_hybrid_control",
     "build_identity_anchor",
-    "replace_person",
     "build_person_matte",
     "concat_segments",
     "crossfade_concat",

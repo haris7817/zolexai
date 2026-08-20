@@ -159,7 +159,6 @@ from worker.media import (
     normalize_clip,
     plan_segments,
     probe_media,
-    replace_person,
     verify_output,
 )
 
@@ -1496,53 +1495,6 @@ class LtxAdapter:
                         "whole video."
                     ),
                 )
-        # ── a different engine entirely, when a job asks for one ─────────
-        #
-        # `v2v_identity_provider` selects WHO does the replacement. The default
-        # is this adapter's own path. `wan_animate` hands the whole render to
-        # Wan2.2-Animate in replacement mode, which has two mechanisms LTX has
-        # no equivalent for: a pose skeleton (which cannot leak the source
-        # person's hair or clothing the way a canny edge map does) and a face
-        # encoder driven by the source's own face crops.
-        #
-        # It returns ONE finished clip rather than sections, and it goes
-        # through `_deliver_restyle` exactly as the chain's output does — so
-        # the source's audio is still attached once, the result is still the
-        # source's length, and the delivery frame rate is still the source's
-        # (Wan renders at 30fps regardless). Those promises are structural and
-        # do not depend on which engine drew the pictures.
-        #
-        # OFF unless a job asks. An unconfigured node refuses rather than
-        # silently serving the LTX path, because the two produce different
-        # videos and substituting one for the other is a lie about what the
-        # customer got.
-        provider = str(job.execution.get("v2v_identity_provider", "ltx")).strip().lower()
-        if identity and provider not in ("", "ltx"):
-            if provider != "wan_animate":
-                raise AdapterError(
-                    "This tool is temporarily unavailable.",
-                    internal_detail=f"unknown v2v_identity_provider {provider!r}",
-                    retriable=False,
-                )
-            await reporter.generating(20, "Replacing the person…")
-            rendered = await cancellable(
-                job,
-                replace_person(
-                    staged,
-                    reference,
-                    job.workspace / "wan-animate.mp4",
-                    width=grid[0],
-                    height=grid[1],
-                    prompt=job.prompt,
-                    timeout=float(job.execution.get("timeout_seconds", 5400)),
-                ),
-            )
-            # One section covering the whole source, so the planner asks for
-            # exactly the frames the delivery rate implies.
-            return await self._deliver_restyle(
-                job, reporter, [rendered], staged, source, target_seconds, target_seconds
-            )
-
         strength = job.execution_float("v2v_control_strength", _V2V_CONTROL_STRENGTH)
         lora_strength = job.execution_float("v2v_lora_strength", _V2V_LORA_STRENGTH)
         continuity = job.execution_float("v2v_continuity_strength", _V2V_CONTINUITY_STRENGTH)
