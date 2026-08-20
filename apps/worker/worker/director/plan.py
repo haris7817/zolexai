@@ -808,18 +808,66 @@ def _require_user_dialogue(plan: DirectorPlan, idea: str) -> None:
     This is Director mode's version of the platform rule that user text is
     never rewritten. The enhancer never paraphrases a prompt; the planner never
     paraphrases a line.
+
+    "Appear" allows one shape beyond a single event: a long quoted line SPLIT
+    across consecutive events of the same speaker. Pacing forces the split — a
+    forty-word monologue is several spoken events by the plan's own rules — and
+    demanding it fit one event made a verbatim, accent-perfect delivery
+    impossible to accept: three production jobs failed twelve planning attempts
+    on 20 Aug 2026 over one long Spanish line the planner had reproduced
+    word-for-word every time. The words must still survive in order,
+    uninterrupted, in one mouth; a paraphrase, an omission, or a line handed
+    mid-sentence to another character is still a refusal.
     """
     quotes = required_quotes(idea)
     if not quotes:
         return
-    spoken = [_normalise_line(event.dialogue) for event in plan.timeline if event.dialogue]
-    missing = [
-        quote
-        for quote in quotes
-        if _normalise_line(quote) not in spoken
-        and not any(_normalise_line(quote) in line for line in spoken)
-    ]
+    missing = [quote for quote in quotes if not _plan_speaks(plan, quote)]
     if missing:
         raise DirectorPlanError(
             [f'the plan dropped or rewrote the user\'s own line "{quote}"' for quote in missing]
         )
+
+
+def _plan_speaks(plan: DirectorPlan, quote: str) -> bool:
+    lines = [
+        (event.speaker, _normalise_line(event.dialogue))
+        for event in plan.timeline
+        if event.dialogue
+    ]
+    target = _normalise_line(quote)
+    if any(target == line or target in line for _, line in lines):
+        return True
+
+    words = _words_of(quote)
+    if not words:
+        return True
+    run: list[str] = []
+    run_speaker: object = object()  # never equal to a real speaker id
+    for speaker, line in lines:
+        if speaker != run_speaker:
+            run, run_speaker = [], speaker
+        run.extend(_words_of(line))
+        if _contains_run(run, words):
+            return True
+    return False
+
+
+def _words_of(text: str) -> list[str]:
+    """The comparison form for split-line matching: words only, in order.
+
+    Punctuation is dropped entirely because per-event normalisation already
+    strips TERMINAL punctuation — the interior ". " of a quote can never
+    survive a split at that exact sentence break, and words in order from one
+    mouth are what "the user's line was spoken" actually means."""
+    return re.findall(r"[\w']+", _normalise_line(text))
+
+
+def _contains_run(stream: list[str], words: list[str]) -> bool:
+    """True when `words` appears contiguously, in order, inside `stream`."""
+    if len(words) > len(stream):
+        return False
+    return any(
+        stream[offset : offset + len(words)] == words
+        for offset in range(len(stream) - len(words) + 1)
+    )

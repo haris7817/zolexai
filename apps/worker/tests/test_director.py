@@ -264,6 +264,78 @@ def test_the_users_own_line_is_never_trimmed_and_never_rewritten() -> None:
         parse_plan(raw_plan(timeline=events), idea=idea, duration_seconds=8.0, language="english")
 
 
+def _monologue_events(*lines: str, speakers: tuple[str, ...] | None = None) -> list[dict]:
+    owners = speakers or tuple("detective" for _ in lines)
+    # Six-second events: the split line is ~32 words, and a tighter grid
+    # would have the pacing trim delete dialogue BEFORE the verbatim check —
+    # a different rule than the one under test.
+    return [
+        {
+            "start": index * 6,
+            "end": index * 6 + 6,
+            "action": "He speaks to the camera",
+            "camera": "mid-shot",
+            "speaker": owner,
+            "dialogue": line,
+            "delivery": "warm",
+        }
+        for index, (line, owner) in enumerate(zip(lines, owners, strict=True))
+    ]
+
+
+#: The production idea that failed twelve planning attempts on 20 Aug 2026:
+#: the planner reproduced this line accent-for-accent every single time, split
+#: across consecutive events because pacing demands it — and the validator
+#: only accepted a single-event delivery.
+_LONG_SPANISH_IDEA = (
+    'Un hombre habla del reggaetón y dice: "El reggaetón de antes tenía más '
+    "calle, perreo y letras que se quedaban contigo. El de ahora tiene sonidos "
+    'más modernos y domina el mundo, pero dime tú: ¿cuál época fue mejor?"'
+)
+
+
+def test_a_long_quoted_line_may_be_split_across_one_speakers_events() -> None:
+    """Pacing splits a forty-word line into several events; the words survive
+    in order, in one mouth — that IS the user's line, spoken."""
+    events = _monologue_events(
+        "El reggaetón de antes tenía más calle, perreo y letras que se quedaban contigo.",
+        "El de ahora tiene sonidos más modernos y domina el mundo,",
+        "pero dime tú: ¿cuál época fue mejor?",
+    )
+    plan = parse_plan(
+        raw_plan(timeline=events),
+        idea=_LONG_SPANISH_IDEA, duration_seconds=18.0, language="auto",
+    )
+    assert len(plan.timeline) == 3
+
+
+def test_a_split_line_with_a_dropped_middle_is_still_a_rewrite() -> None:
+    events = _monologue_events(
+        "El reggaetón de antes tenía más calle, perreo y letras que se quedaban contigo.",
+        "pero dime tú: ¿cuál época fue mejor?",
+    )
+    with pytest.raises(DirectorPlanError, match="dropped or rewrote"):
+        parse_plan(
+            raw_plan(timeline=events),
+            idea=_LONG_SPANISH_IDEA, duration_seconds=18.0, language="auto",
+        )
+
+
+def test_a_quoted_line_handed_mid_sentence_to_another_speaker_is_refused() -> None:
+    """Half the user's line in someone else's mouth is not the user's line."""
+    events = _monologue_events(
+        "El reggaetón de antes tenía más calle, perreo y letras que se quedaban contigo.",
+        "El de ahora tiene sonidos más modernos y domina el mundo,",
+        "pero dime tú: ¿cuál época fue mejor?",
+        speakers=("detective", "detective", "chief"),
+    )
+    with pytest.raises(DirectorPlanError, match="dropped or rewrote"):
+        parse_plan(
+            raw_plan(timeline=events),
+            idea=_LONG_SPANISH_IDEA, duration_seconds=18.0, language="auto",
+        )
+
+
 # ── Compilation ──────────────────────────────────────────────────────────
 
 
