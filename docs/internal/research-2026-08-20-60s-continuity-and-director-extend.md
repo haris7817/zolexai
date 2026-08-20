@@ -143,3 +143,36 @@ the set the vendor documents as validated for generated speech.
   completion, deliberately not built (protocol + storage change).
 - Vision/presence probe counts what the camera shows — close-ups read as
   fewer people; sustained runs, not single frames, are the signal.
+
+
+## Post-deploy: the "suuu" hiss on quiet standard extensions (measured, no fix shipped)
+
+Customer report, 20 Aug: a +10s standard extension of a quiet standard I2V
+came back with hiss ("suuu") instead of sound. Reproduced and measured on the
+box — 1 source + 2 bare-prompt extensions + 2 extensions with an appended
+positive soundscape sentence, extension segments analysed (spectral flatness,
+centroid, volume, whisper):
+
+    source's own audio      flatness 0.49   1884 Hz   -36.4 dB   (decent)
+    extension, bare  x2     0.53 / 0.56     ~2040 Hz  -45 dB     (one = pure
+                                                        phoneme garbage in
+                                                        whisper - the "suuu")
+    extension + line x2     0.62 / 0.57     ~2230 Hz  -45 dB     (WORSE)
+
+Two findings:
+
+1. **Extension-pass audio of speechless scenes is systematically thinner and
+   whiter than the source pass's own audio** — every extension segment, both
+   arms. This is the officially documented limitation ("when generating audio
+   without speech, the audio may be of lower quality") amplified by the
+   extension pass starting its soundtrack cold.
+2. **An appended ambience sentence does NOT help — it measured worse.** The
+   obvious lever fails its A/B; do not ship it on vibes later.
+
+What actually works: dialogue owns the soundtrack. Director-lineage
+extensions plan speech and inherit the measured-clean speech results;
+standard extensions can carry sound in the user's own prompt (speech,
+humming) but ambience prose alone is not a fix. The structural fix is
+audio-conditioned extensions (a2vid hearing the source's tail) — guided
+family, ~4x cost, a pricing decision in the same class as music-video's
+`audio_conditioning`.
