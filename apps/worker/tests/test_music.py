@@ -41,6 +41,7 @@ from worker.music import (
     review_lyrics,
     rhyme_key,
     salient_details,
+    vocal_intent,
     write_lyrics,
 )
 
@@ -328,6 +329,59 @@ def test_an_instrumental_plan_asks_for_no_words() -> None:
     assert polish_lyrics("[verse]\nwords that should not be here", plan) == ""
 
 
+# ── Who decides whether anyone sings ─────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        # The reported failure: a genre word chose silence over a request for
+        # a voice that is sitting in the same sentence.
+        ("a lo-fi pop song with soft female vocals about rain", True),
+        ("an ambient pop ballad with a female singer", True),
+        ("a cinematic song with instrumental verses and a big sung chorus", True),
+        # The negation is spent on the intro; the request survives it.
+        ("a dreamy song, no vocals in the intro, then she sings", True),
+        # Asked for plainly, and the only way the product offers.
+        ("an instrumental piano piece", False),
+        ("ambient music for sleeping, no vocals", False),
+        ("a beat with no lyrics", False),
+        # Said nothing either way: the genre still decides.
+        ("a calm lo-fi study beat", None),
+        ("an upbeat pop song about summer in the city", None),
+    ],
+)
+def test_a_stated_vocal_request_is_read_from_the_prompt(
+    prompt: str, expected: bool | None
+) -> None:
+    assert vocal_intent(prompt) is expected
+
+
+def test_a_wordless_genre_asked_for_vocals_gets_somewhere_to_put_them() -> None:
+    """The trap, closed at both ends.
+
+    `ambient` is wordless AND its skeleton is intro/movement/outro — not one
+    of those sections carries words. Flipping only the flag would produce a
+    plan that claims to have lyrics and has nowhere to sing them, so the plan
+    borrows a worded shape while keeping its own genre name.
+    """
+    silent = plan_song(180, genre="ambient")
+    singing = plan_song(180, genre="ambient", vocals=True)
+
+    assert silent.has_lyrics is False
+    assert singing.has_lyrics is True
+    assert singing.genre == "ambient", "the music is still ambient"
+    assert "verse" in singing.outline and "chorus" in singing.outline
+    assert singing.lines_per_section >= 2
+
+
+def test_a_stated_instrumental_silences_a_worded_genre() -> None:
+    """It has to work in both directions, or the prompt is not the channel."""
+    plan = plan_song(180, genre="pop", vocals=False)
+    assert plan.has_lyrics is False
+    assert polish_lyrics("[verse]\nwords that should not be here", plan) == ""
+
+
 @pytest.mark.parametrize("seconds", [60, 120, 180, 240, 300])
 def test_a_plan_describes_exactly_the_length_that_was_asked_for(seconds: int) -> None:
     plan = plan_song(seconds, genre="pop")
@@ -499,16 +553,20 @@ async def test_revision_stops_after_a_bounded_number_of_rounds() -> None:
 
 @pytest.mark.parametrize(
     ("seconds", "expected"),
-    [(60, 4), (120, 9), (180, 13), (240, 18), (300, 23)],
+    [(60, 10), (120, 20), (180, 30), (240, 40), (300, 50)],
 )
 def test_the_line_budget_scales_with_the_songs_length(
     seconds: int, expected: int
 ) -> None:
-    """Measured on the GPU, and a band bounded on BOTH sides: eight lines
-    inside a 60s song came back with the verses silently dropped (too dense),
-    while five lines across 120s produced an 82-second instrumental intro
-    (too sparse). Nine lines at 120s sang everything with vocals from 30s —
-    13s/line is the densest point proven safe, and these budgets follow."""
+    """Measured on the GPU, and re-measured when the model changed under it.
+
+    The previous budgets (13s/line: 4 lines at 60s, 23 at 300s) came from an
+    RTX 5090 and an older ACE-Step checkpoint. Against the build in production
+    that density is where coverage falls apart — a three-minute song sang for
+    52.8% of its length with a 43-second hole in the middle and nothing for the
+    first thirty seconds, measured 2026-08-21 from a separated vocal stem across
+    twelve cells. See `_SECONDS_PER_LINE` for the whole matrix.
+    """
     assert line_budget(seconds) == expected
 
 
@@ -519,11 +577,14 @@ def test_a_short_song_is_planned_for_fewer_words_than_a_long_one() -> None:
 
 
 def test_an_oversized_sheet_is_measured_rather_than_guessed_at() -> None:
-    eight_lines = "[Verse 1]\na\nb\n[Chorus]\nc\nd\n[Verse 2]\ne\nf\n[Chorus]\ng\nh\n"
-    tight = check_lyric_fit(eight_lines, 60)
-    roomy = check_lyric_fit(eight_lines, 300)
+    sixteen_lines = (
+        "[Verse 1]\na\nb\nc\nd\n[Chorus]\ne\nf\ng\nh\n"
+        "[Verse 2]\ni\nj\nk\nl\n[Chorus]\nm\nn\no\np\n"
+    )
+    tight = check_lyric_fit(sixteen_lines, 60)
+    roomy = check_lyric_fit(sixteen_lines, 300)
 
-    assert tight.lines == 8
+    assert tight.lines == 16
     assert tight.fits is False and tight.overflow > 0
     assert roomy.fits is True
 
@@ -533,15 +594,15 @@ def test_the_quality_pass_blocks_a_draft_that_will_not_fit() -> None:
     song delivered without its verses and nobody told."""
     plan = plan_song(60, genre="pop")
     review = review_lyrics(
-        "[Verse 1]\nline one here\nline two here\n"
-        "[Chorus]\nline three here\nline four here\n"
-        "[Verse 2]\nline five here\nline six here\n"
-        "[Chorus]\nline seven here\nline eight here\n",
+        "[Verse 1]\nline one here\nline two here\nline three here\nline four here\n"
+        "[Chorus]\nline five here\nline six here\nline seven here\nline eight here\n"
+        "[Verse 2]\nline nine here\nline ten here\nline eleven here\nline twelve here\n"
+        "[Chorus]\nline a here\nline b here\nline c here\nline d here\n",
         plan,
     )
 
     density = [issue for issue in review.issues if issue.kind == "density"]
-    assert density, "an 8-line sheet must not pass for a 60-second song"
+    assert density, "a 16-line sheet must not pass for a 60-second song"
     assert "drop" in density[0].detail
     assert review.acceptable is False
 

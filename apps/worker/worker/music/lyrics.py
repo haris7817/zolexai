@@ -103,6 +103,55 @@ _GENRE_WORDS: dict[str, str] = {
     "pop": "pop",
 }
 
+#: Phrases that ask for an instrumental in so many words.
+#:
+#: The customer has no other way to ask. There is no instrumental toggle in the
+#: product — the API takes no such field and the panel offers none — so the
+#: prompt is the whole channel, and these are it.
+_INSTRUMENTAL_PHRASES = (
+    "instrumental", "no vocals", "no vocal", "without vocals", "without vocal",
+    "no singing", "no singer", "no lyrics", "no words", "vocal free",
+)
+
+#: Words that ask for a voice. Deliberately high-precision — every one of these
+#: names a person singing, and none of them is a production or structure term.
+#: "voice", "hook" and "verse" are all missing on purpose: an instrumental has
+#: verses and hooks too, and "the voice of the city" is a lyric, not a request.
+_VOCAL_WORDS = (
+    "vocal", "vocals", "vocalist", "vocalists", "sing", "sings", "singing",
+    "sung", "singer", "singers", "lyric", "lyrics", "acapella", "choir",
+    "harmonies",
+)
+
+
+def vocal_intent(prompt: str) -> bool | None:
+    """Did the customer ASK for a voice, ask for none, or not say?
+
+    Genre alone cannot answer this and must stop trying. "A lo-fi pop song with
+    soft female vocals about rain" detects as `ambient`, `ambient` is wordless,
+    and the track came back an instrumental — with the words "female vocals"
+    sitting in the request. Reproduced deterministically 2026-08-21; the same
+    trap fires on "instrumental verses and a big sung chorus" and on "no vocals
+    in the intro, then she sings".
+
+    Returns True for a stated vocal request, False for a stated instrumental
+    one, and None when the prompt says neither — only then does the genre's own
+    default decide.
+
+    A request wins over a refusal, because the refusals are read out of the
+    text FIRST and the vocal words are looked for in what is left. That is what
+    makes "no vocals in the intro, then she sings" a song with words: the
+    phrase that would have silenced it is spent on the intro.
+    """
+    text = re.sub(r"\s+", " ", " " + re.sub(r"[^a-z' ]+", " ", prompt.lower()) + " ")
+    instrumental = any(f" {phrase} " in text for phrase in _INSTRUMENTAL_PHRASES)
+    remainder = text
+    for phrase in _INSTRUMENTAL_PHRASES:
+        remainder = remainder.replace(f" {phrase} ", " ")
+    if any(f" {word} " in remainder for word in _VOCAL_WORDS):
+        return True
+    return False if instrumental else None
+
 
 @dataclass(frozen=True)
 class Section:
@@ -128,20 +177,46 @@ class Section:
 #: intros, instrumental breaks and repeats.
 #:
 #: This is a MEASUREMENT, not a style preference, and it is the most important
-#: number in this module — and it is a BAND, bounded on both sides:
+#: number in this module — and it is a BAND, bounded on both sides. A model
+#: given more words than the clock can hold does not compress them; it discards
+#: them without saying which. Given too few, it pads.
 #:
-#:   * 8 lines at  60s (7.5s/line) → the model sang only the chorus and
-#:     silently dropped both verses (RTX 5090, 2026-08-13);
-#:   * 5 lines at 120s (24s/line)  → an 82-second instrumental intro plus
-#:     wordless padding (same session);
-#:   * 9 lines at 120s (13.3s/line) → vocals at 30s, every line sung;
-#:   * 12 lines at 240s (20s/line)  → every line sung, real arrangement.
+#: **Superseded, and kept because it says what changed.** The band was measured
+#: on an RTX 5090 in Aug 2026 — 8 lines at 60s dropped both verses, 5 lines at
+#: 120s produced an 82-second instrumental intro, 9 lines at 120s sang
+#: everything — and 13s/line was the densest point that survived it. None of
+#: those cells describes the model in production now, and the one below that
+#: matters most inverted: 8 lines inside a 60-second song is comfortably the
+#: BEST cell in the new matrix rather than one that loses its verses.
 #:
-#: A model given more words than the clock can hold does not compress them; it
-#: discards them without saying which. Given too few, it pads with instrumental
-#: — which reads to a customer as "lyrics not present". 13s/line is the
-#: densest point proven safe, so the budget it produces is a true ceiling.
-_SECONDS_PER_LINE = 13.0
+#: What the old measurement also got wrong is what "padding" is. It is not
+#: instrumental. See below.
+#:
+#: **Re-measured 2026-08-21 against the build actually in production**
+#: (`acestep-v15-xl-turbo`; everything above was an RTX 5090 and an older
+#: checkpoint). Twelve cells, same prompt and seed, sheets written by the
+#: production writer, vocal presence measured from a Demucs stem rather than
+#: from a transcriber:
+#:
+#:   | song | ~16s/line (shipped) | ~8s/line | ~5s/line | ~3.5s/line |
+#:   |------|--------------------:|---------:|---------:|-----------:|
+#:   |  60s | 83.3%               | **86.7%**| 71.7%    | 78.3%      |
+#:   | 180s | **52.8%**  (43s hole, vocals from 30s) | **73.3%** | 77.8% | 97.8% |
+#:   | 300s | 87.7%               | **78.7%**| 89.0%    | 95.0%      |
+#:
+#: The shipped density is where the floor falls out: the worst cell in the whole
+#: matrix is 180s at 16s/line — half the song wordless, a 43-second hole in the
+#: middle, and nothing sung for the first thirty seconds. It is also wildly
+#: variable, which is what "SOMETIMES only a beat" means: the same setting gave
+#: 52.8% at 180s and 87.7% at 300s.
+#:
+#: And the padding is not silence. Transcribing the shipped-density sheets shows
+#: the model vamping — "City summer night" six times, "oh-oh ooh-oh-oh" — once
+#: the words run out. Demucs hears a voice; a customer hears the lyrics stop.
+#: That is why 8s/line is the target below rather than 3.5: denser sheets keep
+#: raising coverage, but past ~8s/line they start filling the intros and breaks
+#: a song is supposed to have.
+_SECONDS_PER_LINE = 6.0
 
 
 def line_budget(total_seconds: float, seconds_per_line: float | None = None) -> int:
@@ -158,11 +233,17 @@ def line_budget(total_seconds: float, seconds_per_line: float | None = None) -> 
 #: Distinct from `_SECONDS_PER_LINE` above, and both are needed. That one is the
 #: ceiling — the densest sheet the model will sing without silently dropping
 #: lines. This one is the target, and it exists because the band is bounded on
-#: BOTH sides: at 120s, 9 lines sang everything, and 5 lines produced an
-#: 82-second instrumental intro. A writer told only "at most 9" writes 6 and
-#: the song is half wordless, which reads to a customer as "lyrics not present"
-#: just as surely as no lyrics at all.
-_TARGET_SECONDS_PER_LINE = 16.0
+#: BOTH sides: a writer told only "at most N" writes half of N and the song is
+#: half wordless, which reads to a customer as "lyrics not present" just as
+#: surely as no lyrics at all.
+#:
+#: 8s/line is the best single value in the 21 Aug matrix (see
+#: `_SECONDS_PER_LINE`): it is the strongest cell at 60s, it lifts the 180s case
+#: off the floor from 52.8% to 73.3%, and it holds 78.7% at 300s — all without
+#: the wall-to-wall coverage the densest sheets produce. That last part is
+#: deliberate: a song is allowed an intro, a break and an outro, and 3.5s/line
+#: reaches 97.8% by taking them away.
+_TARGET_SECONDS_PER_LINE = 8.0
 
 #: Fewer lines than this is a loop, not a song, whatever the duration.
 _MINIMUM_LINES = 4
@@ -215,9 +296,19 @@ class SongPlan:
     total_seconds: float
     sections: list[Section]
 
+    wordless: bool = False
+    """Whether this song has no sung words at all.
+
+    Its own field rather than a lookup of `genre`, because the two questions
+    came apart: a customer who writes "soft female vocals" over a genre whose
+    DEFAULT is wordless is asking for a voice, and a genre table is not
+    entitled to overrule them. `plan_song` decides it once, from the genre and
+    from `vocal_intent`, and everything downstream reads it here.
+    """
+
     @property
     def has_lyrics(self) -> bool:
-        return self.genre not in _WORDLESS and any(s.carries_words for s in self.sections)
+        return not self.wordless and any(s.carries_words for s in self.sections)
 
     @property
     def line_budget(self) -> int:
@@ -253,18 +344,33 @@ def detect_genre(prompt: str) -> str:
     return _DEFAULT_GENRE
 
 
-def plan_song(total_seconds: float, *, genre: str | None = None, prompt: str = "") -> SongPlan:
+def plan_song(
+    total_seconds: float,
+    *,
+    genre: str | None = None,
+    prompt: str = "",
+    vocals: bool | None = None,
+) -> SongPlan:
     """A section-by-section skeleton for a song of this length and genre.
 
     The cycle repeats until the length is covered, then every section is
     scaled by one factor so the plan sums to exactly the requested duration —
     the user picked five minutes and five minutes is what the plan describes.
+
+    `vocals` overrules the genre's own default on whether anyone sings: True
+    when the customer asked for a voice, False when they asked for none, None
+    when they said nothing and the genre decides. A wordless genre asked for
+    vocals also needs somewhere to PUT them — `ambient`'s skeleton is intro,
+    movements and outro, and not one of those sections carries words — so it
+    borrows the default genre's shape while keeping its own name.
     """
     if total_seconds <= 0:
         raise ValueError("total_seconds must be positive")
 
     resolved = (genre or detect_genre(prompt) or _DEFAULT_GENRE).lower()
-    opening, cycle, late, closing = _STRUCTURES.get(resolved, _STRUCTURES[_DEFAULT_GENRE])
+    wordless = resolved in _WORDLESS if vocals is None else not vocals
+    skeleton = _DEFAULT_GENRE if (not wordless and resolved in _WORDLESS) else resolved
+    opening, cycle, late, closing = _STRUCTURES.get(skeleton, _STRUCTURES[_DEFAULT_GENRE])
 
     def length(kinds: list[str]) -> float:
         return sum(_SECTION_SECONDS.get(kind, 20.0) for kind in kinds)
@@ -298,9 +404,20 @@ def plan_song(total_seconds: float, *, genre: str | None = None, prompt: str = "
             "genre": resolved,
             "total_seconds": round(total_seconds, 1),
             "sections": len(sections),
+            # A wordless plan is how a track ends up with no vocals at all, so
+            # the decision and its source are logged rather than inferred later
+            # from a silent song.
+            "wordless": wordless,
+            "vocals_requested": vocals,
+            "skeleton": skeleton,
         },
     )
-    return SongPlan(genre=resolved, total_seconds=total_seconds, sections=sections)
+    return SongPlan(
+        genre=resolved,
+        total_seconds=total_seconds,
+        sections=sections,
+        wordless=wordless,
+    )
 
 
 # ── The brief: what must survive whatever happens to the words ───────────

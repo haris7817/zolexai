@@ -77,6 +77,7 @@ from worker.music import (
     plan_song,
     resolve_language,
     singable_details,
+    vocal_intent,
     write_lyrics,
 )
 from worker.music.fallback import is_available
@@ -156,7 +157,16 @@ class MusicAdapter:
         language = self._language_for(job)
         if language is not None:
             brief = dataclasses.replace(brief, language=language.code)
-        plan = plan_song(total_seconds, genre=brief.genre)
+        # Whether anyone sings is the customer's decision, not the genre
+        # table's. `detect_genre` reads "a lo-fi pop song with soft female
+        # vocals" as `ambient`, `ambient` is wordless, and the track came back
+        # an instrumental with the words "female vocals" still sitting in the
+        # request — the "beat but no lyrics" complaint, reproduced on demand.
+        # The prompt is also the ONLY way to ask for an instrumental: there is
+        # no such field on the API and no toggle in the panel.
+        plan = plan_song(
+            total_seconds, genre=brief.genre, vocals=vocal_intent(job.prompt)
+        )
         logger.info(
             "music_planned",
             extra={
@@ -165,6 +175,11 @@ class MusicAdapter:
                 "total_seconds": round(total_seconds, 1),
                 "line_budget": plan.line_budget,
                 "outline": plan.outline,
+                # A wordless plan produces a track with no vocals in it. That
+                # is a legitimate answer to "an instrumental piano piece" and a
+                # bug in answer to anything else, and the two are told apart
+                # here or not at all.
+                "wordless": plan.wordless,
                 # The selection, and what it became. Both, because the whole
                 # failure this replaced was a value that looked present at
                 # every stage and meant nothing at the last one.
@@ -371,11 +386,29 @@ class MusicAdapter:
             ) from exc
 
         if written is None:
-            # Only two ways here: the plan is wordless (ambient/instrumental
-            # genres) or the writer is deliberately disabled. Returning None
-            # sends the provider an empty sheet, which it treats as a request
-            # for an instrumental — never as an invitation to write its own
-            # words. Verified on the GPU, 2026-08-16.
+            # Only two ways here: the plan is wordless or the writer is
+            # deliberately disabled. Returning None sends the provider an empty
+            # sheet, which it treats as a request for an instrumental — never
+            # as an invitation to write its own words. Verified on the GPU,
+            # 2026-08-16.
+            #
+            # Said out loud, because this is the exact line a "beat with no
+            # lyrics" complaint has to be traced back to, and a silent return
+            # makes that trace impossible. `plan_song` has already logged which
+            # of the two it was and what the prompt asked for.
+            logger.info(
+                "music_instrumental_selected",
+                extra={
+                    "workflow_id": job.workflow_id,
+                    "wordless_plan": plan.wordless,
+                    "genre": plan.genre,
+                    "reason": (
+                        "the plan carries no sung sections"
+                        if plan.wordless
+                        else "the lyrics writer is disabled"
+                    ),
+                },
+            )
             return None
 
         text, review = written

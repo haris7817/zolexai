@@ -391,16 +391,21 @@ class WorkerSettings(BaseSettings):
     acestep_poll_seconds: float = 1.0
     """How often to ask whether the task is done."""
 
-    music_seconds_per_line: float = 13.0
+    music_seconds_per_line: float = 6.0
     """
-    How much song one line of lyrics needs.
+    How much song one line of lyrics needs — the CEILING on a sheet's size.
 
-    Measured on the GPU (2026-08-13 and 2026-08-16) and load-bearing in BOTH
-    directions: eight lines inside a 60-second song sang only the chorus and
-    silently dropped both verses, while five lines across 120 seconds produced
-    an 82-second instrumental intro. Nine lines at 120s sang everything with
-    vocals from 30s — so 13s/line is the densest point proven safe. See
-    `worker/music/lyrics.py:line_budget`.
+    Re-measured 2026-08-21 against the ACE-Step build actually in production,
+    twelve cells across three durations and four densities, vocal presence read
+    from a separated stem rather than from a transcriber. The previous 13.0 came
+    from an RTX 5090 and an older checkpoint, and against this one it is where
+    coverage falls apart: a three-minute song at that density sang for 52.8% of
+    its length, with a 43-second hole in the middle and nothing at all for the
+    first thirty seconds.
+
+    This is the ceiling; `_TARGET_SECONDS_PER_LINE` in `worker/music/lyrics.py`
+    is the number a writer is actually told to hit, and that file carries the
+    full matrix.
     """
 
     music_lyrics_writer: str = "cerebras,template"
