@@ -42,7 +42,11 @@ from tests.conftest import (
     staged_input,
     value_of,
 )
-from worker.adapters.ltx import _AUDIO_WINDOW_PAD_SECONDS, LtxAdapter
+from worker.adapters.ltx import (
+    _AUDIO_PASS_SECONDS,
+    _AUDIO_WINDOW_PAD_SECONDS,
+    LtxAdapter,
+)
 from worker.core.config import settings
 from worker.media import probe_media
 
@@ -298,8 +302,37 @@ def test_the_audio_pass_ceiling_is_not_the_distilled_tiers(workspace: Path) -> N
     adapter = LtxAdapter()
     job = make_job(workspace, workflow_id="music-video", execution={"runtime": "ltx"})
 
-    assert adapter._audio_pass_seconds(job) == 20.0
+    # 481 frames at 24fps. Stated as the landing's own duration rather than a
+    # round 20.0 so the planner's nominal window IS a measured count.
+    assert adapter._audio_pass_seconds(job) == pytest.approx(481 / 24.0)
     assert adapter._audio_pass_seconds(job) < adapter._per_pass_seconds(job, (1024, 576))
+
+
+def test_no_pass_can_reach_the_audio_decoder_at_an_unmeasured_count() -> None:
+    """The defect that made this tier unshippable, as arithmetic.
+
+    `_A2VID` had no landing table, so any 8k+1 count could reach its decoder.
+    A real 60-second job planned 474/477/430/59 frames and its third section
+    died in the video VAE. The sweep behind the table found the failing set is
+    non-monotonic — 289, 337, 361, 409 and 457 all crash while 241, 385, 433,
+    481 do not — so conforming to the lattice proves nothing on this path.
+    """
+    from worker.adapters.ltx import _A2VID, conforming_frames
+
+    measured_bad = (289, 337, 361, 409, 457)
+    assert _A2VID.measured_landings, "an empty table lets every count through"
+    assert not set(_A2VID.measured_landings) & set(measured_bad)
+
+    # Every count the planner can ask for, at every pass length it can plan.
+    for requested in range(1, int(_AUDIO_PASS_SECONDS * 24) + 1):
+        conforming = conforming_frames(requested)
+        landing = next(
+            (count for count in _A2VID.measured_landings if count >= conforming),
+            None,
+        )
+        assert landing is not None, requested
+        assert landing not in measured_bad
+        assert landing >= requested, "a pass may never be shortened to fit a table"
 
 
 def test_a_workflow_can_lower_the_audio_ceiling_but_not_raise_it_past_the_brake(

@@ -20,6 +20,8 @@ Anything stronger would be a claim the implementation does not support.
 
 from __future__ import annotations
 
+import math
+
 from worker.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,30 +56,62 @@ def plan_musical_boundaries(
     back to even windows, which is the correct answer rather than a failure.
 
     Every returned window is at most `per_pass_seconds` long, by construction:
-    candidates are only ever taken from *before* the nominal boundary.
+    candidates are only ever taken from *before* a nominal boundary that is
+    itself never more than one pass past where the previous cut landed.
+
+    **The pass count is decided first, and every window is then near the same
+    length.** Filling `per_pass_seconds` greedily and letting whatever is left
+    be the final section produced slivers on real tracks, measured 2026-08-21:
+    a 60.02-second track at a 20s ceiling planned 19.77 / 19.89 / 17.90 /
+    **2.46**, and a 300.04-second track at a 60s ceiling planned five full
+    windows and then **0.18 seconds**. The count is the same either way — that
+    is set by the ceiling — but a 0.18-second section costs the same 22B
+    transformer load as a sixty-second one, and delivers four frames for it.
+
+    `plan_segments` already avoids this for even windows and says why. This is
+    the same argument for the case where the cuts come from the music: nominal
+    cuts at `total · k / count`, each pulled back to an onset within a bounded
+    tolerance. A track with no usable onsets degrades to exactly `plan_segments`'
+    answer, because it picks the count from the same two numbers.
     """
     if total_seconds <= per_pass_seconds:
         return []
 
-    pull = max(0.0, min(max_pull_fraction, 0.5)) * per_pass_seconds
+    # The same arithmetic `plan_segments` uses, deliberately: cuts on the music
+    # are a preference about WHERE a seam lands, never a reason to pay for a
+    # section the even plan would not have needed.
+    count = math.ceil(total_seconds / per_pass_seconds - 1e-9)
+    nominal = total_seconds / count
+    pull = max(0.0, min(max_pull_fraction, 0.5)) * nominal
     minimum = _minimum_window(per_pass_seconds)
     boundaries: list[float] = []
     position = 0.0
 
-    while total_seconds - position > per_pass_seconds:
-        # `latest` is never past the nominal boundary, which is the invariant
-        # that matters: every window this produces is at most one pass long,
-        # so a timing preference can never hand the GPU an oversized render.
-        latest = position + per_pass_seconds
-        earliest = max(position + minimum, latest - pull)
-
-        # A cut that leaves an unusable sliver at the end is worse than one
-        # slightly early, so pull it back when there is room to.
-        if total_seconds - latest < minimum and total_seconds - minimum >= earliest:
-            latest = total_seconds - minimum
+    for index in range(1, count):
+        # `latest` is never past this cut's nominal position and never more
+        # than one pass after the previous cut, which together are the
+        # invariant that matters: no window this produces is longer than one
+        # pass, so a timing preference can never hand the GPU an oversized
+        # render.
+        latest = min(total_seconds * index / count, position + per_pass_seconds)
+        # …and never so EARLY that what is left cannot fit in the passes that
+        # remain. Without this the deficit from each backward pull has nowhere
+        # to go but the final window, which then quietly exceeds the ceiling —
+        # the exact oversized request the ceiling exists to prevent. A track
+        # that fills its passes exactly has no slack and gets no pull, which is
+        # the honest answer: moving a cut there would mean buying a pass.
+        earliest = min(
+            latest,
+            max(
+                position + minimum,
+                latest - pull,
+                total_seconds - per_pass_seconds * (count - index),
+            ),
+        )
 
         # The LAST onset in the window keeps sections as long as possible, so
-        # the pass count stays near the minimum the ceiling allows.
+        # a cut is pulled back to the music rather than dragged to the front of
+        # its own tolerance.
         candidates = [time for time in onsets if earliest <= time <= latest]
         boundaries.append(max(candidates) if candidates else latest)
         position = boundaries[-1]

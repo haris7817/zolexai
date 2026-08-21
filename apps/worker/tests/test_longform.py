@@ -12,6 +12,7 @@ pass to the next — ffmpeg is used and the test skips without it.
 from __future__ import annotations
 
 import asyncio
+import math
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,7 @@ from worker.longform import (
     plan_section_prompts,
     render_chain,
 )
-from worker.longform.chain import _plan
+from worker.longform.chain import plan_chain_segments as _plan
 from worker.media import audio_onsets, detect_onsets
 
 # ── Progress: forwards, always ───────────────────────────────────────────
@@ -382,6 +383,41 @@ def test_a_track_with_no_detectable_events_falls_back_to_even_windows() -> None:
         for start, end in zip([0.0, *boundaries], [*boundaries, 120.0], strict=False)
     ]
     assert all(width <= 30 + 1e-6 for width in windows)
+
+
+@pytest.mark.parametrize(
+    ("total", "ceiling"),
+    [
+        # The measured cases: an MP3 probes a hair over its nominal length, and
+        # greedily filling the ceiling put the leftover in a section of its own.
+        (60.024, 20.0),
+        (300.042, 60.0),
+        (300.042, 20.0),
+        (73.0, 30.0),
+    ],
+)
+def test_cut_points_never_leave_a_sliver_section(total: float, ceiling: float) -> None:
+    """No window may be a fraction of the others.
+
+    A pass costs a 22B transformer loaded from host RAM before it draws its
+    first frame, so a 0.18-second section is a full pass spent on four frames.
+    Greedy filling produced exactly that on both measured tracks; nominal cuts
+    with a bounded pull cannot, because the count is chosen before the cuts
+    are placed and every cut lands at or before its nominal position.
+    """
+    onsets = [value * 0.517 for value in range(1, int(total / 0.517) + 1)]
+    boundaries = plan_musical_boundaries(
+        total, per_pass_seconds=ceiling, onsets=onsets
+    )
+    cuts = [0.0, *boundaries, total]
+    windows = [end - start for start, end in zip(cuts, cuts[1:], strict=False)]
+
+    assert len(windows) == math.ceil(total / ceiling - 1e-9), (
+        "cutting on the music must not buy a pass the even plan would not have"
+    )
+    assert min(windows) >= 0.5 * max(windows), windows
+    assert all(width <= ceiling + 1e-6 for width in windows)
+    assert sum(windows) == pytest.approx(total)
 
 
 def test_onset_detection_finds_nothing_in_a_flat_signal() -> None:

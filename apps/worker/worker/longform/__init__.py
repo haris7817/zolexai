@@ -16,7 +16,12 @@ text-to-video and image-to-video all run the same code; they differ only in
 what conditions the first pass and what happens to the parts afterwards.
 """
 
-from worker.longform.chain import ChainStep, RenderStep, render_chain
+from worker.longform.chain import (
+    ChainStep,
+    RenderStep,
+    plan_chain_segments,
+    render_chain,
+)
 from worker.longform.enhance import structure_prompt
 from worker.longform.progress import (
     GENERATE_FROM,
@@ -34,6 +39,7 @@ __all__ = [
     "RenderStep",
     "StageReporter",
     "band_for",
+    "plan_chain_segments",
     "plan_musical_boundaries",
     "plan_section_prompts",
     "render_chain",

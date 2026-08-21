@@ -124,7 +124,7 @@ async def render_chain(
     A length within one pass costs no chaining machinery at all: one render, no
     frame extraction, no section counter, no concat.
     """
-    segments = _plan(total_seconds, per_pass_seconds, boundaries)
+    segments = plan_chain_segments(total_seconds, per_pass_seconds, boundaries)
     total = len(segments)
     logger.info(
         "longform_plan",
@@ -173,8 +173,10 @@ async def render_chain(
     return rendered
 
 
-def _plan(
-    total_seconds: float, per_pass_seconds: float, boundaries: list[float] | None
+def plan_chain_segments(
+    total_seconds: float,
+    per_pass_seconds: float,
+    boundaries: list[float] | None = None,
 ) -> list[Segment]:
     """Even windows, or the caller's own cut points when it has better ones.
 
@@ -182,6 +184,14 @@ def _plan(
     at an arbitrary multiple of the pass ceiling. `boundaries` lets it say so;
     they are still validated against the ceiling here, so a timing layer can
     never widen a pass past what the GPU survives.
+
+    **Public because delivery has to agree with generation.** A workflow that
+    lays ONE continuous soundtrack over separately generated sections has to cut
+    each section at exactly the window it was rendered against, and the only way
+    to be certain of that is to ask the same function the chain asked.
+    Re-deriving the windows from `plan_segments` alone agrees only while
+    `boundaries` is empty; the moment a caller supplies cut points it returns
+    evenly spaced windows the chain never used, and the mismatch is silent.
     """
     if not boundaries:
         return plan_segments(total_seconds, max_segment_seconds=per_pass_seconds)

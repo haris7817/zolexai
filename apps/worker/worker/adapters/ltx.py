@@ -130,6 +130,7 @@ from worker.longform import (
     ChainStep,
     RenderStep,
     StageReporter,
+    plan_chain_segments,
     plan_musical_boundaries,
     plan_section_prompts,
     render_chain,
@@ -157,7 +158,6 @@ from worker.media import (
     ffmpeg,
     mux_audio,
     normalize_clip,
-    plan_segments,
     probe_media,
     verify_output,
 )
@@ -480,9 +480,30 @@ _MAX_OUTPUT_SHORT_SIDE = 1080
 #: transformer from host RAM, and that fixed cost is most of a short pass. So
 #: the ceiling is set at the longest length actually measured rather than at the
 #: shortest one that works — a 3-minute song is 9 passes and ~32 minutes here,
-#: against 22 passes and ~54 minutes at 8s. Nothing beyond 481 frames has been
-#: run at this grid, so nothing beyond it is assumed.
-_AUDIO_PASS_SECONDS = 20.0
+#: against 22 passes and ~54 minutes at 8s.
+#:
+#: **Swept 21 Aug 2026 at 1024x576, and longer is not reliably available.**
+#: Counts up to 1201 frames (50s) do decode — but 601 and 1081 both died with
+#: OUT OF MEMORY while 721, 961 and 1201 in the same sweep passed. That is not
+#: a shape property; it is a card running near its edge, with the music service
+#: holding ~24 GB of it permanently and a prompt-only pass already measured
+#: peaking at 95.2 GB of 95.6. A long pass here is a coin flip, and the coin is
+#: flipped after several minutes of compute have already been spent.
+#:
+#: So the ceiling stays at the length with the most evidence behind it rather
+#: than the longest one observed to work once. Raising it is a real lever
+#: against per-pass model-load cost and it needs its own measurement — ideally
+#: with the music service stopped, which is the change that would actually make
+#: the headroom exist.
+#:
+#: Expressed as a landing rather than a round number, deliberately. A ceiling of
+#: 20.0 asks for 480 frames, which conforms up to 481 anyway; stating 481's own
+#: duration instead means the plan's nominal window IS a measured count, and the
+#: pass count falls out one lower on real tracks. A 300.042s track goes from 16
+#: passes to 15, and a 60.024s one from 4 to 3 — a whole model load saved on a
+#: one-minute video, for an arithmetic change.
+_AUDIO_LANDING_FRAMES = 481
+_AUDIO_PASS_SECONDS = _AUDIO_LANDING_FRAMES / 24.0
 
 #: One audio latent of headroom on every conditioning window. See
 #: `_audio_window_seconds`.
@@ -898,6 +919,49 @@ _A2VID = LtxPipeline(
     offload_cpu=True,
     extra_weights=("transformer_dev", "distilled_lora"),
     conforming_only=True,
+    # This table is why the audio tier can be switched on at all.
+    #
+    # It was empty until 21 Aug 2026, on the assumption that conforming to the
+    # 8k+1 lattice was enough for a path whose bad shapes nobody had looked
+    # for. It is not. A real 60-second job planned 474/477/430/59 frames, and
+    # its third section died in the video VAE
+    # (`chunked/mlp.py`, CUBLAS_STATUS_INTERNAL_ERROR) — the same decoder
+    # failure class the distilled tier's tables exist for, on a pipeline that
+    # had no table.
+    #
+    # Swept at 1024x576, four denoising steps (the crash is after denoising and
+    # depends on shape), music service resident:
+    #
+    #   PASS  65 · 121 · 193 · 241 · 385 · 433 · 481 · 505 · 577 · 721 · 961 · 1201
+    #   FAIL  289 · 337 · 361 · 409 · 457 · 841   (CUBLAS — a shape property)
+    #   FAIL  601 · 1081                          (out of memory — not one)
+    #
+    # Non-monotonic, as always: 241 and 385 and 433 decode while 289, 337, 361,
+    # 409 and 457 do not. Four of the passing counts are listed rather than all
+    # of them — every entry is a count this adapter promises the decoder can
+    # take, so each one is a claim to keep verified, and these four cover the
+    # range the planner actually asks for with little waste. 385 earns its
+    # place on the two-pass case: a 30-second track plans 15-second windows,
+    # 361 is a measured FAIL, and without 385 both passes would render twenty
+    # seconds to deliver fifteen. **Nothing between 241 and 385 decodes at
+    # all** — that gap is the model's, not a hole in the sweep.
+    #
+    # The large counts are left out for a different reason. 601 and 1081 failed
+    # on MEMORY while 721, 961 and 1201 passed, so nothing up there is reliably
+    # available while the music service holds a quarter of the card — see
+    # `_AUDIO_PASS_SECONDS`.
+    #
+    # **This table is a screen, not a guarantee, and the difference matters.**
+    # 481 decoded in the sweep and in three consecutive benchmark cells, then
+    # failed in a fourth at the same count with the same cuBLAS error in the
+    # same video-VAE MLP. A fixed configuration that fails intermittently is
+    # not describing a shape; `CUBLAS_STATUS_INTERNAL_ERROR` is what a failed
+    # cuBLAS workspace allocation looks like, and this card was measured at
+    # 95.2 GB of 95.6 GB during an ordinary pass. So what the table buys is
+    # staying away from the counts that fail REPRODUCIBLY and from the large
+    # ones that need the most memory. The residual intermittency is a headroom
+    # problem, and headroom is not something a frame count can fix.
+    measured_landings=(121, 241, 385, _AUDIO_LANDING_FRAMES),
 )
 
 #: The quality tier for text- and image-to-video: the guided two-stage
@@ -1847,6 +1911,25 @@ class LtxAdapter:
         await reporter.stitching()
         width, height = dimensions
         output = job.workspace / "output.mp4"
+        # The same arithmetic video-to-video needs, for the same reason and
+        # with the same evidence: ONE continuous soundtrack is laid over
+        # sections that were generated separately, so a section delivered even
+        # half a frame long pushes every later section's picture later against
+        # the song. It only ever accumulates. Simulated through this planner:
+        # a 300s track with cuts on the music drifts +21ms per seam and ends
+        # +310ms late on the audio tier, +125ms on the default one — past the
+        # ~45ms threshold where a viewer sees a mouth move after the words.
+        #
+        # `boundaries` is not optional here. Music-video windows come from the
+        # track's own events, so re-deriving them from an even split would pin
+        # every section to a length it was never rendered for.
+        section_frames = self._planned_section_frames(
+            rendered,
+            target_seconds,
+            per_pass,
+            float(settings.ltx_frame_rate),
+            boundaries=boundaries,
+        )
 
         async def assemble() -> Path:
             picture = await self._assemble_generated_sections(
@@ -1855,6 +1938,7 @@ class LtxAdapter:
                 job.workspace / "picture.mp4",
                 dimensions=(width, height),
                 audio=False,
+                section_frames=section_frames,
             )
             await reporter.muxing("Adding your track…")
             return await mux_audio(picture, staged, output)
@@ -1968,24 +2052,29 @@ class LtxAdapter:
         target_seconds: float,
         per_pass_seconds: float,
         fps: float,
+        boundaries: list[float] | None = None,
     ) -> list[int] | None:
         """Each section's delivery length in whole frames, from the plan.
 
-        `plan_segments` is pure, so calling it again with the chain's own
+        `plan_chain_segments` is pure, so calling it again with the chain's own
         inputs reproduces the chain's own windows. Counts are allocated from
         the CUMULATIVE boundary (`round(end · fps) − round(start · fps)`)
         rather than per-section, so rounding can never walk: every section
         starts within half a delivery frame of its planned timestamp, and the
         error at the last seam is the same as at the first.
 
+        `boundaries` must be the SAME cut points the chain was given. A music
+        video aligns its cuts to the track's own events, so its windows are not
+        the even ones `plan_segments` would produce — asking without them
+        returns a different plan, the section count usually still matches, and
+        every section is then pinned to a length it was never rendered for.
+
         Returns None when the recomputed plan does not match what was actually
         rendered — that would mean this arithmetic has diverged from the
         chain's, and delivering with the historical quantization is strictly
         better than cutting sections at wrong lengths.
         """
-        segments = plan_segments(
-            target_seconds, max_segment_seconds=per_pass_seconds
-        )
+        segments = plan_chain_segments(target_seconds, per_pass_seconds, boundaries)
         if len(segments) != len(rendered):
             logger.warning(
                 "section_plan_mismatch",
@@ -2649,12 +2738,34 @@ class LtxAdapter:
             negative = str(job.execution.get("negative_prompt") or "").strip()
             if negative:
                 cmd += ["--negative-prompt", negative]
-            guidance = job.execution.get("guidance_scale")
-            if guidance is not None:
-                cmd += [
-                    "--video-cfg-guidance-scale",
-                    str(round(float(guidance), 3)),
-                ]
+            # Each scale also decides whether a whole extra transformer call
+            # runs per step, which is what makes these cost levers as well as
+            # quality ones. From `ltx_core/components/guiders.py`: a cfg other
+            # than 1.0 buys an unconditional pass, an STG other than 0.0 buys a
+            # perturbed pass, and a modality scale other than 1.0 buys the
+            # isolated-modality pass. The shipped defaults (3.0 / 1.0 / 3.0)
+            # are therefore FOUR calls per step, and the audio tier runs 30 of
+            # them at half resolution before stage 2 begins.
+            #
+            # `a2v_guidance_scale` is the modality one, and on the audio tier
+            # it is the lip-sync dial: the isolated pass it enables is the one
+            # that skips the audio-to-video cross-attention, so the guider
+            # pushes the picture AWAY from a version of itself that did not
+            # listen. LTX's own help calls it out — "higher values may increase
+            # lipsync quality" — and 1.0 means the pass does not run at all.
+            for key, flag in (
+                ("guidance_scale", "--video-cfg-guidance-scale"),
+                ("stg_scale", "--video-stg-guidance-scale"),
+                ("a2v_guidance_scale", "--a2v-guidance-scale"),
+            ):
+                value = job.execution.get(key)
+                if value is not None:
+                    cmd += [flag, str(round(float(value), 3))]
+            steps = job.execution.get("inference_steps")
+            if steps is not None:
+                # Stage 1's step count. Stage 2 runs the distilled LoRA's own
+                # fixed short schedule and is not affected.
+                cmd += ["--num-inference-steps", str(max(1, int(steps)))]
         if job.execution.get("enhance_prompt"):
             # LTX's own enhancer expands a terse prompt into a detailed one,
             # which is the only adherence lever the distilled entry point
