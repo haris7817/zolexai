@@ -63,12 +63,19 @@ def compile_section_prompts(
     section_total: int,
     *,
     total_seconds: float,
+    camera_continuity: bool = False,
 ) -> list[str]:
     """One caption per generation section, from one global plan.
 
     Sections are the same even windows the chain renders (`plan_segments`
     splits evenly, so window = total / count). A single-pass job simply gets a
     one-element list — the whole plan as one caption.
+
+    ``camera_continuity`` (execution.director_camera_continuity) carries the
+    shot each section ends on into the next one: a section that opens on the
+    same camera says the shot CONTINUES instead of announcing it as a fresh
+    framing event at every seam. Off (the default), captions are byte-identical
+    to what has always shipped.
     """
     section_total = max(1, section_total)
     window = total_seconds / section_total
@@ -77,6 +84,18 @@ def compile_section_prompts(
         midpoint = (event.start + event.end) / 2
         index = min(section_total - 1, max(0, int(midpoint / window)))
         buckets[index].append(event)
+
+    # The camera each section INHERITS: the last stated shot of any earlier
+    # bucket. Computed with the same humanisation the caption loop applies, so
+    # equality checks compare what the model would actually read.
+    entering = ""
+    entering_cameras: list[str] = []
+    for events in buckets:
+        entering_cameras.append(entering)
+        for event in events:
+            camera = _humanise(event.camera.strip(), plan)
+            if camera:
+                entering = camera
 
     # Presence follows the BUCKETS, not the clock. An exit event whose nominal
     # end spills a few seconds past a boundary still RENDERS entirely in the
@@ -101,6 +120,7 @@ def compile_section_prompts(
             cast=casts[index],
             survivors=survivor_sets[index],
             window_end=(index + 1) * window,
+            entering_camera=entering_cameras[index] if camera_continuity else "",
         )
         for index, events in enumerate(buckets)
     ]
@@ -144,6 +164,7 @@ def _compile_section(
     cast: list[DirectorCharacter],
     survivors: list[DirectorCharacter],
     window_end: float,
+    entering_camera: str = "",
 ) -> str:
     """One caption. `cast` is who the section OPENS with; `survivors` is who
     is still there when it ends.
@@ -191,13 +212,24 @@ def _compile_section(
             "natural movements, glances and breathing, and no one speaks."
         )
     else:
-        previous_camera = ""
+        # With an entering camera (director_camera_continuity), the section
+        # already knows what shot it inherits: an opening event on the SAME
+        # shot states it as a continuation, never as a fresh framing event —
+        # a fresh "A medium shot frames the moment" at every seam reads as a
+        # cut to a new setup. With the flag off `entering_camera` is "" and
+        # this loop behaves exactly as it always has.
+        previous_camera = entering_camera
+        camera_stated = False
         previous_spoke = False
         for position, event in enumerate(events):
             camera = _humanise(event.camera.strip(), plan)
             if camera and camera.lower() != previous_camera.lower():
                 sentences.append(_camera_sentence(camera))
                 previous_camera = camera
+                camera_stated = True
+            elif camera and entering_camera and not camera_stated:
+                sentences.append(_camera_continues_sentence(camera))
+                camera_stated = True
             speaks = bool((event.dialogue or "").strip())
             sentences.append(
                 _event_sentence(
@@ -520,6 +552,28 @@ def _camera_sentence(camera: str) -> str:
         return f"{article} {shot} frames the moment, and the camera remains static."
     move = _normalise_move(move)
     return f"{article} {shot} frames the moment as the camera {move}."
+
+
+def _camera_continues_sentence(camera: str) -> str:
+    """ "The same medium shot continues from the previous moment…"
+
+    A section is a separate model pass with no memory: the pinned frame
+    carries the inherited framing in pixels, and this sentence carries it in
+    text as the same shot still going — the continuation phrasing exists so a
+    seam does not read as a cut to a new setup.
+    """
+    parts = [part.strip() for part in re.split(r"[,;]", camera) if part.strip()]
+    shot = parts[0] if parts else camera.strip()
+    move = ", ".join(parts[1:])
+    shot = _ARTICLE.sub("", shot)
+    shot = shot[0].lower() + shot[1:] if shot else shot
+    if not move or "static" in move.lower():
+        return (
+            f"The same {shot} continues from the previous moment, and the "
+            "camera remains static."
+        )
+    move = _normalise_move(move)
+    return f"The same {shot} continues from the previous moment as the camera {move}."
 
 
 #: A move phrase that already has its own verb needs no "makes a" in front of

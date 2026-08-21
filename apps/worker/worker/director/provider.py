@@ -100,6 +100,17 @@ class DirectorRequest:
     too: the finished video's last frame is the opening frame here, and it
     defines who and what exists exactly the way an uploaded photograph does."""
 
+    camera_from_idea: bool = False
+    """True (execution.director_camera_from_idea) appends the camera register:
+    an explicit camera request in the idea must be encoded into the plan's
+    camera fields and outranks the brief's dialogue-framing preference.
+
+    Without it, nothing binds the planner to a camera the user asked for — the
+    brief's closed shot vocabulary has no angle, and its "prefer medium shots …
+    static camera" rule actively argues against, say, a requested crane move.
+    Off (the default), the brief is byte-identical to what has always
+    shipped."""
+
     prior_seconds: float = 0.0
     """How much finished video precedes this plan — so the planner knows the
     story it is continuing has already had room to play out in full."""
@@ -246,6 +257,29 @@ SOURCE IMAGE MODE — this video starts from a photograph the user uploaded:
 
 #: Appended when the plan EXTENDS a finished Director video. The one failure
 #: this register exists to prevent: the continuation re-telling the story it
+#: Appended only under `execution.director_camera_from_idea`. The base brief
+#: offers a closed dialogue-friendly shot vocabulary and prefers static
+#: framing; nothing in it tells the planner that a camera the USER asked for
+#: must survive into the plan, and the static preference actively argues
+#: against one. The official runtime reads camera purely as prompt prose
+#: ("specify camera angles and movements"), so anything the planner encodes in
+#: a camera field does reach the model as a sentence — the missing piece is
+#: only the instruction to encode it.
+_CAMERA_RULES = """
+CAMERA REQUESTS: when the idea itself names a shot size, a camera angle or a
+camera movement (for example "low angle", "wide shot", "slow orbit",
+"handheld", "the camera never moves"), that request is the user's and it
+outranks the framing preferences above:
+- Encode it in the "camera" field of the events it applies to, phrased as a
+  short shot description plus movement (an angle may be part of the shot
+  phrase, e.g. "low-angle wide shot, static").
+- If it names a movement, keep that movement going across consecutive events
+  rather than cutting to unrelated framings.
+- If it asks for a still camera, every event's camera is "static".
+- Never contradict or drop an explicit camera request; use the closest
+  expressible phrasing when the exact term does not fit.
+"""
+
 #: is supposed to continue — re-asking the opening question, re-staging the
 #: farewell — which is what a planner does when handed the same idea with no
 #: sense that it has already played out.
@@ -334,6 +368,8 @@ def system_prompt(request: DirectorRequest) -> str:
     and only an extension appends the continuation register on top of it.
     """
     brief = _SYSTEM_PROMPT
+    if request.camera_from_idea:
+        brief += _CAMERA_RULES
     if request.source_anchored:
         brief += _ANCHORED_RULES
     if request.prior_idea:
@@ -545,6 +581,9 @@ async def create_director_plan(
                 prior_seconds=prior_seconds,
                 image_facts=facts,
                 notes=notes,
+                camera_from_idea=bool(
+                    job.execution.get("director_camera_from_idea")
+                ),
             )
             try:
                 raw = await source.generate_plan(request)

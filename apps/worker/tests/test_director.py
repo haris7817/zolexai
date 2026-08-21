@@ -580,6 +580,110 @@ def test_character_ids_leaking_into_prose_are_humanised() -> None:
     assert "front of the police chief" in caption
 
 
+# ── Cross-seam camera state (execution.director_camera_continuity) ───────
+
+
+def test_camera_continuity_off_is_byte_identical() -> None:
+    """The flag defaults off, and off must mean byte-identical captions —
+    the audited behaviour (previous_camera resets per section) is what has
+    served production."""
+    plain = compile_section_prompts(parsed(), 2, total_seconds=12.0)
+    flagged_off = compile_section_prompts(
+        parsed(), 2, total_seconds=12.0, camera_continuity=False
+    )
+    assert plain == flagged_off
+
+
+def test_a_section_opening_on_the_inherited_shot_says_it_continues() -> None:
+    """Without camera state, every section re-announces its shot as a fresh
+    framing event even when it is the same shot the previous section ended
+    on — which reads as a cut to a new setup at every seam."""
+    events = raw_plan()["timeline"]
+    events[2]["camera"] = "medium close-up, static"  # same as the seam's last shot
+    plan = parsed(timeline=events)
+
+    _, second = compile_section_prompts(
+        plan, 2, total_seconds=12.0, camera_continuity=True
+    )
+    assert "The same medium close-up continues from the previous moment" in second
+    assert "frames the moment" not in second
+
+    # And without the flag, the old fresh-framing sentence is unchanged.
+    _, old = compile_section_prompts(plan, 2, total_seconds=12.0)
+    assert "A medium close-up frames the moment" in old
+
+
+def test_a_deliberate_shot_change_at_a_seam_still_reads_as_fresh_framing() -> None:
+    """Continuity must not swallow a real cut: the default plan's second
+    section opens on a DIFFERENT shot from the one section one ended on, and
+    that stays a fresh framing sentence."""
+    _, second = compile_section_prompts(
+        parsed(), 2, total_seconds=12.0, camera_continuity=True
+    )
+    assert "A medium shot frames the moment" in second
+    assert "continues from the previous moment" not in second
+
+
+def test_an_inherited_moving_shot_keeps_its_movement_phrasing() -> None:
+    events = raw_plan()["timeline"]
+    events[1]["camera"] = "wide shot, slow push-in"
+    events[2]["camera"] = "wide shot, slow push-in"
+    _, second = compile_section_prompts(
+        parsed(timeline=events), 2, total_seconds=12.0, camera_continuity=True
+    )
+    assert (
+        "The same wide shot continues from the previous moment as the camera "
+        "makes a slow push-in" in second
+    )
+
+
+# ── The camera register (execution.director_camera_from_idea) ────────────
+
+
+def test_the_camera_register_is_absent_by_default() -> None:
+    from worker.director.provider import system_prompt
+
+    request = DirectorRequest(
+        idea=IDEA, duration_seconds=12.0, language="english", seed=1, sample=False
+    )
+    assert "CAMERA REQUESTS" not in system_prompt(request)
+
+
+def test_the_camera_register_binds_the_planner_to_the_users_request() -> None:
+    from worker.director.provider import system_prompt
+
+    request = DirectorRequest(
+        idea=IDEA, duration_seconds=12.0, language="english", seed=1, sample=False,
+        camera_from_idea=True,
+    )
+    brief = system_prompt(request)
+    assert "CAMERA REQUESTS" in brief
+    assert "outranks" in brief
+    # The register must follow the base brief, whose framing preference it
+    # overrides by explicit reference.
+    assert brief.index("CAMERA REQUESTS") > brief.index("readable faces")
+
+
+async def test_the_execution_key_reaches_the_planner_request(
+    workspace: Path,
+) -> None:
+    provider = CannedProvider(raw_plan())
+    job = director_job(
+        workspace,
+        execution={
+            "runtime": "ltx",
+            "prompt_structuring": True,
+            "director_camera_from_idea": True,
+        },
+    )
+    await create_director_plan(job, 12.0, provider=provider)
+    assert provider.requests[0].camera_from_idea is True
+
+    plain = CannedProvider(raw_plan())
+    await create_director_plan(director_job(workspace), 12.0, provider=plain)
+    assert plain.requests[0].camera_from_idea is False
+
+
 # ── Orchestration: retry once, then a clean failure ──────────────────────
 
 
