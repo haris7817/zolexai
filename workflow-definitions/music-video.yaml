@@ -97,20 +97,45 @@ execution:
   #
   #   audio_conditioning: true
   #
-  # WHAT IT COSTS. Measured on the RTX PRO 6000, 17 Aug 2026, at 1024x576:
-  # roughly 10.5x real time (20s of video per 211s), against roughly 2.5x for
-  # the default tier — about four times the compute. A 3-minute song is ~32
-  # minutes of GPU, which fits the 2-hour budget above but changes the unit cost
-  # of the workflow. That is a pricing decision, which is why this is not simply
-  # switched on.
+  # WHAT IT COSTS. Measured on the RTX PRO 6000 at 1024x576 — 213s for a
+  # 20.04-second pass, reproduced 17 Aug and 21 Aug 2026, so **10.6x real
+  # time**. Against the default tier's measured 3.6x (from real production
+  # jobs: a 300s track in 1085s, a 240s track in 863s), that is about three
+  # times the compute. A five-minute song is ~53 minutes of GPU. It fits the
+  # 2-hour budget above and it changes the unit cost of the workflow, which is
+  # why this is a pricing decision and not simply switched on.
+  #
+  # WHY it costs that: the audio tier cannot run quantized (the distilled LoRA
+  # it requires clashes with FP8/NVFP4 fusion), where the default tier serving
+  # today's 3.6x runs NVFP4. Three times the cost is what "the model can hear
+  # the song" costs on this hardware, and the knobs barely move it — the
+  # guidance passes batch into ONE transformer call, so dropping one is not
+  # worth a quarter. `--offload none` is the largest measured lever (23-30%)
+  # and needs VRAM this card does not have spare.
+  #
+  # RELIABILITY, which matters more than the cost. The tier passed 6/6 at a
+  # steady 208s with the GPU to itself, and failed 5 of 15 times at the same
+  # frame count when the card was shared. A five-minute video is 15 CONSECUTIVE
+  # passes and the chain has no per-pass retry, so per-pass reliability has to
+  # be near 1. Read the 21 Aug research note before switching this on.
   #
   # WHAT IT DELIVERS, honestly: visuals that move with the music, and a
   # performer whose mouth follows the vocal. It is NOT verified phoneme-accurate
-  # lip-sync — that claim needs a sync-offset measurement nobody has run yet.
+  # lip-sync.
   #
-  #   audio_pass_seconds:  section length on the audio tier (default 20.0 — the
-  #                        longest pass MEASURED at the production grid; the
-  #                        distilled tier's 60s does not transfer)
+  #   audio_pass_seconds:  section length on the audio tier. Default is 481
+  #                        frames' own duration (20.0417s) — a MEASURED landing
+  #                        rather than a round number, so the planner's nominal
+  #                        window is a count the decoder is known to survive.
+  #                        The distilled tier's 60s does not transfer.
+  #   inference_steps:     stage-1 denoising steps (pipeline default 30). The
+  #                        one lever that moves wall time; a quality trade.
+  #   a2v_guidance_scale:  how hard the model is pushed toward the audio
+  #                        (pipeline default 3.0; 1.0 disables it entirely).
+  #                        LTX's own help: "higher values may increase lipsync
+  #                        quality".
+  #   guidance_scale / stg_scale: CFG and spatio-temporal guidance. Cheap to
+  #                        drop and they cost picture quality, not speed.
   #
   # Requires the dev transformer and the distilled LoRA on the node.
 
