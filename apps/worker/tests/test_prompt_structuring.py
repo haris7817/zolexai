@@ -88,6 +88,146 @@ def test_prose_connectives_are_not_mistaken_for_nouns() -> None:
     assert "The black" not in structured or "black and" not in structured.split("CONTINUITY")[1]
 
 
+# ── structure_prompt v2 (execution.prompt_structuring_v2) ────────────────
+#
+# Everything here is gated: with v2 OFF the output must be byte-identical to
+# what has always shipped, and the ON behaviour answers the three audited
+# defects (21 Aug 2026 diagnosis) — the camera contradiction, the exit-blind
+# presence assertion, and the continuity bullet read as one section's
+# dialogue.
+
+
+def test_v2_off_is_byte_identical_to_the_shipped_block() -> None:
+    for prompt in (
+        "two cars racing through a desert",
+        "A locked-off static camera. A woman stands at a window.",
+        "The woman leaves. She does not return.",
+    ):
+        assert structure_prompt(prompt) == structure_prompt(prompt, v2=False)
+
+
+def test_v2_splits_the_presence_and_camera_clauses_into_separate_bullets() -> None:
+    structured = structure_prompt("a quiet mountain lake at dawn", v2=True)
+    block = structured.split("CONTINUITY")[1]
+    assert "still present at the end" in block
+    assert "keeps moving" in block
+    # And they are separate bullets, so one can hold while the other yields.
+    for line in block.splitlines():
+        assert not (
+            "still present at the end" in line and "keeps moving" in line
+        ), "presence and camera must not share a bullet"
+
+
+def test_v2_answers_a_static_camera_request_with_a_static_rule() -> None:
+    """The B5 contradiction: a user typing 'The camera never moves' used to
+    receive 'the camera keeps moving' in the same prompt."""
+    structured = structure_prompt(
+        "A locked-off static camera on a tripod. The camera never moves. "
+        "A woman stands at a window in a quiet room.",
+        v2=True,
+    )
+    added = structured.split("CONTINUITY")[1].lower()
+    assert "keeps moving" not in added
+    assert "holds perfectly still" in added
+
+
+def test_v2_withholds_presence_assertions_when_the_user_says_someone_leaves() -> None:
+    """Presence claims about departed people are the measured rendered-ghost
+    failure (GPU, 20 Aug 2026)."""
+    structured = structure_prompt(
+        "A man walks out of the room and never comes back.", v2=True
+    )
+    added = structured.split("CONTINUITY")[1].lower()
+    assert "still present at the end" not in added
+    assert "count in every frame" not in added
+    # Identity constancy still holds for whoever is on screen.
+    assert "same faces, clothing and colours" in added
+
+
+def test_v2_keeps_presence_assertions_when_nobody_leaves() -> None:
+    structured = structure_prompt("two cars racing through a desert", v2=True)
+    added = structured.split("CONTINUITY")[1].lower()
+    assert "still present at the end" in added
+    assert "count in every frame" in added
+
+
+def test_v2_structuring_is_idempotent() -> None:
+    """The v1 header matched neither _ALREADY_STRUCTURED nor _PERSISTENT_LINE,
+    so structure_prompt would restructure its own output if called twice."""
+    once = structure_prompt("a quiet mountain lake at dawn", v2=True)
+    assert structure_prompt(once, v2=True) == once
+
+
+def test_v2_bullets_reach_every_section_instead_of_one() -> None:
+    """The A5 misclassification: the internal colon in '- One continuous
+    scene:' read as a dialogue turn and the rule reached exactly one section,
+    presented as something to perform."""
+    structured = structure_prompt("a quiet mountain lake at dawn", v2=True)
+    prompts = plan_section_prompts(structured, 3, total_seconds=90.0, v2=True)
+    for prompt in prompts:
+        assert "One continuous scene" in prompt
+        assert "still present at the end" in prompt
+    for prompt in prompts:
+        head, _, tail = prompt.partition("NEW ACTION OR DIALOGUE")
+        assert "One continuous scene" not in tail, (
+            "a continuity rule must never be a section's assigned action"
+        )
+
+
+def test_v2_never_adds_negative_phrasing_either() -> None:
+    for prompt in (
+        "two cars racing",
+        "A locked-off static camera. A woman stands at a window.",
+        "The woman leaves and never comes back.",
+    ):
+        added = structure_prompt(prompt, v2=True)[len(prompt):].lower()
+        assert "no " not in added, f"negative phrasing in: {added!r}"
+        assert "don't" not in added and "do not" not in added and "never" not in added
+
+
+# ── plan_section_prompts v2 ──────────────────────────────────────────────
+
+
+def test_v2_off_section_prompts_are_byte_identical() -> None:
+    assert plan_section_prompts(_STORYBOARD, 8, total_seconds=120.0) == (
+        plan_section_prompts(_STORYBOARD, 8, total_seconds=120.0, v2=False)
+    )
+
+
+def test_v2_section_one_is_not_told_to_continue_from_a_predecessor() -> None:
+    """Section 1 has no predecessor pass: an instruction referencing a
+    nonexistent frame is caption noise on a runtime that reads captions as
+    content."""
+    prompts = plan_section_prompts(_STORYBOARD, 3, total_seconds=120.0, v2=True)
+    assert "predecessor" not in prompts[0]
+    assert "established previously" not in prompts[0]
+    assert prompts[0].startswith("LONG-FORM VIDEO — SECTION 1 OF 3.")
+    # Later sections keep the continuation register in full.
+    for prompt in prompts[1:]:
+        assert "Continue directly from the predecessor frame." in prompt
+        assert "established previously" in prompt
+
+
+def test_v2_single_pass_requests_remain_byte_for_byte_unchanged() -> None:
+    assert plan_section_prompts(_STORYBOARD, 1, total_seconds=120.0, v2=True) == [
+        _STORYBOARD
+    ]
+
+
+def test_v2_user_bullet_lists_stay_persistent_even_with_colons() -> None:
+    """A bullet is a constraint or a description, never a `Name: "line"`
+    dialogue turn."""
+    prompt = (
+        "A rainy street.\n"
+        "- Wardrobe: the woman wears a red coat\n"
+        "- Lighting: neon signs reflect in puddles"
+    )
+    prompts = plan_section_prompts(prompt, 2, total_seconds=60.0, v2=True)
+    for section in prompts:
+        assert "red coat" in section
+        assert "neon signs" in section
+
+
 # ── Timestamped multi-shot prompts ───────────────────────────────────────
 
 

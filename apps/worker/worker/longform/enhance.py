@@ -71,6 +71,42 @@ _ALREADY_STRUCTURED = re.compile(
     r"^\s*(persistent|section\s+\d+|continuity)\s*:", re.IGNORECASE | re.MULTILINE
 )
 
+#: A user-asserted camera hold. When one is present, the v2 continuity block
+#: answers it with a positive static rule instead of appending "the camera
+#: keeps moving" to the same prompt — the runtime has no negation mechanism,
+#: so the user's own "never moves" is the weaker phrasing of the two and the
+#: worker must not be the one supplying the stronger opposite.
+_STATIC_CAMERA = re.compile(
+    r"locked[- ]off"
+    r"|static camera"
+    r"|fixed camera"
+    r"|camera\s+(?:stays|remains|is|holds)\s+(?:perfectly\s+)?(?:still|static|fixed|locked)"
+    r"|camera\s+(?:never|doesn'?t|does\s+not|won'?t)\s+move"
+    r"|on a tripod"
+    r"|no camera movement",
+    re.IGNORECASE,
+)
+
+#: Departure vocabulary. A prompt that says someone leaves must not also carry
+#: "every subject present at the start is still present at the end": presence
+#: assertions about departed people are the measured rendered-ghost failure
+#: (GPU, 20 Aug 2026), and Director mode scopes its constancy sentences to
+#: survivors for exactly this reason. Standard mode has no presence model, so
+#: the v2 block simply withholds the presence and count assertions when the
+#: user's own text says somebody goes.
+_EXIT_WORDS = re.compile(
+    r"\b(?:leaves?|leaving"
+    r"|exits?|exiting"
+    r"|walks?\s+(?:out|away|off)|walked\s+(?:out|away|off)"
+    r"|departs?|departed"
+    r"|drives?\s+(?:away|off)|drove\s+(?:away|off)"
+    r"|runs?\s+(?:away|off)|ran\s+(?:away|off)"
+    r"|never\s+(?:returns?|comes?\s+back)"
+    r"|(?:doesn'?t|does\s+not|won'?t)\s+(?:return|come\s+back)"
+    r"|disappears?|vanish(?:es)?)\b",
+    re.IGNORECASE,
+)
+
 
 def _clean_noun(noun: str) -> str | None:
     words = [w for w in noun.lower().split() if w not in _NOT_NOUNS]
@@ -79,13 +115,23 @@ def _clean_noun(noun: str) -> str | None:
     return " ".join(words)
 
 
-def structure_prompt(prompt: str) -> str:
+def structure_prompt(prompt: str, *, v2: bool = False) -> str:
     """The user's prompt, verbatim, followed by derived continuity rules.
 
     Never rewrites, reorders or paraphrases a single word of the input — the
     output CONTAINS the input as its first block, byte for byte. A prompt that
     already carries explicit structure (Persistent:/Section N:) is returned
     unchanged.
+
+    ``v2`` (execution.prompt_structuring_v2) changes only the appended block,
+    never the user's text: the presence clause and the camera clause become
+    separate bullets so they can hold or yield independently; the camera
+    clause answers a user-asserted static camera with a static rule instead of
+    contradicting it; the presence and count assertions are withheld when the
+    user's own text says somebody leaves; and the block header is one this
+    module's own ``_ALREADY_STRUCTURED`` recognises, so structuring is
+    idempotent. Off (the default), the output is byte-identical to what has
+    always shipped.
     """
     text = prompt.strip()
     if not text or _ALREADY_STRUCTURED.search(text):
@@ -120,13 +166,49 @@ def structure_prompt(prompt: str) -> str:
             "to the last."
         )
 
-    lines = [text, "", "CONTINUITY (fixed for the entire video):"]
+    if not v2:
+        lines = [text, "", "CONTINUITY (fixed for the entire video):"]
+        lines += [f"- {rule}" for rule in rules]
+        lines += [
+            "- The same subjects keep the same faces, clothing, colours and count "
+            "in every frame.",
+            "- One continuous scene: the camera keeps moving through the same "
+            "environment, and every subject present at the start is still present "
+            "at the end.",
+        ]
+        return "\n".join(lines)
+
+    # v2. The header carries its qualifier AFTER the colon so the block
+    # matches _ALREADY_STRUCTURED and _PERSISTENT_LINE on a second pass —
+    # the v1 header's parenthetical sat before the colon and matched neither,
+    # so structure_prompt would restructure its own output if ever called
+    # twice.
+    lines = [text, "", "CONTINUITY: these rules hold for the entire video."]
     lines += [f"- {rule}" for rule in rules]
-    lines += [
-        "- The same subjects keep the same faces, clothing, colours and count "
-        "in every frame.",
-        "- One continuous scene: the camera keeps moving through the same "
-        "environment, and every subject present at the start is still present "
-        "at the end.",
-    ]
+    if _EXIT_WORDS.search(text):
+        # Someone leaves. Identity constancy still holds for whoever is on
+        # screen; presence and count assertions would argue with the user's
+        # own story, so they are withheld.
+        lines.append(
+            "- The same subjects keep the same faces, clothing and colours "
+            "in every frame."
+        )
+    else:
+        lines.append(
+            "- The same subjects keep the same faces, clothing, colours and "
+            "count in every frame."
+        )
+        lines.append(
+            "- Every subject present at the start is still present at the end."
+        )
+    if _STATIC_CAMERA.search(text):
+        lines.append(
+            "- One continuous scene: the camera holds perfectly still in the "
+            "same environment from the first frame to the last."
+        )
+    else:
+        lines.append(
+            "- One continuous scene: the camera keeps moving through the same "
+            "environment."
+        )
     return "\n".join(lines)

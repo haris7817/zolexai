@@ -61,6 +61,12 @@ _PERSISTENT_LINE = re.compile(
     re.IGNORECASE,
 )
 _DIALOGUE_LINE = re.compile(r"^\s*[^:\n]{1,48}:\s+.+$")
+#: A list bullet. Under v2 a bulleted line is never read as a `Name: "line"`
+#: dialogue turn: a bullet is a constraint or a description, and an internal
+#: colon inside one ("- One continuous scene: the camera …") was being
+#: performed as one section's dialogue — the silent reinterpretation this
+#: module's contract forbids. Ambiguity keeps it persistent instead.
+_BULLET_LINE = re.compile(r"^\s*[-•*]\s+")
 _SEQUENCE_START = re.compile(
     r"^\s*(?:first|then|next|after(?:wards|\s+that)?|meanwhile|finally|lastly)\b",
     re.IGNORECASE,
@@ -77,6 +83,7 @@ def plan_section_prompts(
     section_total: int,
     *,
     total_seconds: float | None = None,
+    v2: bool = False,
 ) -> list[str]:
     """Return one prompt per section without replaying sequential material.
 
@@ -93,11 +100,17 @@ def plan_section_prompts(
     putting the chorus shot in the wrong minute of the song. Sections are
     treated as even windows; musical-boundary sections deviate a little from
     even, which moves a shot by at most a couple of seconds at a seam.
+
+    ``v2`` (execution.prompt_structuring_v2): bulleted lines classify as
+    persistent rather than as dialogue turns, and section 1 — which has no
+    predecessor pass — is not told to continue from a predecessor frame or to
+    keep what "established previously" established. Off (the default), the
+    output is byte-identical to what has always shipped.
     """
     if section_total <= 1:
         return [master_prompt]
 
-    persistent, actions = _separate(master_prompt)
+    persistent, actions = _separate(master_prompt, v2=v2)
     if total_seconds and any(action.timed for action in actions):
         assigned, persistent = _distribute_timed(
             actions, section_total, total_seconds, persistent
@@ -107,23 +120,37 @@ def plan_section_prompts(
     prompts: list[str] = []
 
     for index, current in enumerate(assigned, start=1):
-        lines = [
-            f"LONG-FORM CONTINUATION — SECTION {index} OF {section_total}.",
-            "Keep the same subjects, identities, faces, clothing, colours, object counts, vehicles, environment and camera direction established previously.",
-        ]
+        # Section 1 has no predecessor: under v2 it is not asked to continue
+        # from a frame that does not exist or to keep what "established
+        # previously" established — an instruction that references a
+        # nonexistent thing is caption noise on a runtime that reads captions
+        # as content (the shared section-1 preamble issue, noted 21 Aug).
+        opening = v2 and index == 1
+        if opening:
+            lines = [f"LONG-FORM VIDEO — SECTION 1 OF {section_total}."]
+        else:
+            lines = [
+                f"LONG-FORM CONTINUATION — SECTION {index} OF {section_total}.",
+                "Keep the same subjects, identities, faces, clothing, colours, object counts, vehicles, environment and camera direction established previously.",
+            ]
         if persistent:
             lines += ["PERSISTENT USER CONSTRAINTS (verbatim):", persistent]
         lines.append("NEW ACTION OR DIALOGUE FOR THIS SECTION ONLY (verbatim):")
         lines.append(current or "Continue naturally from the preceding section without introducing a new event.")
-        lines.append(
-            "Continue directly from the predecessor frame. Do not replay, restart or summarise any earlier action or dialogue. Complete this section's assigned dialogue before the section ends."
-        )
+        if opening:
+            lines.append(
+                "Complete this section's assigned dialogue before the section ends."
+            )
+        else:
+            lines.append(
+                "Continue directly from the predecessor frame. Do not replay, restart or summarise any earlier action or dialogue. Complete this section's assigned dialogue before the section ends."
+            )
         prompts.append("\n".join(lines))
 
     return prompts
 
 
-def _separate(master_prompt: str) -> tuple[str, list[_Action]]:
+def _separate(master_prompt: str, *, v2: bool = False) -> tuple[str, list[_Action]]:
     lines = [line for line in master_prompt.splitlines() if line.strip()]
     persistent: list[str] = []
     actions: list[_Action] = []
@@ -144,6 +171,9 @@ def _separate(master_prompt: str) -> tuple[str, list[_Action]]:
         fixed = _PERSISTENT_LINE.match(line)
         if fixed:
             persistent.append(fixed.group(1).strip())
+            continue
+        if v2 and _BULLET_LINE.match(line):
+            persistent.append(line.strip())
             continue
         if _DIALOGUE_LINE.match(line) or _SEQUENCE_START.match(line):
             actions.append(_Action(line.strip()))
