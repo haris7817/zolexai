@@ -2316,3 +2316,105 @@ Rollback, worker half: previous commit + restart. Rollback, VPS half: revert
 the two `max_segment_seconds` lines in the baked YAML and rebuild api (60s
 returns to single-pass); the lineage code is inert for any video without
 Director ancestry and needs no separate switch.
+
+---
+
+## 46. Deploy: music-video seam timing + music vocals (21 Aug 2026)
+
+`c713aa8` → `63a19f0`, **GPU node only. The VPS was NOT touched and has almost
+nothing to do — see §46.4.** Research and every measurement:
+[`research-2026-08-21-music-video-lipsync-and-music-vocals.md`](./research-2026-08-21-music-video-lipsync-and-music-vocals.md).
+
+**Read this bit before assuming the §38/§39 shape.** Those releases were inert
+on arrival: the new code was unreachable until a YAML flag flipped. **This one
+is not.** Three things change the moment the worker restarts, for every
+customer, with no VPS action at all:
+
+- **Music video sections are delivered at their planned frame counts.** One
+  continuous soundtrack over separately generated sections used to drift +21ms
+  per seam. Gate below: a 60.024s track now delivers 720/721 = 1441 frames =
+  `round(60.024 × 24)`; before, each section was ceiled independently.
+- **Music video cut points no longer leave slivers.** `plan_musical_boundaries`
+  picks the pass count first. Same count as before, but no more 0.18-second
+  final sections costing a full 22B model load for four frames.
+- **Every music job gets a denser lyric sheet and honours a stated vocal
+  request.** 8s/line instead of 16 (re-measured against the ACE-Step build
+  actually running), and "a lo-fi pop song with soft female vocals" no longer
+  silently returns an instrumental.
+
+What IS inert, as usual: the a2vid landing table, the audio pass ceiling, and
+the new `stg_scale` / `a2v_guidance_scale` / `inference_steps` execution keys.
+All unreachable while `audio_conditioning` is off, which it is.
+
+### 46.1 The GPU half
+
+```bash
+cd /workspace/zolexai && git pull --ff-only
+supervisorctl restart zolexai-worker
+```
+
+Verified after restart:
+
+- `worker_draining` → `active_jobs: 0`; nothing interrupted.
+- `worker_ready`: `ltx-6000-1`, runtimes `["ltx","music"]`, all six workflows.
+- In `.venv-worker`: `plan_chain_segments` imports from `worker.longform.chain`;
+  `_A2VID.measured_landings == (121, 241, 385, 481)` with the ceiling at
+  20.0417s; `line_budget` 10/30/50 at 60/180/300s; `vocal_intent` returns True
+  for the lo-fi prompt and False for "an instrumental piano piece, no vocals";
+  a 300.042s audio-tier plan is **15 passes, not 16**.
+
+### 46.2 Gate, run on this node from the production checkout
+
+1. **Music, 2 min, "a lo-fi pop song with soft female vocals about rain"** —
+   the prompt that used to come back wordless. `rc=0`, 120.033s, 9.9s wall,
+   and a real sheet ("The tea is getting cold / The sky is turning grey…").
+2. **Music video, default path, 60.024s track** — `rc=0`, **276s** (against
+   the 286s pre-change baseline, so no cost), 2 sections,
+   **720 / 721 = 1441 frames**, output 60.000s with the track on it once.
+
+One cosmetic wart found by the gate and left alone: `scripts/music_smoke.py`
+prints its own `plan_song(...)` preview WITHOUT the vocal intent, so its
+"structure:" and "lines:" preamble can show the wordless skeleton while the
+adapter correctly used the worded one. The sheet it prints afterwards is the
+truth. Script-only; the product is unaffected.
+
+### 46.3 Rollback
+
+```bash
+cd /workspace/zolexai && git checkout c713aa8
+supervisorctl restart zolexai-worker
+```
+
+Nothing else to undo — no weights, no env, no VPS state.
+
+### 46.4 The VPS half: there isn't a functional one
+
+The only non-worker file in this release is `workflow-definitions/music-video.yaml`,
+and it is **comment-only — parse-verified identical** to the committed version.
+Rebuilding `api` activates nothing. `audio_conditioning` stays off; that is a
+pricing decision and §7b of the research note argues it should wait for a
+scheduling answer besides.
+
+If the VPS is pulled anyway (for tidiness, or alongside a later release), the
+§16 stash dance applies: `music-video.yaml` is one of the SIX locally-modified
+YAMLs. The local edits are the `runtime: mock → ltx` flip near the top of
+`execution:` and the mock-output deletion at the very bottom; this release's
+hunk sits between them in the commented audio-conditioning block and should
+auto-merge. **Read the `git stash pop` output regardless**, and re-check
+`runtime: ltx` survived.
+
+### 46.5 Gate before telling anyone
+
+Through zolexai.com:
+
+1. **Music, 2 min, a prompt naming vocals over a lo-fi or ambient style** —
+   ears on it, confirm it sings. This is the reported bug.
+2. **Music, 1 min, auto lyrics** — the biggest measured improvement
+   (51.7% → 95.0% voiced).
+3. **Music, 5 min, auto lyrics** — the honest caveat: at four and five minutes
+   the model's run-to-run variance is larger than the density change, so this
+   one is a coin flip either way. Worth watching, not worth blocking on.
+4. **Music, an explicit instrumental request** — regression: still wordless.
+5. **Music video, any track over 60s** — regression plus the fix: same look and
+   the same wall time as before, and the picture no longer walks against the
+   song.
