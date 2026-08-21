@@ -58,6 +58,64 @@ def restyle_job(workspace: Path, source: Path | None, reference: Path | None = N
     return make_job(workspace, **{**defaults, **overrides})
 
 
+# ── Per-section prompts (execution.v2v_section_prompts) ──────────────────
+#
+# Video-to-video is the workflow family that chains longest and the only one
+# whose sections all receive byte-identical prompt text. The flag routes the
+# prompt through the same section planner every other chained workflow uses;
+# off (the default) must mean exactly the shipped behaviour.
+
+
+def _step(index: int, total: int, workspace: Path):
+    from worker.longform import ChainStep
+    from worker.media import Segment
+
+    return ChainStep(
+        segment=Segment(index=index, start_seconds=index * 10.0, duration_seconds=10.0),
+        total=total,
+        output=workspace / f"part-{index:04d}.mp4",
+        previous_frame=None,
+        band=(15, 85),
+    )
+
+
+def test_section_prompts_are_off_by_default(workspace: Path) -> None:
+    job = restyle_job(workspace, None)
+    assert LtxAdapter()._v2v_prompt_for_step(job, 20.0) is None
+
+
+def test_the_flag_gives_each_section_its_own_prompt(workspace: Path) -> None:
+    job = restyle_job(
+        workspace, None,
+        execution={"runtime": "ltx", "v2v_section_prompts": True},
+    )
+    prompt_for_step = LtxAdapter()._v2v_prompt_for_step(job, 20.0)
+    assert prompt_for_step is not None
+
+    first = prompt_for_step(_step(0, 2, workspace))
+    second = prompt_for_step(_step(1, 2, workspace))
+    assert first != second
+    assert "SECTION 1 OF 2" in first
+    assert "SECTION 2 OF 2" in second
+    # The user's own words survive into every section.
+    for prompt in (first, second):
+        assert "charcoal sketch" in prompt
+
+
+def test_a_single_pass_source_keeps_the_prompt_byte_identical(
+    workspace: Path,
+) -> None:
+    """`plan_section_prompts` returns the master untouched for one section,
+    so even with the flag on a short source sends exactly the user's text."""
+    job = restyle_job(
+        workspace, None,
+        execution={"runtime": "ltx", "v2v_section_prompts": True},
+    )
+    prompt_for_step = LtxAdapter()._v2v_prompt_for_step(job, 8.0)
+    assert prompt_for_step is not None
+    assert prompt_for_step(_step(0, 1, workspace)) == job.prompt
+
+
 # ── Duration comes from the file, not from the request ───────────────────
 
 

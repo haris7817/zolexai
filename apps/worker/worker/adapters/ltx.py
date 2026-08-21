@@ -1059,7 +1059,18 @@ class LtxAdapter:
         # stacking a second structure on top of it would be the contradiction
         # `structure_prompt`'s own bail-out rule exists to avoid.
         if job.execution.get("prompt_structuring") and not wants_director(job):
-            job = replace(job, prompt=structure_prompt(job.prompt))
+            # `prompt_structuring_v2` opts a workflow into the revised
+            # continuity block (split bullets, static-camera and departure
+            # awareness, idempotent header) and the matching section-planner
+            # rules. Off, both layers are byte-identical to what has always
+            # shipped — the flag exists so the change can be A/B'd on the GPU
+            # before it becomes anyone's default.
+            job = replace(
+                job,
+                prompt=structure_prompt(
+                    job.prompt, v2=bool(job.execution.get("prompt_structuring_v2"))
+                ),
+            )
 
         # Dispatch on the WORKFLOW, never on which inputs happen to be present:
         # a mis-routed job must fail loudly rather than being quietly treated as
@@ -1116,11 +1127,19 @@ class LtxAdapter:
             if prompt_plan is None:
                 if director_plan is not None:
                     prompt_plan = compile_section_prompts(
-                        director_plan, step.total, total_seconds=seconds
+                        director_plan,
+                        step.total,
+                        total_seconds=seconds,
+                        camera_continuity=bool(
+                            job.execution.get("director_camera_continuity")
+                        ),
                     )
                 else:
                     prompt_plan = plan_section_prompts(
-                        job.prompt, step.total, total_seconds=seconds
+                        job.prompt,
+                        step.total,
+                        total_seconds=seconds,
+                        v2=bool(job.execution.get("prompt_structuring_v2")),
                     )
             return prompt_plan[step.index]
 
@@ -1237,14 +1256,22 @@ class LtxAdapter:
             if prompt_plan is None:
                 if continuation_plan is not None:
                     prompt_plan = compile_section_prompts(
-                        continuation_plan, step.total, total_seconds=extension_seconds
+                        continuation_plan,
+                        step.total,
+                        total_seconds=extension_seconds,
+                        camera_continuity=bool(
+                            job.execution.get("director_camera_continuity")
+                        ),
                     )
                 else:
                     # Timestamps in an extension prompt are relative to the
                     # EXTENSION, which is the only timeline the user is
                     # writing for.
                     prompt_plan = plan_section_prompts(
-                        job.prompt, step.total, total_seconds=extension_seconds
+                        job.prompt,
+                        step.total,
+                        total_seconds=extension_seconds,
+                        v2=bool(job.execution.get("prompt_structuring_v2")),
                     )
             return prompt_plan[step.index]
 
@@ -1465,7 +1492,20 @@ class LtxAdapter:
             job,
             target_seconds,
             per_pass_seconds=per_pass,
-            render=self._renderer(job, reporter, dimensions=grid, conditioning=conditioning),
+            render=self._renderer(
+                job,
+                reporter,
+                dimensions=grid,
+                conditioning=conditioning,
+                # `v2v_section_prompts` gives each section its own compiled
+                # prompt instead of the same byte-identical text N times — the
+                # only workflow family still without per-section prompts. Off
+                # (the default) every section receives job.prompt exactly as
+                # it always has; whether per-section text helps or destabilises
+                # a restyle is a GPU A/B, which is why this is a flag and not
+                # a behaviour change.
+                prompt_for_step=self._v2v_prompt_for_step(job, target_seconds),
+            ),
             reporter=reporter,
             prefix="restyled",
         )
@@ -1740,6 +1780,12 @@ class LtxAdapter:
                 loras=(lora,),
                 control=control,
                 mask=attention,
+                # Same flag as the restyle engine: per-section prompts, off by
+                # default. On the transform engine job.prompt already carries
+                # the appended identity caption, so sectioning repeats the
+                # person's description in every pass — the measured
+                # anti-drift pattern Director mode uses.
+                prompt_for_step=self._v2v_prompt_for_step(job, target_seconds),
             ),
             reporter=reporter,
             prefix="transformed",
@@ -1869,7 +1915,10 @@ class LtxAdapter:
                 # Timestamped shots in a music-video prompt refer to positions
                 # in the SONG, which is exactly the timeline of the chain.
                 prompt_plan = plan_section_prompts(
-                    job.prompt, step.total, total_seconds=target_seconds
+                    job.prompt,
+                    step.total,
+                    total_seconds=target_seconds,
+                    v2=bool(job.execution.get("prompt_structuring_v2")),
                 )
             return prompt_plan[step.index]
 
@@ -2464,6 +2513,34 @@ class LtxAdapter:
             )
             return None
         return ConditioningFrame(still, reference_frame, strength)
+
+    def _v2v_prompt_for_step(
+        self, job: AdapterJob, total_seconds: float
+    ) -> Callable[[ChainStep], str] | None:
+        """Per-section prompts for video-to-video, behind `v2v_section_prompts`.
+
+        Video-to-video is the workflow family that chains longest (a 330 s
+        source on the transform engine is 44 sections) and the only one whose
+        sections all receive byte-identical prompt text. With the flag off
+        (the default) this returns None and `_command` falls back to
+        `job.prompt` exactly as it always has; whether per-section text helps
+        or destabilises a restyle is a GPU A/B question, which is why this is
+        a flag and not a behaviour change.
+        """
+        if not job.execution.get("v2v_section_prompts"):
+            return None
+        v2 = bool(job.execution.get("prompt_structuring_v2"))
+        prompt_plan: list[str] | None = None
+
+        def prompt_for_step(step: ChainStep) -> str:
+            nonlocal prompt_plan
+            if prompt_plan is None:
+                prompt_plan = plan_section_prompts(
+                    job.prompt, step.total, total_seconds=total_seconds, v2=v2
+                )
+            return prompt_plan[step.index]
+
+        return prompt_for_step
 
     # ── The renderer handed to the chain ─────────────────────────────────
 
