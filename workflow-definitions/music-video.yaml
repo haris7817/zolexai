@@ -70,6 +70,14 @@ execution:
   # note and apps/worker/worker/longform/enhance.py for the rules.
   prompt_structuring: true
 
+  # ── Revised continuity block (OFF — GPU A/B first) ──
+  #
+  # prompt_structuring_v2: true
+  #
+  # Same switch as text-to-video.yaml (see the full note there); on this
+  # workflow it also stops section 1 being told to continue from a
+  # predecessor frame it does not have. Byte-identical while off.
+
   # The longest job the product has. A four-minute track is eight visual
   # sections plus assembly and muxing, and the default 30-minute budget would
   # kill it around section three — after the compute had already been spent.

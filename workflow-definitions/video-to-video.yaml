@@ -130,6 +130,20 @@ execution:
   # node; a node without it refuses these jobs before spending any GPU time
   # rather than rendering an unconditioned pass nobody asked for.
 
+  # ── Per-section prompts (OFF — GPU A/B first) ────────────────────────────
+  #
+  # v2v_section_prompts: true
+  #
+  # Video-to-video is the workflow family that chains longest (a 330s source
+  # on the transform engine is 44 sections) and the only one whose every
+  # section still receives byte-identical prompt text (audited 21 Aug 2026).
+  # This flag routes the prompt through the same section planner every other
+  # chained workflow uses — each section gets the persistent constraints plus
+  # its own continuation header, and on the transform engine the appended
+  # identity caption repeats in every pass, the measured anti-drift pattern.
+  # Whether that helps or destabilises a restyle is a GPU question (item G8
+  # in docs/internal/research-ltx25-zolexai-audit.md), so it ships off.
+
   # ── Person lock (OFF — awaiting a full-length validation) ───────────────
   #
   # v2v_person_lock: true

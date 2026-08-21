@@ -70,6 +70,16 @@ execution:
   # note and apps/worker/worker/longform/enhance.py for the rules.
   prompt_structuring: true
 
+  # ── Revised continuity block + Director camera continuity (OFF) ──
+  #
+  # prompt_structuring_v2: true
+  # director_camera_continuity: true
+  #
+  # Same switches as text-to-video.yaml (see the full notes there). The
+  # continuity one applies to standard extensions; the camera one to
+  # Director-lineage continuations. Both change only prompt/caption text and
+  # are byte-identical to shipped behaviour while off.
+
   # A five-minute continuation is the same order of work as Music Video's
   # longest job (same chained passes, same assembly), and a long source adds
   # re-encoding time on top. The default 30-minute budget would kill exactly

@@ -73,6 +73,16 @@ execution:
   # note and apps/worker/worker/longform/enhance.py for the rules.
   prompt_structuring: true
 
+  # ── Revised continuity block + Director camera controls (OFF) ──
+  #
+  # prompt_structuring_v2: true
+  # director_camera_continuity: true
+  # director_camera_from_idea: true
+  #
+  # Same three switches and same reasoning as text-to-video.yaml (see the
+  # full notes there). All three change only prompt/caption text, are off by
+  # default, and are byte-identical to shipped behaviour while off.
+
   # ── Guided quality tier (OFF — a product/pricing decision) ──
   #
   # generation_engine: guided

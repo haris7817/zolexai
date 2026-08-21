@@ -88,6 +88,36 @@ execution:
   # apps/worker/worker/longform/enhance.py.
   prompt_structuring: true
 
+  # ── Revised continuity block + section planner (OFF — GPU A/B first) ──
+  #
+  # prompt_structuring_v2: true
+  #
+  # Fixes three audited defects in the appended block and the section planner
+  # (21 Aug 2026 diagnosis): the worker no longer appends "the camera keeps
+  # moving" over a user-asserted static camera; presence/count assertions are
+  # withheld when the user's own text says somebody leaves (presence claims
+  # about departed people are the measured rendered-ghost failure, 20 Aug);
+  # worker-generated continuity bullets classify as persistent instead of as
+  # one section's dialogue; and section 1 is not told to continue from a
+  # predecessor frame it does not have. Off, every prompt is byte-identical
+  # to what has always shipped — enable after the G1/G2 renders in
+  # docs/internal/research-ltx25-zolexai-audit.md.
+
+  # ── Director camera controls (OFF — planner-output changes, A/B first) ──
+  #
+  # director_camera_continuity: true
+  #
+  # Carries the shot each Director section ends on into the next one, so a
+  # section opening on the same camera says the shot CONTINUES instead of
+  # re-announcing it as a fresh framing event at every seam.
+  #
+  # director_camera_from_idea: true
+  #
+  # Adds the brief rule that binds the planner to a camera the USER asked for
+  # (shot size, angle, movement) — without it the closed shot vocabulary has
+  # no angle and the dialogue-framing preference can override an explicit
+  # request.
+
   # ── Guided quality tier (OFF — enabling is a product/pricing decision) ──
   #
   # generation_engine: guided
