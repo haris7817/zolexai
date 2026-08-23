@@ -146,6 +146,14 @@ the dry-run output in `scripts/dual_engine_bench.py`.
 Not implemented, on purpose: any inference, any decode, any frame extraction,
 any fake result, and any latent path between the two models.
 
+**Verified, 24 August.** Full worker suite **879 passed / 1 failed / 1
+skipped** — exactly 35 more passes than the pre-hybrid baseline of 844, which
+is the 35 new tests, with the same single pre-existing failure (this machine's
+LAME encoder makes a 4.0 s MP3 probe at exactly 4.0 s). The LTX golden argv
+snapshot is green, and `git diff` against the baseline commit touches no
+adapter, longform, director or workflow file: the hybrid is additive in the
+strict sense.
+
 ## 8. Unresolved — for the GPU
 
 1. Does hybrid beat direct H3 anywhere, and by enough?
