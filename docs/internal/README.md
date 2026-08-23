@@ -16,6 +16,9 @@ response. These notes are where the other half lives.
 | [`gpu-worker-runbook.md`](./gpu-worker-runbook.md) | The GPU node, its restricted tunnel to the production API, GPU routing and rollback (M2). Covers the video and music runtimes and process supervision. |
 | [`issue-triton-na-kernel.md`](./issue-triton-na-kernel.md) | 🔴 **Open bug.** LTX video fails above a dimension-dependent length on the PRO 6000. Read before touching video. |
 | [`next-steps-2026-08-15.md`](./next-steps-2026-08-15.md) | Planned work after the 14 Aug migration: outstanding risks, generation-speed options with measurements, quality roadmap |
+| [`research-ltx25-zolexai-audit.md`](./research-ltx25-zolexai-audit.md) | The LTX-2.5 alignment audit: our invocation against the official pipeline source, the flag-gated fixes, and the GPU validation checklist. **The verified baseline.** |
+| [`h3-pre-gpu-integration.md`](./h3-pre-gpu-integration.md) | MiniMax H3's official capabilities and limits, what was built around it, and the licence gate. No GPU, no routing decision. |
+| [`ltx-h3-comparison-framework.md`](./ltx-h3-comparison-framework.md) | How the two engines will be compared: provider architecture, capability matrix, 41 benchmark cases, scoring, and the decision process. |
 
 The runbook names the VPS, its addresses, the deployment paths and the
 CloudPanel routing, which is why it lives here rather than beside the
