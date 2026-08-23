@@ -37,6 +37,21 @@ class ReferenceSpec:
     source: str = ""
     """A path placeholder or upload role. Never a signed URL."""
 
+    origin: str = "user_asset"
+    """`user_asset` or `generated_intermediate`.
+
+    The distinction the hybrid strategy exists to protect. Once an LTX draft
+    can be handed to H3 as a reference, a manifest full of `image` entries no
+    longer says whether the model was shown the customer's own photograph or a
+    picture we invented from it — and an identity score against an invented
+    reference measures nothing. Provenance is therefore carried per reference,
+    not inferred from position.
+    """
+
+    @property
+    def is_generated(self) -> bool:
+        return self.origin == "generated_intermediate"
+
 
 @dataclass(frozen=True)
 class AudioWindow:

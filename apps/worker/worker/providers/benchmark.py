@@ -25,7 +25,10 @@ Nothing here runs a model. `scripts/dual_engine_bench.py` drives it.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from typing import Any
+
+from worker.providers.strategy import GenerationStrategy, hybrid_allowed
 
 # ── Scoring ──────────────────────────────────────────────────────────────
 
@@ -95,7 +98,58 @@ class BenchmarkCase:
     both_engines: bool = True
     """False where no honest equivalent exists — recorded, not forced."""
 
+    prompt_version: int = 1
+    """Bumped whenever the prompt text changes. The frozen pack refuses a
+    silent edit: a changed prompt at the same version fails
+    `tests/test_golden_pack.py`, because two runs of "A9" that were not the
+    same request cannot be compared."""
+
     note: str = ""
+
+    @property
+    def hybrid(self) -> bool:
+        return self.id in HYBRID_CASES
+
+    @property
+    def strategies(self) -> tuple[GenerationStrategy, ...]:
+        """The cells this case contributes to the results table."""
+        cells: list[GenerationStrategy] = []
+        if self.both_engines:
+            cells.append(GenerationStrategy.LTX_ONLY)
+        cells.append(GenerationStrategy.H3_ONLY)
+        if self.hybrid and hybrid_allowed(self.workflow_id):
+            cells.append(GenerationStrategy.LTX_TO_H3_REFERENCE)
+        return tuple(cells)
+
+
+#: Where a third cell — LTX draft, decoded, handed to H3 as a reference — is
+#: worth its second inference pass. Declared in one place rather than as a
+#: flag scattered through the case list, because the list of hybrids IS the
+#: budget decision and it should be readable at a glance.
+#:
+#:   B1-B6, B8  image-to-video, the case the hypothesis was written for: the
+#:              photograph owns WHO, the draft may own HOW IT MOVES.
+#:   D1-D5      reference-person V2V, the high-priority comparison — LTX has
+#:              no identity input at all, H3 has one, and whether LTX's
+#:              structural draft adds anything to H3's own reading of the
+#:              source is exactly the open question.
+#:   E1-E3      music video up to a minute. E4 (two minutes) is deliberately
+#:              excluded until reliability at a minute is established.
+#:   A2, A3,    premium text-to-video only: a cinematic human scene, fast
+#:   A5, A6     action, a difficult camera move, a multi-shot sequence —
+#:              the four places a draft could carry motion structure H3 would
+#:              otherwise invent from text alone.
+#:
+#: Everything else runs two cells. Testing hybrid everywhere would spend the
+#: GPU budget on cells whose answer is already "no".
+HYBRID_CASES = frozenset(
+    {
+        "B1", "B2", "B3", "B4", "B5", "B6", "B8",
+        "D1", "D2", "D3", "D4", "D5",
+        "E1", "E2", "E3",
+        "A2", "A3", "A5", "A6",
+    }
+)
 
 
 def _case(*args, **kwargs) -> BenchmarkCase:
@@ -370,35 +424,92 @@ GROUPS: dict[str, str] = {
 # ── Results ──────────────────────────────────────────────────────────────
 
 
+class FailureClass(StrEnum):
+    """Why a run failed, in classes that lead to different actions.
+
+    Treating every failure as one number hides the only thing the number is
+    for: an OOM says buy headroom or lower the shape, a CUBLAS says avoid a
+    frame count, a reference_failure says our compiler misread the engine's
+    semantics, and a corrupt_output says the file passed ffprobe and is still
+    unusable — which this project has actually shipped once, as green video.
+    """
+
+    OOM = "oom"
+    CUBLAS = "cublas"
+    MODEL_LOAD = "model_load"
+    DECODE = "decode"
+    DURATION_MISMATCH = "duration_mismatch"
+    AUDIO_MISMATCH = "audio_mismatch"
+    IDENTITY_FAILURE = "identity_failure"
+    REFERENCE_FAILURE = "reference_failure"
+    SEAM_FAILURE = "seam_failure"
+    PROMPT_FAILURE = "prompt_failure"
+    CORRUPT_OUTPUT = "corrupt_output"
+    TIMEOUT = "timeout"
+    UNKNOWN = "unknown"
+
+
 @dataclass
 class RunRecord:
     """One generation. Every field is recorded even when it is boring — a
-    result without its conditions cannot be compared with anything later."""
+    result without its conditions cannot be compared with anything later, and
+    "reproduce this in three months" is the standard."""
 
     case_id: str
     provider: str
+    strategy: str = GenerationStrategy.LTX_ONLY.value
     pipeline: str = ""
     run_index: int = 0
+
+    # Provenance: what the run WAS, precisely enough to repeat it.
     gpu: str = ""
+    model_revision: str = ""
+    runtime_revision: str = ""
+    prompt_version: int = 1
+    asset_hashes: dict[str, str] = field(default_factory=dict)
+    seed: int | None = None
+    """Reproducibility WITHIN a provider. A seed is not comparable across
+    models and must never be presented as a controlled variable between
+    them."""
+
     cold_start: bool = True
-    duration_seconds: float = 0.0
+    duration_requested: float = 0.0
+    duration_actual: float | None = None
     width: int = 0
     height: int = 0
     frames: int = 0
     steps: int | None = None
     references: int = 0
+    generated_references: int = 0
+    """How many of `references` were our own intermediate rather than the
+    customer's asset. Non-zero only on a hybrid."""
+
     audio_input: bool = False
+
+    # Timing. A hybrid pays for both engines, so both are recorded and the
+    # total is the sum — comparing only the H3 half of a hybrid against a
+    # whole LTX run is the easiest way to reach a wrong conclusion.
     model_load_seconds: float | None = None
+    ltx_generation_seconds: float | None = None
+    ltx_decode_seconds: float | None = None
+    handoff_seconds: float | None = None
+    """Decode, frame selection and reference preparation between the passes."""
+
+    h3_reference_prep_seconds: float | None = None
+    h3_generation_seconds: float | None = None
+    h3_decode_seconds: float | None = None
+    model_switch_seconds: float | None = None
+    """Unload, cleanup and the next engine's load, when one card serves both."""
+
     generation_seconds: float | None = None
     decode_seconds: float | None = None
     total_wall_seconds: float | None = None
+
     peak_vram_gb: float | None = None
     peak_host_ram_gb: float | None = None
+
     succeeded: bool = False
     failure_class: str = ""
-    """oom | cublas | corrupt_output | duration_mismatch | audio_mismatch |
-    identity_failure | other — the classes this project has actually seen."""
-
     retries: int = 0
     scores: dict[str, float] = field(default_factory=dict)
     lip_sync_level: str = ""
@@ -413,6 +524,37 @@ class RunRecord:
         return data
 
 
+def incremental_quality_gain(
+    baseline: RunRecord, candidate: RunRecord, *, metric: str | None = None
+) -> float | None:
+    """How much a candidate beat a baseline, on the overall or one metric.
+
+    Returns None when either side is unscored rather than treating a missing
+    score as zero.
+    """
+    if metric:
+        if metric not in baseline.scores or metric not in candidate.scores:
+            return None
+        return round(candidate.scores[metric] - baseline.scores[metric], 3)
+    base, cand = baseline.overall(), candidate.overall()
+    if base is None or cand is None:
+        return None
+    return round(cand - base, 3)
+
+
+def incremental_cost_ratio(baseline: RunRecord, candidate: RunRecord) -> float | None:
+    """What the candidate costs as a multiple of the baseline, wall-clock.
+
+    Paired with the gain above, this is the whole hybrid question: +0.1 of
+    quality for 1.75x the time is a loss; +1.7 of identity for the same 1.75x
+    may not be. **The threshold is deliberately not defined here** — it is a
+    product decision, and hard-coding one now would make it look measured.
+    """
+    if not baseline.total_wall_seconds or not candidate.total_wall_seconds:
+        return None
+    return round(candidate.total_wall_seconds / baseline.total_wall_seconds, 3)
+
+
 def result_skeleton() -> dict[str, Any]:
     """The empty result document the GPU session fills in.
 
@@ -425,6 +567,7 @@ def result_skeleton() -> dict[str, Any]:
         "ltx_commit": None,
         "h3_revision": None,
         "notes": "",
+        "hybrid_handoff_form": None,
         "runs": [],
         "decisions": {
             workflow: {"provider": None, "evidence": {}}

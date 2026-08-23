@@ -1,0 +1,269 @@
+{
+  "pack_version": 1,
+  "description": "Golden media for the LTX/H3 benchmark. The media itself is NOT in git; this manifest is the committed artifact and the files live beside it under benchmarks/assets/. Verify with: uv run python apps/worker/scripts/golden_pack.py --verify",
+  "rules": [
+    "Every acquired asset carries a SHA256. A mismatch STOPS the comparison \u2014 LTX from image A and H3 from image A-as-re-exported are not a comparison.",
+    "Provenance and licence are required before an asset may be marked acquired. Prefer internally created or generated media we hold rights to; never a commercial track pulled from the internet.",
+    "One identity across every reference-person framing. The comparison is identity retention, so the identity must be the constant.",
+    "Do not re-encode an acquired asset. Re-encoding changes the hash and silently changes the input."
+  ],
+  "assets": [
+    {
+      "id": "person-closeup",
+      "filename": "reference_person/person-closeup.png",
+      "kind": "image",
+      "purpose": "Reference person, close-up. The identity every D-group cell must retain.",
+      "cases": [
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "J1"
+      ],
+      "framing": "close-up",
+      "provenance": "TO BE CREATED \u2014 internally shot or generated with rights held. Record the source here before marking acquired.",
+      "acquisition": "pending",
+      "notes": "Same person as person-waistup and person-fullbody. Neutral expression, even lighting, face unobstructed. Also the identity reference for J1, the multimodal H3-only case."
+    },
+    {
+      "id": "person-waistup",
+      "filename": "reference_person/person-waistup.png",
+      "kind": "image",
+      "purpose": "Reference person, waist-up. Tests whether framing of the REFERENCE changes identity retention.",
+      "cases": [
+        "D2"
+      ],
+      "framing": "waist-up",
+      "provenance": "TO BE CREATED \u2014 same identity as person-closeup.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "person-fullbody",
+      "filename": "reference_person/person-fullbody.png",
+      "kind": "image",
+      "purpose": "Reference person, full body. The framing that produced the bust-at-the-feet anchor bug on LTX.",
+      "cases": [
+        "D3"
+      ],
+      "framing": "full-body",
+      "provenance": "TO BE CREATED \u2014 same identity as person-closeup.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "src-closeup-speaking",
+      "filename": "v2v/src-closeup-speaking.mp4",
+      "kind": "video",
+      "purpose": "Source performance, close-up, speaking. Drives reference-person replacement and lip-sync-through-restyle.",
+      "cases": [
+        "C4",
+        "D1",
+        "J1"
+      ],
+      "framing": "close-up",
+      "provenance": "TO BE CREATED \u2014 internally shot, subject consent recorded.",
+      "acquisition": "pending",
+      "notes": "10s. Clear mouth movement, minimal camera motion, so identity and lip timing are separable from camera effects."
+    },
+    {
+      "id": "src-waistup-speaking",
+      "filename": "v2v/src-waistup-speaking.mp4",
+      "kind": "video",
+      "purpose": "Source performance, waist-up, speaking.",
+      "cases": [
+        "D2"
+      ],
+      "framing": "waist-up",
+      "provenance": "TO BE CREATED \u2014 internally shot.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "src-fullbody-movement",
+      "filename": "v2v/src-fullbody-movement.mp4",
+      "kind": "video",
+      "purpose": "Source performance, full body, walking and turning.",
+      "cases": [
+        "D3"
+      ],
+      "framing": "full-body",
+      "provenance": "TO BE CREATED \u2014 internally shot.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "src-fast-movement",
+      "filename": "v2v/src-fast-movement.mp4",
+      "kind": "video",
+      "purpose": "Fast motion, to separate motion quality from identity retention.",
+      "cases": [
+        "C5"
+      ],
+      "framing": "full-body",
+      "provenance": "TO BE CREATED \u2014 internally shot.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "src-moving-camera",
+      "filename": "v2v/src-moving-camera.mp4",
+      "kind": "video",
+      "purpose": "A deliberate camera move, for camera preservation and for D4.",
+      "cases": [
+        "C3",
+        "D4"
+      ],
+      "framing": "waist-up",
+      "provenance": "TO BE CREATED \u2014 internally shot.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "src-hard-cut",
+      "filename": "v2v/src-hard-cut.mp4",
+      "kind": "video",
+      "purpose": "Two shots with a hard cut. Identity across a cut is measured to drift on LTX.",
+      "cases": [
+        "D5"
+      ],
+      "framing": "mixed",
+      "provenance": "TO BE CREATED \u2014 internally shot.",
+      "acquisition": "pending",
+      "notes": "30s, one clean cut near the middle, same subject either side."
+    },
+    {
+      "id": "src-multiple-characters",
+      "filename": "v2v/src-multiple-characters.mp4",
+      "kind": "video",
+      "purpose": "Two people in frame \u2014 assignment of a single reference is undefined and this is where that shows.",
+      "cases": [
+        "C1",
+        "C2",
+        "C6"
+      ],
+      "framing": "waist-up",
+      "provenance": "TO BE CREATED \u2014 internally shot, consent from both subjects.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "i2v-portrait",
+      "filename": "i2v/i2v-portrait.png",
+      "kind": "image",
+      "purpose": "Portrait close-up for image-to-video and its hybrid cell.",
+      "cases": [
+        "B1",
+        "B6"
+      ],
+      "framing": "close-up",
+      "provenance": "TO BE CREATED \u2014 may reuse person-closeup if the identity suits.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "i2v-fullbody",
+      "filename": "i2v/i2v-fullbody.png",
+      "kind": "image",
+      "purpose": "Full-body person for motion from a still.",
+      "cases": [
+        "B2",
+        "B4"
+      ],
+      "framing": "full-body",
+      "provenance": "TO BE CREATED.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "i2v-landscape",
+      "filename": "i2v/i2v-landscape.png",
+      "kind": "image",
+      "purpose": "Environment with no person \u2014 separates scene animation from identity.",
+      "cases": [
+        "B3",
+        "B5"
+      ],
+      "framing": "landscape",
+      "provenance": "TO BE CREATED.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "i2v-difficult-lighting",
+      "filename": "i2v/i2v-difficult-lighting.png",
+      "kind": "image",
+      "purpose": "Backlit or low-key subject, where source fidelity is hardest to hold.",
+      "cases": [
+        "B7"
+      ],
+      "framing": "waist-up",
+      "provenance": "TO BE CREATED.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "i2v-multiple-subjects",
+      "filename": "i2v/i2v-multiple-subjects.png",
+      "kind": "image",
+      "purpose": "Two or more people in one still \u2014 identity retention across several subjects.",
+      "cases": [
+        "B8"
+      ],
+      "framing": "waist-up",
+      "provenance": "TO BE CREATED.",
+      "acquisition": "pending"
+    },
+    {
+      "id": "singer-reference",
+      "filename": "music_video/singer-reference.png",
+      "kind": "image",
+      "purpose": "The performer whose identity every music-video cell must hold across seams.",
+      "cases": [
+        "E1",
+        "E2",
+        "E3",
+        "E4"
+      ],
+      "framing": "waist-up",
+      "provenance": "TO BE CREATED \u2014 internally shot or generated, rights held.",
+      "acquisition": "pending",
+      "notes": "Music video currently has no reference-image input on the LTX path; this asset is what an H3 Ref2VA cell uses and what a future LTX equivalent would need."
+    },
+    {
+      "id": "benchmark-song",
+      "filename": "music_video/benchmark-song.wav",
+      "kind": "audio",
+      "purpose": "The single frozen song for every music-video cell and every lip-sync measurement.",
+      "cases": [
+        "E1",
+        "E2",
+        "E3",
+        "E4",
+        "J1"
+      ],
+      "framing": "n/a",
+      "provenance": "TO BE CREATED \u2014 generate with our own ACE-Step service so the rights are unambiguous and the lyrics are known exactly. Never a commercial track.",
+      "acquisition": "pending",
+      "notes": "Requirements that make lip-sync measurable: clear lead vocal, at least one instrumental gap of 2s or more, a verse and a chorus, and identifiable vocal onset/offset moments. Freeze the exact lyric sheet, language and section timings alongside it in music_video/benchmark-song.lyrics.json."
+    },
+    {
+      "id": "benchmark-song-lyrics",
+      "filename": "music_video/benchmark-song.lyrics.json",
+      "kind": "text",
+      "purpose": "The exact lyrics, language, section structure and vocal onset/offset timings of benchmark-song.wav.",
+      "cases": [
+        "E1",
+        "E2",
+        "E3",
+        "E4"
+      ],
+      "framing": "n/a",
+      "provenance": "Produced with the song. Written by our own lyrics writer, so the words are known rather than transcribed.",
+      "acquisition": "pending",
+      "notes": "Whisper must not be the source of truth here \u2014 it called an English pop song Khmer once. Vocal presence comes from a Demucs stem, and the sheet is what was actually sung."
+    },
+    {
+      "id": "extend-source",
+      "filename": "v2v/extend-source.mp4",
+      "kind": "video",
+      "purpose": "The clip group I continues. Ends mid-gesture with a speaking subject so continuity is visible.",
+      "cases": [
+        "I1"
+      ],
+      "framing": "waist-up",
+      "provenance": "TO BE CREATED \u2014 ideally a prior LTX output, so extension lineage is exercised too.",
+      "acquisition": "pending"
+    }
+  ]
+}

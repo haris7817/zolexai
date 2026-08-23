@@ -38,6 +38,7 @@ from worker.providers.benchmark import (  # noqa: E402
     cases_for_group,
     result_skeleton,
 )
+from worker.providers.hybrid import compile_hybrid  # noqa: E402
 
 _SUFFIX = {"image": ".png", "video": ".mp4", "audio": ".mp3"}
 _CONTENT_TYPE = {"image": "image/png", "video": "video/mp4", "audio": "audio/mpeg"}
@@ -77,6 +78,26 @@ def _job(case: BenchmarkCase, workspace: Path) -> AdapterJob:
         },
         workspace=workspace,
     )
+
+
+def _summarise_hybrid(case: BenchmarkCase, workspace: Path) -> list[str]:
+    """The third cell, where one is defined: both passes and the handoff."""
+    if not case.hybrid:
+        return []
+    try:
+        plan = compile_hybrid(_job(case, workspace))
+    except ProviderRefusal as refusal:
+        return [f"      hybrid refused — {refusal.reason}"]
+
+    first = plan.handoffs[0]
+    originals = ", ".join(f"{r.role}" for r in first.original_references) or "none"
+    generated = ", ".join(f"{r.role}" for r in first.generated_references) or "none"
+    return [
+        f"      hybrid  ltx draft {plan.draft.section_count} section(s) "
+        f"-> decoded RGB -> h3 {plan.final.section_count} section(s), "
+        f"form={first.handoff_form}",
+        f"              originals kept: {originals}  |  from draft: {generated}",
+    ]
 
 
 def _summarise(case: BenchmarkCase, plans: dict) -> str:
@@ -147,6 +168,8 @@ def main() -> int:
             print(f"  {letter} · {title}")
             for case in group:
                 engines = "both" if case.both_engines else "h3 only"
+                if case.hybrid:
+                    engines += " + hybrid"
                 print(f"      {case.id:<3} {case.title:<38} "
                       f"{case.repeats} run(s), {engines}")
         print("\nScoring:", ", ".join(f"{k} {v}%" for k, v in SCORE_WEIGHTS.items()))
@@ -163,6 +186,8 @@ def main() -> int:
             plans = {"error": {"refused": refusal.reason}}
         out[case.id] = {"case": case.id, "title": case.title, "plans": plans}
         print(_summarise(case, plans))
+        for line in _summarise_hybrid(case, workspace):
+            print(line)
         print()
 
     if args.out:

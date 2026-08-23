@@ -1,0 +1,1150 @@
+{
+  "pack_version": 1,
+  "case_count": 41,
+  "cell_count": 100,
+  "run_count": 406,
+  "cases": [
+    {
+      "case_id": "A1",
+      "group": "A",
+      "title": "Simple cinematic scene",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "612a2cc89c455042aac8507404529599189c81ef4f960f6644fbc138d38fda00",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "5s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "visual_quality",
+        "motion_quality"
+      ]
+    },
+    {
+      "case_id": "A2",
+      "group": "A",
+      "title": "Human dialogue",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "e8da98bf7a1f48ad934771e271b72c5dc9f8d72fb0ce35d150072ce3210ee6f0",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "10s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "dialogue",
+        "lip_sync",
+        "identity_consistency"
+      ]
+    },
+    {
+      "case_id": "A3",
+      "group": "A",
+      "title": "Fast action",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "4ac2fd377c46a97ca3c3fea4319d19527f007b4e2b02d2aa1a6860c0a8296385",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "5s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 3,
+      "measures": [
+        "motion_quality",
+        "temporal_consistency"
+      ]
+    },
+    {
+      "case_id": "A4",
+      "group": "A",
+      "title": "Multiple characters",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "30177ec93f1e9a39b202eb505ea17c35cd7a257659060d80689bec8e3b3b980f",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "10s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "identity_consistency",
+        "prompt_adherence"
+      ]
+    },
+    {
+      "case_id": "A5",
+      "group": "A",
+      "title": "Camera control",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "68364352f27408c5cd28faa8116979f52b506d8b8739aab42ef9011839109bf1",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "10s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 3,
+      "measures": [
+        "camera_adherence"
+      ]
+    },
+    {
+      "case_id": "A6",
+      "group": "A",
+      "title": "Multi-shot scene",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "9585bd22ffcc808b1f781fd3eab8a3850aa3739192634cf06cec790b96084026",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "15s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 3,
+      "measures": [
+        "prompt_adherence",
+        "seam_quality"
+      ]
+    },
+    {
+      "case_id": "A7",
+      "group": "A",
+      "title": "Exact prompt adherence",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "d7ed9bc550cd9b9b50bc94dc7d91df292a7c2686e6a3a06a49570da02600fa2f",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "15s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "prompt_adherence"
+      ]
+    },
+    {
+      "case_id": "A8",
+      "group": "A",
+      "title": "Thirty-second long form",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "ef0aa48fc26568ca897d08525dd80e31cde1986852862f837bde3e4eb161d646",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "30s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "long_form_continuity",
+        "seam_quality"
+      ]
+    },
+    {
+      "case_id": "A9",
+      "group": "A",
+      "title": "Sixty-second long form",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "65bce1547cba0da249a9c6ca85ce9a627cfa0289cadbd78645d4ff462d56929b",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "60s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "long_form_continuity",
+        "seam_quality",
+        "identity_consistency"
+      ]
+    },
+    {
+      "case_id": "B1",
+      "group": "B",
+      "title": "Portrait close-up",
+      "workflow_id": "image-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "fa410b7b1852092247771117d6d4599d947103ce6bc695a823c1dbaba4c57d6f",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "5s"
+      },
+      "execution": {},
+      "inputs": [
+        [
+          "source_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "reference_fidelity",
+        "identity_consistency"
+      ]
+    },
+    {
+      "case_id": "B2",
+      "group": "B",
+      "title": "Full-body person",
+      "workflow_id": "image-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "4620bba5392cc0b4366aa2cbe3ae0cc7a05e5de7fc4a7c5433605452d423dbd2",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "5s"
+      },
+      "execution": {},
+      "inputs": [
+        [
+          "source_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 3,
+      "measures": [
+        "reference_fidelity",
+        "motion_quality"
+      ]
+    },
+    {
+      "case_id": "B3",
+      "group": "B",
+      "title": "Landscape",
+      "workflow_id": "image-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "4675b7fd996dcadd3e44837bb3d59cbc0c9502ff99af25c5f2891e115248529c",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "5s"
+      },
+      "execution": {},
+      "inputs": [
+        [
+          "source_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 3,
+      "measures": [
+        "visual_quality",
+        "temporal_consistency"
+      ]
+    },
+    {
+      "case_id": "B4",
+      "group": "B",
+      "title": "Action from a still",
+      "workflow_id": "image-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "3c7c48931ad547e60a478c20359bfe6c508757803904d194821ddb10cc551cee",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "5s"
+      },
+      "execution": {},
+      "inputs": [
+        [
+          "source_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 3,
+      "measures": [
+        "motion_quality"
+      ]
+    },
+    {
+      "case_id": "B5",
+      "group": "B",
+      "title": "Camera motion from a still",
+      "workflow_id": "image-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "caf8921a99437a755c65028c6ae92a4c03c6d02e35ed4218f07332aa1f8c26db",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "5s"
+      },
+      "execution": {},
+      "inputs": [
+        [
+          "source_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 3,
+      "measures": [
+        "camera_adherence"
+      ]
+    },
+    {
+      "case_id": "B6",
+      "group": "B",
+      "title": "Dialogue from an image",
+      "workflow_id": "image-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "8c33c7877cbb3d1156e0b92af9db58a031d974ad711b27d21e33da5c51302682",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "10s"
+      },
+      "execution": {},
+      "inputs": [
+        [
+          "source_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "lip_sync",
+        "identity_consistency"
+      ]
+    },
+    {
+      "case_id": "B7",
+      "group": "B",
+      "title": "Thirty-second continuation",
+      "workflow_id": "image-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "da6904fe4a708aed3fafa3b2ac454e0c51d6289ac2c9938451bd503b979fed68",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "30s"
+      },
+      "execution": {},
+      "inputs": [
+        [
+          "source_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "identity_consistency",
+        "long_form_continuity"
+      ]
+    },
+    {
+      "case_id": "B8",
+      "group": "B",
+      "title": "Sixty-second continuation",
+      "workflow_id": "image-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "6d594e5945923ac8a3742673341b8acee2ef0a7d22ddc26dd8d378e79d614619",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "60s"
+      },
+      "execution": {},
+      "inputs": [
+        [
+          "source_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "identity_consistency",
+        "long_form_continuity",
+        "seam_quality"
+      ]
+    },
+    {
+      "case_id": "C1",
+      "group": "C",
+      "title": "Style transformation",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "3c3cad043504e6aed09b2ada3ed82b1316bdd0e35eeff2eeea00bed834d07c0d",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "prompt_adherence",
+        "reference_fidelity"
+      ]
+    },
+    {
+      "case_id": "C2",
+      "group": "C",
+      "title": "Source-motion preservation",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "8c33045ba6ecbd6a48ab3c4946b1a54451e62127e920097905fee6927241a52c",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "reference_fidelity",
+        "motion_quality"
+      ]
+    },
+    {
+      "case_id": "C3",
+      "group": "C",
+      "title": "Camera preservation",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "8d173aa38baa1da4ecbd086059ca3051349f1b4badcae6649fa6288789a3ed32",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "camera_adherence"
+      ]
+    },
+    {
+      "case_id": "C4",
+      "group": "C",
+      "title": "Dialogue clip",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "4eefd3a3fca99f79fece416ee29ec2b87079f5f9893935493240c6f680322b9b",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "lip_sync",
+        "audio_response"
+      ]
+    },
+    {
+      "case_id": "C5",
+      "group": "C",
+      "title": "Action clip",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "0848a9e7c112435d6ea71efb00426a6282b4022bb2d49c33ebd108cce4e69174",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "motion_quality"
+      ]
+    },
+    {
+      "case_id": "C6",
+      "group": "C",
+      "title": "Thirty-second clip",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "2e43c8bc5632f3d32e60ede74b3992643b57d0eb53397eec6fef10d852a109a2",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "dry_run_source_seconds": 30.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "seam_quality",
+        "long_form_continuity"
+      ]
+    },
+    {
+      "case_id": "D1",
+      "group": "D",
+      "title": "Reference person, close-up",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "97f20b3a744bcb88726d4bcbee5b31e00cf29ae96c3209008775cc7371ae87a8",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "v2v_reference_identity": true,
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ],
+        [
+          "reference_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "identity_consistency",
+        "reference_fidelity"
+      ]
+    },
+    {
+      "case_id": "D2",
+      "group": "D",
+      "title": "Reference person, waist-up",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "97f20b3a744bcb88726d4bcbee5b31e00cf29ae96c3209008775cc7371ae87a8",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "v2v_reference_identity": true,
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ],
+        [
+          "reference_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "identity_consistency"
+      ]
+    },
+    {
+      "case_id": "D3",
+      "group": "D",
+      "title": "Reference person, full-body",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "97f20b3a744bcb88726d4bcbee5b31e00cf29ae96c3209008775cc7371ae87a8",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "v2v_reference_identity": true,
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ],
+        [
+          "reference_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "identity_consistency",
+        "reference_fidelity"
+      ]
+    },
+    {
+      "case_id": "D4",
+      "group": "D",
+      "title": "Reference person, moving camera",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "97f20b3a744bcb88726d4bcbee5b31e00cf29ae96c3209008775cc7371ae87a8",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "v2v_reference_identity": true,
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ],
+        [
+          "reference_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 3,
+      "measures": [
+        "identity_consistency",
+        "camera_adherence"
+      ]
+    },
+    {
+      "case_id": "D5",
+      "group": "D",
+      "title": "Reference person across hard cuts",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "97f20b3a744bcb88726d4bcbee5b31e00cf29ae96c3209008775cc7371ae87a8",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "v2v_reference_identity": true,
+        "dry_run_source_seconds": 30.0
+      },
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ],
+        [
+          "reference_image",
+          "image"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "identity_consistency",
+        "seam_quality"
+      ]
+    },
+    {
+      "case_id": "E1",
+      "group": "E",
+      "title": "Fifteen-second music video",
+      "workflow_id": "music-video",
+      "prompt_version": 1,
+      "prompt_sha256": "c13e78cf770c48f7e54d1ce8a269ccba963ee0148aa5cc906e3f3fe8ed5872ec",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "audio_conditioning": true,
+        "dry_run_source_seconds": 15.0
+      },
+      "inputs": [
+        [
+          "source_audio",
+          "audio"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "lip_sync",
+        "audio_response",
+        "identity_consistency"
+      ]
+    },
+    {
+      "case_id": "E2",
+      "group": "E",
+      "title": "Thirty-second music video",
+      "workflow_id": "music-video",
+      "prompt_version": 1,
+      "prompt_sha256": "c13e78cf770c48f7e54d1ce8a269ccba963ee0148aa5cc906e3f3fe8ed5872ec",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "audio_conditioning": true,
+        "dry_run_source_seconds": 30.0
+      },
+      "inputs": [
+        [
+          "source_audio",
+          "audio"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "lip_sync",
+        "seam_quality"
+      ]
+    },
+    {
+      "case_id": "E3",
+      "group": "E",
+      "title": "Sixty-second music video",
+      "workflow_id": "music-video",
+      "prompt_version": 1,
+      "prompt_sha256": "c13e78cf770c48f7e54d1ce8a269ccba963ee0148aa5cc906e3f3fe8ed5872ec",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "audio_conditioning": true,
+        "dry_run_source_seconds": 60.0
+      },
+      "inputs": [
+        [
+          "source_audio",
+          "audio"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only",
+        "ltx_to_h3_reference"
+      ],
+      "repeats": 5,
+      "measures": [
+        "lip_sync",
+        "seam_quality",
+        "identity_consistency"
+      ]
+    },
+    {
+      "case_id": "E4",
+      "group": "E",
+      "title": "Two-minute music video",
+      "workflow_id": "music-video",
+      "prompt_version": 1,
+      "prompt_sha256": "c13e78cf770c48f7e54d1ce8a269ccba963ee0148aa5cc906e3f3fe8ed5872ec",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "audio_conditioning": true,
+        "dry_run_source_seconds": 120.0
+      },
+      "inputs": [
+        [
+          "source_audio",
+          "audio"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "lip_sync",
+        "identity_consistency",
+        "seam_quality"
+      ]
+    },
+    {
+      "case_id": "F1",
+      "group": "F",
+      "title": "One speaker",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "3c83fdfa4509919a4b3c23db4f6ecc1070434f6a43a6f604306379f1dece23c7",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "10s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "lip_sync",
+        "dialogue"
+      ]
+    },
+    {
+      "case_id": "F2",
+      "group": "F",
+      "title": "Two speakers, turn-taking",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "ff451bb5b5062deb74dc2a795558b53f52f6babba2f345a7702a8447bac1141c",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "15s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "dialogue",
+        "identity_consistency"
+      ]
+    },
+    {
+      "case_id": "F3",
+      "group": "F",
+      "title": "Emotional dialogue",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "f2bb6a2f0c24dac44bcb53e04e2cccc107eacb02b51dc3b528344d38ff1da619",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "10s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "dialogue",
+        "visual_quality"
+      ]
+    },
+    {
+      "case_id": "F4",
+      "group": "F",
+      "title": "Reaction shot",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "ee7f15c7b39c14261fa7871799bf163c68d401679c0bee80e153fdb92b99417d",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "15s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "dialogue",
+        "prompt_adherence"
+      ]
+    },
+    {
+      "case_id": "G1",
+      "group": "G",
+      "title": "Camera vocabulary sweep",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "a4d96d2e4eb572640f2d3dbe58565c9a4b7d4b37457fabd7d07ed469d2d3862c",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "5s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "camera_adherence"
+      ]
+    },
+    {
+      "case_id": "H1",
+      "group": "H",
+      "title": "Thirty seconds, one global plan",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "ed6829e7743a0a37a9a1ca368c3b13809eadcf43594d24d0d9938cf1b8d5f95b",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "30s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "long_form_continuity",
+        "dialogue",
+        "seam_quality"
+      ]
+    },
+    {
+      "case_id": "H2",
+      "group": "H",
+      "title": "Sixty seconds, one global plan",
+      "workflow_id": "text-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "9361c40f6251ab2eb8a20d73783d0af4a06bc39ed3abae36e25647662b18f00c",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "60s"
+      },
+      "execution": {},
+      "inputs": [],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "long_form_continuity",
+        "dialogue",
+        "seam_quality",
+        "identity_consistency"
+      ]
+    },
+    {
+      "case_id": "I1",
+      "group": "I",
+      "title": "Continue an existing clip",
+      "workflow_id": "extend-video",
+      "prompt_version": 1,
+      "prompt_sha256": "9d05b00a3976fcc2ced43ce50395d89d6e1f96abb9cb3382a589778614e0c3d6",
+      "parameters": {
+        "aspect_ratio": "16:9",
+        "duration": "10s"
+      },
+      "execution": {},
+      "inputs": [
+        [
+          "source_video",
+          "video"
+        ]
+      ],
+      "strategies": [
+        "ltx_only",
+        "h3_only"
+      ],
+      "repeats": 5,
+      "measures": [
+        "seam_quality",
+        "identity_consistency",
+        "audio_response"
+      ]
+    },
+    {
+      "case_id": "J1",
+      "group": "J",
+      "title": "Image plus video plus audio in one request",
+      "workflow_id": "video-to-video",
+      "prompt_version": 1,
+      "prompt_sha256": "5b96de924f40ebdafe63950ca8444725542066a7f08e4cca5cea402e4ecef141",
+      "parameters": {
+        "aspect_ratio": "16:9"
+      },
+      "execution": {
+        "dry_run_source_seconds": 10.0
+      },
+      "inputs": [
+        [
+          "reference_image",
+          "image"
+        ],
+        [
+          "source_video",
+          "video"
+        ],
+        [
+          "source_audio",
+          "audio"
+        ]
+      ],
+      "strategies": [
+        "h3_only"
+      ],
+      "repeats": 3,
+      "measures": [
+        "reference_fidelity",
+        "identity_consistency",
+        "audio_response"
+      ]
+    }
+  ]
+}

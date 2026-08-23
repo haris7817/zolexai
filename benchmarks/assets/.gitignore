@@ -1,0 +1,4 @@
+# Golden benchmark media travels out of band — the manifest is the committed
+# artifact, not the files. See README.md.
+*
+!.gitignore
