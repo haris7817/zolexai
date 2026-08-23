@@ -19,6 +19,9 @@ response. These notes are where the other half lives.
 | [`research-ltx25-zolexai-audit.md`](./research-ltx25-zolexai-audit.md) | The LTX-2.5 alignment audit: our invocation against the official pipeline source, the flag-gated fixes, and the GPU validation checklist. **The verified baseline.** |
 | [`h3-pre-gpu-integration.md`](./h3-pre-gpu-integration.md) | MiniMax H3's official capabilities and limits, what was built around it, and the licence gate. No GPU, no routing decision. |
 | [`ltx-h3-comparison-framework.md`](./ltx-h3-comparison-framework.md) | How the two engines will be compared: provider architecture, capability matrix, 41 benchmark cases, scoring, and the decision process. |
+| [`ltx-h3-hybrid-benchmark.md`](./ltx-h3-hybrid-benchmark.md) | The LTX→H3 hybrid: why the handoff is decoded RGB and not latents, which cases carry a third cell, and how its cost is accounted. |
+| [`golden-benchmark-pack.md`](./golden-benchmark-pack.md) | The frozen benchmark inputs: assets, hashes, provenance, prompt versioning, and the result manifest. |
+| [`dual-engine-gpu-day-runbook.md`](./dual-engine-gpu-day-runbook.md) | 🟢 **Execute this when the GPU arrives.** Ten phases, stop conditions, and the first ten commands. |
 
 The runbook names the VPS, its addresses, the deployment paths and the
 CloudPanel routing, which is why it lives here rather than beside the
