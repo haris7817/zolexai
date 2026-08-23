@@ -212,6 +212,25 @@ Built, and exercisable today without a GPU:
 | Harness CLI | `scripts/dual_engine_bench.py` |
 | LTX golden argv snapshot, 11 shapes | `tests/test_ltx_golden.py` |
 
+### 4.1 The LTX baseline held
+
+Verified on `dual-engine-benchmark-prep`, 22–24 August:
+
+- `git diff` against the baseline commit touches **no existing worker source
+  file and no workflow YAML** — the integration is new files plus one line in
+  the internal docs index. LTX byte-equivalence is structural here, not
+  argued.
+- The golden argv snapshot (11 shapes) is green.
+- Full worker suite: **844 passed, 1 failed, 1 skipped.** The single failure
+  is `test_a_track_longer_than_one_pass_becomes_several_scenes` — this
+  machine's LAME encoder makes a 4.0 s MP3 probe at exactly 4.0 s, so four
+  windows are planned where the test expects five. It is documented
+  pre-existing (verified by stash-and-rerun on 17 and 21 August) and is
+  unrelated to provider work.
+- The 14 disk-floor failures in the pre-change baseline are absent this run:
+  they track free space on the audit machine's C: drive against
+  `min_free_disk_mb`, not the code.
+
 Deliberately **not** decided, because each is a measurement:
 
 - H3 steps, guidance/CFG, quantization build, offload strategy, section length
