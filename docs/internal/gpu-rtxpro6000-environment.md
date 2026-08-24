@@ -154,10 +154,122 @@ export HF_HOME=/workspace/cache/huggingface
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   # SGLang recommends this for H3 decode
 ```
 
-## 9. Open at time of writing
+## 9. Phase 6 — LTX verified on this card
 
-1. **Our repository is not on the box** — `dual-engine-benchmark-prep` does not
-   exist on `origin`, so it cannot be cloned. Phases 3, 6 and everything
-   downstream are blocked on that push.
-2. LTX Python environment not yet built; checkpoints not yet downloaded.
-3. H3 not yet installed; no HF token on the box.
+All timings are wall-clock from `scripts/ltx_smoke.py`, which drives the real
+`LtxAdapter` against the real model with no platform, no API and no routing.
+Every output was inspected, not merely validated.
+
+| Smoke | Wall | Output | Result |
+|---|---:|---|---|
+| **T2V** 5 s | **28.2 s** | 1024x576, 24 fps, 5.013 s | PASS |
+| **I2V** 5 s | 24.7 s | 1024x576, 4.97 s | PASS |
+| **Extend** +5 s | 24.7 s | 1024x576, **10.004 s** from a 5 s source | PASS |
+| **V2V** default | 25.9 s | 1024x576, 5.013 s | ran, but see §9.2 |
+| **V2V** transform engine | **61.8 s** | 1024x576, 5.0 s | PASS, real restyle |
+
+**Against the reference.** Production recorded ~34 s for 121 frames at
+1024x576; this card does the same work in **28.2 s**, about 17% faster. That is
+consistent with the 600 W Workstation Edition and means the recorded ceilings
+are conservative here, not optimistic.
+
+### 9.1 The T2V output, inspected
+
+```text
+1024x576  yuv420p  24 fps  120 frames  5.013 s  834 KiB
+mean luma Y          = 80.80     (black would be ~16)
+mean interframe delta = 2.256    (0.000 would be frozen)
+max  interframe delta = 3.204
+```
+
+Frames 0, 60 and 119 were pulled off the box and looked at. Photographic dawn
+light on open water, shoreline and rock detail, ripples evolving frame to
+frame, scene coherent from first to last with no drift into artefact. **Not
+green, not black, not corrupted** — which settles the `to_empty` question
+empirically and replaces the runbook's broken grep gate (§7.1).
+
+120 delivered frames is not an 8k+1 violation. `conforming_frames()` snaps the
+request up to the lattice — 121 for a 5 s ask — and the deliverable is then
+trimmed to the requested duration. The model received a conforming count; had
+it not, it would have crashed rather than rendered.
+
+### 9.2 The finding that matters for the benchmark
+
+**The default V2V path did not restyle.** Given "as a charcoal sketch, heavy
+graphite texture", it returned a clip visually indistinguishable from its
+source: same dawn colour, same photographic look, no graphite anywhere. The
+smoke reported `SMOKE TEST PASSED` because the adapter and model agreed and the
+file validated — the failure is only visible in the pixels.
+
+This is **not a defect**. The default path is still-conditioned restyle at
+`v2v_structure_strength: 0.45`, which anchors hard to source stills. The strong
+restyle is the opt-in transform engine (`v2v_engine: transform`,
+`ltx_pipelines.ic_lora` + Union Control LoRA). Run with that, the same prompt
+stripped the colour to monochrome while holding the geometry — shoreline, water
+and composition unchanged.
+
+**Consequence:** C-group (6 cases) and D-group (5 cases) are 11 of 41 benchmark
+cases, and on the default path they would measure a near-passthrough rather than
+a restyle. The benchmark harness already sets `v2v_engine: transform`; this
+confirms that is required, not preferential. It costs **2.4x** (61.8 s against
+25.9 s), which is the documented LoRA rule — a LoRA drops quantization entirely
+and the unquantized 22B is fitted instead.
+
+The transform restyle is monochrome but reads as a desaturated photograph
+rather than a drawing, so stylistic strength for "charcoal sketch" is partial.
+That is a quality question for the benchmark to score, not a gate.
+
+### 9.3 Weights actually required
+
+The README's five files are **not** sufficient for our adapter.
+
+| File | Size | Why |
+|---|---:|---|
+| `distilled-transformer-nvfp4` | 17.44 GB | `ltx_quantization` defaults to `nvfp4-prequant` |
+| `distilled-transformer-bf16` | 39.13 GB | any LoRA path drops quantization |
+| `gemma4-12b-with-proj` | 24.46 GB | text encoder |
+| `video-vae` / `audio-vae` | 1.37 / 0.34 GB | |
+| `latent-spatial-upscaler-x2` | 0.93 GB | |
+| `duration-head` | <0.01 GB | |
+| `ltx-2.3-22b-ic-lora-union-control-ref0.5` | 0.61 GB | transform engine — **from `Lightricks/LTX-2.3-22b-IC-LoRA-Union-Control`, a different repo** |
+
+Total 84 GB. Disk after: 96 GB of 879 GB.
+
+### 9.4 Two more runbook gaps
+
+- **`ltx-kernels` is never mentioned.** NVFP4 refuses to run without it, so the
+  first real render dies. Building it is not optional on this path.
+- **Its build needs the venv toolchain, not the system one.** The system nvcc is
+  12.8 and torch is cu132, which fails with a CUDA version mismatch. The 13.2
+  nvcc ships inside the venv at
+  `.venv/lib/python3.11/site-packages/nvidia/cu13`. And upstream's own hint says
+  `TORCH_CUDA_ARCH_LIST='10.0'` — datacenter Blackwell. **This card is sm_120**,
+  so it must be `12.0` or the kernels build for an architecture the card cannot
+  run.
+
+```bash
+export CUDA_HOME=/workspace/src/LTX-2/.venv/lib/python3.11/site-packages/nvidia/cu13
+export PATH=$CUDA_HOME/bin:$PATH
+export TORCH_CUDA_ARCH_LIST=12.0
+uv pip install -e packages/ltx-kernels --no-build-isolation
+```
+
+### 9.5 Not yet run
+
+Music video / A2V. It needs a real track, and the golden `benchmark-song` is
+still unacquired — generating it with our own ACE-Step is the next GPU task.
+
+## 10. Open at time of writing
+
+1. **Music video / A2V not smoked** — needs a real track. Generating the golden
+   `benchmark-song` with our own ACE-Step is the next GPU task, and it doubles
+   as asset acquisition (2 of the 19 golden assets).
+2. **H3 not installed.** Licence is clear (§1) and the repo is ungated, so
+   nothing blocks it but the work itself.
+3. **Golden media 0 of 19 acquired** — still the calendar-time blocker for the
+   real benchmark, unchanged by anything measured here.
+
+Resolved during this session: the repository is on the box at `c16f82d`, a
+HuggingFace token with gated-repo scope is installed at
+`/workspace/cache/huggingface/token`, and both feature branches now exist on
+`origin` so the box is no longer anybody's only copy.
