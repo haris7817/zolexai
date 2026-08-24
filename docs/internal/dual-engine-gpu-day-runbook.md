@@ -198,6 +198,53 @@ Cost of the transform engine: **2.4x** (61.8 s against 25.9 s). That is the
 documented LoRA rule - a LoRA drops quantization entirely and the unquantized
 22B is fitted instead.
 
+### 1.6 Music video: the default path does not condition on audio
+
+**The second default today that does not do the task it is named for.**
+
+Handed the frozen benchmark song, the music-video path produced a valid 30 s
+video with the track on it - and the model never heard a note of it.
+
+Evidence, all measured:
+
+```text
+wall clock        102.1 s for 30 s of video = 3.4x real time
+                  (the a2vid audio-conditioned path is ~10.6x; plain T2V is ~3.4x)
+progress          "Adding your track..." at post_processing 92%  <- muxed, not conditioned
+argv              no --audio / --audio-path reached the pipeline
+config            no audio_conditioning setting is set
+output audio      AAC 48 kHz; per-second RMS envelope matches the supplied
+                  MP3 within ~0.5 dB across 28 buckets -> the same track,
+                  transcoded and muxed, not regenerated
+```
+
+So the video was generated from the **prompt alone** and the customer's track
+was attached afterwards.
+
+> **Benchmark rule.** E-group (4 cases) plus J1 measure lip-sync. On this path
+> lip-sync is **zero by construction** - not because LTX is bad at it, but
+> because LTX was never given the audio. Publishing that as an LTX result would
+> be a measurement of our own configuration wearing the model's name, exactly
+> as with the V2V default in 1.5.
+>
+> The provider-native A2V baseline must drive `a2vid_two_stage` with the track
+> actually supplied to the model. Until an E-group cell is confirmed to be on
+> that path, its lip-sync number is not a finding.
+
+This also explains the historical note that "lip-sync measures 0 ms - not a
+model problem": it was never a model problem.
+
+**Record for every music-video run** which of these actually happened, because
+they are indistinguishable in the output file:
+
+| | |
+|---|---|
+| model generated the audio | |
+| supplied audio was conditioned into the model | |
+| supplied audio was copied to the output (H3 `fully_copy`) | |
+| audio was muxed afterwards | **this is what the default LTX path does** |
+| audio was replaced | |
+
 ## Phase 2 · Install the H3 runtime
 
 Do **not** guess the build. Decide it here, from what the purchased card
