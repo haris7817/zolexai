@@ -294,3 +294,63 @@ worth 10x the wall clock"*, which is a genuine product judgement rather than a
 capability gap.
 
 Level C (phoneme articulation) remains unclaimed for both.
+
+---
+
+## 10. D1 — reference-person V2V, provider-native both sides
+
+Identity reference: a man in his fifties, short grey beard, navy wool coat,
+generated separately so the subject is **distinct from the source performer**
+(reusing the same person would make identity preservation trivially easy).
+Source performance: the LTX native A2V singer clip. Same 5.17 s both sides.
+
+| | LTX transform | H3 Ref2VA |
+|---|---|---|
+| Path | `v2v_engine: transform` + `v2v_reference_identity` | image + video references, order semantic |
+| Output | 1024x576, 5.184 s | 1344x768, 5.167 s |
+| **Wall clock** | **108.7 s = 21.0x real time** | **1686.0 s = 326.3x real time** |
+| Peak VRAM | — | 93.1 GB |
+| Peak host | — | 73.3 GB |
+| **Identity transferred** | yes | yes |
+| Scene / framing preserved | yes | yes |
+| **Artifacts** | **broken composite in opening frames** | **none observed** |
+
+**H3 is 15.5x slower and visibly cleaner.**
+
+LTX transferred the identity — face, grey beard and navy coat all carried onto
+the performance, with the rehearsal room and framing kept — but frame 20 shows
+a **broken composite**: a rectangular block of mismatched imagery bottom-left
+and the head offset at top-left. Frames 60 and 110 are clean, so the
+person-matting anchor appears to settle over roughly the first second. This
+path has prior history of anchor defects, so it is worth treating as a real
+finding rather than a one-off.
+
+H3 showed no artifacts at any sampled frame. Its identity match is good but not
+perfect: the beard reads closer to stubble than the reference's full grey
+beard, and the hair is darker.
+
+D1 is therefore the mirror image of E-group. On music video the two engines were
+comparable and LTX was 10x cheaper. On reference-person V2V H3 is **cleaner**,
+and the question is whether an opening-second composite artifact is worth 15x
+the wall clock — or whether that artifact is simply a bug to fix in the LTX
+anchor, in which case the quality gap may close for free.
+
+**That is the single most decision-relevant question left in Tier 1**, and it is
+a code question, not a model question.
+
+### 10.1 Dependencies discovered
+
+`v2v_reference_identity` needs **`kornia` and `timm`** for its person-matting
+step; without them the run dies in `worker.media.ffmpeg` with an ImportError
+that names them. Not in the LTX environment by default and not in the runbook.
+
+### 10.2 A note on the a2vid landing table
+
+The first LTX A2V attempt failed with a latent shape mismatch — 254 audio rows
+against a 401-row target — because the a2vid measured-landing table jumps
+**241 -> 385 frames**. A 10.16 s track (244 frames) snapped up to 385 frames
+(16.04 s) and then had no audio to fill it.
+
+Any track whose frame count falls between 242 and 385 hits this. The benchmark
+works around it by choosing windows that land exactly on a table value; the
+adapter arguably should cap the snap at the available audio instead.
