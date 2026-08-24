@@ -22,7 +22,7 @@ All at the provider-native canvas (1344x768, 768 short edge), 124 frames
 | **B1** subject image | 1 image | 580.9 s | 112x | 81.7 GB | 71.0 GB | 0.2 GB | **PASS** |
 | **B2** video reference | 1 video (120 f) | 1127.9 s | 218x | 88.2 GB | 73.5 GB | 0.2 GB | **PASS** |
 | **B3** supplied audio | 1 image + 1 audio | 663.0 s | 128x | 83.3 GB | 71.9 GB | 0.2 GB | **PASS** |
-| **B4** continuation | 1 video (120 f) | *in flight* | | | | | *pending* |
+| **B4** continuation | 1 video (120 f) | 1130.9 s | 219x | 88.2 GB | 73.1 GB | 0.2 GB | **PASS** (fresh process) |
 
 **Cost is driven by reference payload, not just output length.** An image
 reference costs 112x real time; adding an audio reference takes it to 128x; a
@@ -62,7 +62,10 @@ B4 ran third in a single process, after B2 and B3, and the guard fired at
 > Batching them in a loop exhausts host RAM regardless of the individual
 > workload, and the failure looks like a workflow failure when it is not.
 
-B4 is being re-run alone to confirm.
+**Confirmed.** Re-run alone, B4 completed at 1130.9 s / 88.2 GB VRAM /
+73.1 GB host — within three seconds and 0.4 GB of B2, which is the same
+reference kind. B4 was never heavier than B2; the failure was accumulation
+alone.
 
 ## 3. B3 — is `fully_copy` real? **Yes, and it is not a mux**
 
@@ -188,9 +191,25 @@ execution priority changes.
 
 No frozen case has been deleted or altered.
 
+### 4.1 B4 — continuation is soft, not seam-exact
+
+B4 passes: the reference is consumed, the scene does not reset, and the output
+is coherent — same lake, same dawn light, same shoreline character. But the
+camera **jumps**: the shoreline sits much closer and the sun has moved left
+between the source's last frame and the continuation's first.
+
+That is the documented behaviour rather than a defect. ref2va references "do
+not bind the generated geometry" — they are encoded at their own resolution and
+the target canvas defaults to H3's own. So **ref2va continuation is a soft,
+scene-level continuation**, and a seam-exact one would need FL2VA's keyframe
+(`image`) conditioning, which is the partition deliberately not downloaded.
+
+Consequence for I-group (extend) and long-form: H3's continuation via ref2va
+will not hold a seam the way LTX's frame conditioning does. If seam-exact
+continuation matters, that is an FL2VA question, not a Ref2VA one.
+
 ## 8. Open
 
-- B4 confirmation in a fresh process.
 - One 345-frame run under the raised guard, to settle whether the 14.375 s
   failure is host OOM.
 - LTX native A2V smoke on the same window as B3.
