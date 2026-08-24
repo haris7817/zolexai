@@ -235,3 +235,62 @@ continuation matters, that is an FL2VA question, not a Ref2VA one.
 - LTX native A2V smoke on the same window as B3.
 - D1 and the E-group pair.
 - **FL2VA still not downloaded.** Correct — Ref2VA has not yet earned it.
+
+---
+
+## 9. E-group head-to-head — provider-native both sides
+
+Same song window (48.0 s, spanning the measured vocal gap at 50.5–52.25 s),
+same semantic intent, each engine prompted in its own provider's style.
+
+| | LTX native a2vid | H3 Ref2VA fully_copy |
+|---|---|---|
+| Output | 1024x576, 241 frames, 10.042 s | 1344x768, 243 frames, 10.125 s |
+| **Wall clock** | **147.9 s = 14.7x real time** | **1462.0 s = 144.4x real time** |
+| Audio preservation | **+1.000**, RMS -14.72 -> -14.75 | +0.997, RMS -14.69 -> -13.51 |
+| Audio reaches the model | **YES** — `--audio-path` proven in live argv | YES — reference in the denoising loop |
+| **Goal-B (mouth settles in the gap)** | **ratio 2.368 — YES** | **ratio 2.822 — YES** |
+| Identity conditioning | **none available** on this path | singer image reference |
+
+**Both engines achieve Goal B.** The mouth settles during the instrumental gap
+and resumes when the vocal returns, on both. The difference between 2.37 and
+2.82 is inside the noise of a crude ROI probe and should not be read as H3
+winning.
+
+**H3 costs about 10x more wall clock for comparable presence behaviour.**
+
+### 9.1 A measurement error, and its correction
+
+The first pass reported LTX at ratio **1.086** — "no difference between singing
+and silence" — which would have made LTX look structurally incapable of
+lip-presence. **That was my probe, not the model.**
+
+One fixed mouth ROI was used for both engines. H3 frames the singer tight and
+LTX frames her wide, so the same box captured mostly face on one and a lot of
+room on the other. Measured background motion in the LTX clip:
+
+```text
+background ROI   VOCAL 3.040    GAP 8.177
+```
+
+Background motion in the gap was more than double that during singing, and it
+swamped the mouth signal entirely. Re-measured with that baseline subtracted,
+LTX lands at 2.368 and clears Goal B comfortably.
+
+The lesson is worth keeping: **a cross-engine visual metric has to be robust to
+framing**, or it measures the shot rather than the model. Any Tier-2 scoring
+that compares engines on pixels needs the same treatment.
+
+### 9.2 What this does to the music-video question
+
+Before this pair, the working assumption was that H3 was the only engine that
+could lip-sync, because LTX's *default* path never receives the audio. That is
+still true of the default. It is **not** true of LTX's native A2V path, which
+receives the track and behaves comparably at a tenth of the cost.
+
+So the E-group question changes from *"can LTX do this at all"* to *"is H3's
+quality advantage — identity conditioning, resolution, articulation detail —
+worth 10x the wall clock"*, which is a genuine product judgement rather than a
+capability gap.
+
+Level C (phoneme articulation) remains unclaimed for both.
