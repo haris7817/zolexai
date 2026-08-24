@@ -191,3 +191,104 @@ API (paused, not cancelled).
 person-anchor composite artifact in `v2v_reference_identity`. The final
 Reference V2V routing decision requires `LTX_FIXED vs H3_INT8`, and neither
 half exists yet.
+
+---
+
+## 6. ADDENDUM (25 Aug) — the three workflow JSONs arrived and were read
+
+The client supplied `minimax_h3_t2v_extender.json`, `minimax_h3_r2v_extender.json`
+and `minimax_h3_i2v_extender.json` in full. **The CLIENT JSON REQUIRED blocker
+is resolved.** Everything below is read from the graphs themselves.
+
+### 6.1 The 60-second mystery is solved
+
+The guide's 1,433 frames would not decompose as five uniform segments. The
+graphs hold the answer — the plan is non-uniform by design:
+
+```text
+60s clip plan (identical in all three modes):
+  segments 1–3: duration 12.5 s -> aligned to 17k+5 = 311 frames each
+  segments 4–5: duration 12.0 s -> aligned to 17k+5 = 294 frames each
+  raw   311+311+311+294+294 = 1521
+  trim  4 seams x 22 frames =  -88
+  final                       1433 frames = 59.708 s   EXACT MATCH
+```
+
+30 s = 362+362−22 = 702 ✓. Every guide preset now decomposes exactly. The I2V
+graph states it openly in its node titles ("segment 1 … (311 frames)",
+"segment 4 … (294 frames)").
+
+### 6.2 The sampling configuration was never provider-official — now it is client-pinned
+
+The graphs settle what the checkpoint and docs never specified:
+
+| Setting | Value (all three modes) |
+|---|---|
+| steps | **20** |
+| sampler | **res_multistep** |
+| scheduler | **beta** |
+| denoise | 1.0 |
+| guidance | **BasicGuider — no negative, no CFG** (consistent with guidance-distilled) |
+| video context between segments | 22 frames |
+| **audio context between segments** | **0 — disabled** |
+| fps | 24 |
+
+Two notes. First, our BF16 runs used a provisional 30 steps; the client path
+uses 20 — a 1.5x step advantage to account for in any speed comparison.
+Second, **`audio_context_length` is 0 in every graph**, so audio continuity is
+NOT carried across seams despite the guide's "motion/audio context" phrasing.
+Expect audible seam behaviour on 30 s / 60 s runs — the same failure class our
+LTX music-video chain once had — and test for it rather than assuming.
+
+### 6.3 Architecture differs by mode — and ComfyUI core ships native H3 nodes
+
+- **T2V and R2V** use the Extender's monolithic `MiniMaxH3Extender` node
+  (pinned `ver: 6a3583d…` inside the JSON) with `clips_json` duration plans,
+  plus `MiniMaxH3PromptPackBridge` / `MiniMaxH3ReferencePackBridge` and two
+  Easy-Use lazy index switches. R2V feeds Pictures 1–3 through the reference
+  bridge; T2V runs the same ref2va model with an empty reference pack.
+- **I2V** is hand-built: per-duration chains of **comfy-core**
+  `MiniMaxH3ImageToVideo` → `BasicGuider` → `SamplerCustomAdvanced`, joined by
+  the Extender's `MotionContextDiskJoin` / `MotionContextRAM` (context "22"),
+  with a lazy switch over the five caches into one `FinalDecode`.
+- `MiniMaxH3ImageToVideo` and `CLIPLoader type: minimax` carry
+  `cnr_id: comfy-core, ver: 0.33.3` — **ComfyUI core 0.33.3 natively supports
+  MiniMax H3**. The Extender adds continuation, caching and assembly, not the
+  model itself. That materially de-risks the environment build.
+
+### 6.4 Confirmations
+
+- Model stack byte-matches the guide in all three graphs, including the
+  `H3\` / `MiniMax\` subfolders and the INT8 ConvRot filenames.
+- Canvases: T2V/R2V 544x320 (`megapixels 0.17408` = 544x320 exactly, mode
+  `manual`); I2V 1280x736 via width/height primitives overriding the widget.
+- Fixed seeds per segment: T2V 731003101–105, R2V 731003121–125, I2V noise
+  seeds 410620260911–915. Duration index defaults to **4 (60 s)** in all three
+  graphs, as the guide warns.
+- Both duration selectors are Easy-Use `easy anythingIndexSwitch` pinned
+  `ver: 4de1ab3b…` in the JSON — the lazy-routing claim is structural.
+
+### 6.5 What is still blocked
+
+**The text encoder, unchanged.** The graphs confirm the filename
+(`H3\qwen3vl_32b_minimax_h3_int8_convrot.safetensors`, `CLIPLoader type
+minimax`) but not its provenance. It is absent from the Abiray repo that
+supplies everything else, and the only public repos carrying the exact name are
+explicitly *uncensored*/*Heretic* variants. Until the client says where their
+copy came from (ideally with its SHA256), running the pack means silently
+substituting an abliterated conditioning model — which stays a STOP.
+
+### 6.6 A separate proposal in the same conversation — parked
+
+The client's contact also sketched a different idea: LTX renders a fast draft,
+its **first frame** is extracted and sent to the **MiniMax H3 cloud API** as an
+I2V request. Parked deliberately: the H3 API is Phase-19 paused, hybrid is
+Phase-20 paused, and the local INT8 reproduction comes first. One technical
+observation for later, recorded now so it is not lost: that pipeline hands H3
+only frame t0, so LTX's *motion* does not survive the handoff — it is an API
+re-generation seeded by a keyframe, not a refine of the LTX clip, and its
+accompanying sketch JSON (single-checkpoint loader, a "distilled" scheduler
+string in vanilla KSampler) would not run as written. If the API route is ever
+revisited, our existing decoded-RGB hybrid design already covers the
+full-video-reference version of the same idea.
+
