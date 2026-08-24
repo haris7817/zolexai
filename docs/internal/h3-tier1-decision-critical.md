@@ -32,25 +32,47 @@ the expensive end — which is exactly where the decision matters.
 
 ## 2. Two memory limits, both found the hard way
 
-### 2.1 Length: 14.375 s does not run on this machine
+### 2.1 Length — CORRECTED: 14.375 s DOES run
 
-B3 was first attempted at **345 frames (14.375 s)** — inside H3's documented
-5–15 s range. The process was **killed silently**: no Python traceback, no CUDA
-error, no `ABORT` from the guard (then set at 8 GB, sampling every 5 s). A CUDA
-OOM raises a catchable exception; a silent SIGKILL with no trace is
-**consistent with the host OOM killer**, though `dmesg` is not readable in this
-container so it is not directly confirmed.
+**This section previously said the opposite, and it was wrong.**
 
-Re-run at **124 frames (5.167 s)** it passed comfortably at 71.9 GB host.
+The first 345-frame (14.375 s) attempt was killed silently — no traceback, no
+CUDA error — and I recorded provider-native 15 s as unavailable on this
+machine, with a routing consequence attached. That attempt ran **second in a
+shared process, after B2**. Once §2.2 established that memory accumulates per
+process, the failure had a second possible cause and the conclusion was not
+safe.
 
-> **Consequence for routing.** H3's documented 5–15 s window is **not
-> achievable on this machine at provider-native resolution** — only the bottom
-> of it is. A 30 s music-video section becomes **6 H3 generations** rather than
-> 2, at 128x real time each. That compounds the speed gap rather than offsetting
-> it.
+Re-run **alone, in a fresh process**, with 0.5 s tracing:
 
-This needs one confirmation run at 345 frames under the raised guard before it
-is treated as settled.
+```text
+345 frames / 14.375 s   image + audio references
+  wall                2429.9 s   = 169x real time
+  peak host RAM         77.9 GB  (minimum free 47.2 GB)
+  peak VRAM             95.0 GB of 95.6   <- 99.4%, saturated
+  peak swap              0.2 GB
+  PASS
+```
+
+**Provider-native 15 s is available on this configuration.** The earlier failure
+was accumulation, not length. The section-count assumptions revert:
+
+```text
+30 s music video   H3 = 2 sections   (not 6)
+60 s               H3 = 4 sections
+```
+
+Two real limits do come out of the corrected run:
+
+- **VRAM is saturated at 99.4%** for 345 frames with an image and an audio
+  reference. A *video* reference costs more than an image one (88.2 GB at only
+  124 frames), so **345 frames plus a video reference will not fit**. Long
+  D-group cells are the ones to watch, not long E-group cells.
+- **Cost per second of output rises with length**, as quadratic attention
+  implies: 128x real time at 124 frames, **169x at 345**. Longer H3 clips are
+  disproportionately expensive, so chaining shorter sections is cheaper per
+  second than generating long ones — the opposite of the intuition that fewer,
+  longer sections save time.
 
 ### 2.2 Memory accumulates across generations in one process
 
@@ -210,8 +232,6 @@ continuation matters, that is an FL2VA question, not a Ref2VA one.
 
 ## 8. Open
 
-- One 345-frame run under the raised guard, to settle whether the 14.375 s
-  failure is host OOM.
 - LTX native A2V smoke on the same window as B3.
 - D1 and the E-group pair.
 - **FL2VA still not downloaded.** Correct — Ref2VA has not yet earned it.
