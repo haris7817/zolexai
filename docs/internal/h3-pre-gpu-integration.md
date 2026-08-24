@@ -180,7 +180,10 @@ different products.
 
 ## 3. Licensing — an open blocker, not a formality
 
-The open weights are limited to the **EU, UK, South Korea and the US**, and an
+**Corrected 24 August 2026 — the paragraph below had the territory inverted;
+see `h3-rtxpro6000-runtime-research.md` §1.1 for the licence text.** The
+Applicable Territory is worldwide **excluding** the EU, UK, South Korea and the
+US; deployment inside those four requires an approved application, and an
 organisation in those regions must **apply** for a formal licence: MiniMax
 reviews the deployment scenario and confirms compliance controls before
 authorising use. The licence also carries safety guardrails requiring

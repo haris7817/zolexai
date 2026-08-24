@@ -177,8 +177,10 @@ The config carries none of these as hard-coded values; the H3 manifest reports
 
 1. **Golden media** — 19 assets, none acquired. The only dependency that costs
    calendar time rather than GPU time.
-2. **H3 licence authorisation** — open weights are limited to the EU, UK, South
-   Korea and the US and require an approved application; the moderation
+2. **H3 licence authorisation** — *corrected 24 Aug 2026: this was inverted.*
+   The Applicable Territory is worldwide EXCLUDING the EU, UK, South Korea and
+   the US; only deployment inside those four needs an approved application, so
+   the physical location of the GPU decides. The moderation
    obligation needs an owner.
 3. **GPU purchase and runtime selection** — §8.
 

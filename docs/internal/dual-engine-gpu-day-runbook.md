@@ -86,8 +86,13 @@ build, runtime and version, CUDA, PyTorch, attention backend, and whether the
 weights are the `fl2va` head, the `ref2va` head, or both.
 
 **STOP if** the licence application has not been approved. This is a real
-gate: the open weights are limited to the EU, UK, South Korea and the US and
-require an authorised application.
+gate, but it turns on WHERE THIS GPU PHYSICALLY IS. The Applicable
+Territory is worldwide **excluding** the EU, UK, South Korea and the US.
+Outside those four, the community licence covers us by default; inside any of
+them, an approved application is required first. Confirm the location from the
+provider's machine record, not from IP geolocation or the billing country.
+(Corrected 24 Aug 2026 — the earlier wording here was inverted. See
+`h3-rtxpro6000-runtime-research.md` §1.1.)
 
 ## Phase 3 · H3 smoke
 

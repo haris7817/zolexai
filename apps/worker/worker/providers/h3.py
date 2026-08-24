@@ -90,13 +90,17 @@ class H3Provider:
 
     def health(self) -> tuple[bool, str]:
         # Deliberately hard-wired until a node actually carries H3. The
-        # licence is a real gate, not a formality: open weights are limited to
-        # the EU, UK, South Korea and the US, and an organisation there must
-        # APPLY and be authorised before deploying them.
+        # licence is a real gate, not a formality, and it turns on WHERE the
+        # node physically is: the Applicable Territory is worldwide EXCEPT the
+        # EU, UK, South Korea and the US, and an organisation deploying inside
+        # one of those four must APPLY and be authorised first.
+        # (Corrected 24 Aug 2026 — earlier wording here had the polarity
+        # inverted; see docs/internal/h3-rtxpro6000-runtime-research.md §1.1.)
         return False, (
-            "H3 is not installed on any node, and the MiniMax H3 Community "
-            "Licence requires an approved application before the open weights "
-            "may be deployed"
+            "H3 is not installed on any node. Before it may be, the MiniMax H3 "
+            "Community Licence requires the node's physical location to be "
+            "confirmed: deployment inside the EU, UK, South Korea or the US "
+            "needs an approved application; elsewhere is licensed by default"
         )
 
     # ── Validation ───────────────────────────────────────────────────────
