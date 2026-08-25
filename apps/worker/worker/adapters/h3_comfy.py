@@ -18,7 +18,13 @@ Scope, deliberately narrow:
     job, and a plain restyle without a reference image is refused here rather
     than half-served.
 
-Everything else — T2V, music video, extend — stays on LTX per the measured
+  * `text-to-video` → the client T2V graph — added 25 Aug at the user's
+    explicit request as a client-test experiment. LTX remains the measured
+    default for T2V (faster at a larger canvas, and H3's identity edge does
+    not apply without an input image); routing YAML decides, and the flip is
+    one line either way.
+
+Everything else — music video, extend — stays on LTX per the measured
 routing. Turbo is not reachable from here at all: rejected on quality.
 
 The ComfyUI service is treated exactly like ACE-Step: a long-lived local
@@ -61,6 +67,25 @@ logger = logging.getLogger("zolexai.worker.h3_comfy")
 _GRAPHS = {
     "image-to-video": "minimax_h3_i2v_extender.json",
     "video-to-video": "minimax_h3_r2v_extender.json",
+    "text-to-video": "minimax_h3_t2v_extender.json",
+}
+
+#: Client-test T2V canvases: the proven tier pixel budgets reshaped to the
+#: product's aspect ratios, every side a multiple of 32 — the pack documents
+#: the width/height primitives as authoritative under exactly that invariant.
+_T2V_CANVAS = {
+    "quality": {
+        "16:9": (960, 544),
+        "9:16": (544, 960),
+        "1:1": (704, 704),
+        "4:5": (640, 800),
+    },
+    "draft": {
+        "16:9": (544, 320),
+        "9:16": (320, 544),
+        "1:1": (416, 416),
+        "4:5": (384, 480),
+    },
 }
 
 #: Measured wall-clock per second of output on the RTX PRO 6000, used ONLY to
@@ -71,6 +96,8 @@ _EXPECTED_RATE = {
     ("video-to-video", "quality"): 34.0,
     ("image-to-video", "quality"): 60.0,
     ("image-to-video", "draft"): 60.0,  # I2V has one proven canvas; same pace
+    ("text-to-video", "draft"): 14.0,  # measured 25 Aug: 70.3s cold for 5.17s
+    ("text-to-video", "quality"): 34.0,  # assumed ≈ R2V quality; pacing only
 }
 
 
@@ -216,7 +243,7 @@ class H3ComfyAdapter:
                     retriable=False,
                 )
             images["I2V SOURCE IMAGE"] = await self._stage_image(job, source, "src")
-        else:
+        elif job.workflow_id == "video-to-video":
             reference = job.input_for("reference_image")
             source_video = job.input_for("source_video")
             if reference is None:
@@ -245,13 +272,19 @@ class H3ComfyAdapter:
         plan = plan_from_prompt(job.prompt, reference_labels=reference_labels)
         prompts = dict(enumerate(discipline_prompts(plan, segments), start=1))
 
-        # ── Canvas tier (R2V only; I2V's one proven canvas is the graph's) ──
+        # ── Canvas tier (I2V's one proven canvas is the graph's own) ──
         width = height = None
         if job.workflow_id == "video-to-video":
             if tier == "draft":
                 width, height = settings.h3_comfy_draft_canvas
             else:
                 width, height = settings.h3_comfy_quality_canvas
+        elif job.workflow_id == "text-to-video":
+            # T2V has no input image to inherit a shape from, so the product's
+            # aspect_ratio parameter picks the canvas within the tier's proven
+            # pixel budget. An unknown value falls back to the proven 16:9.
+            aspect = str(job.parameters.get("aspect_ratio") or "16:9").strip()
+            width, height = _T2V_CANVAS[tier].get(aspect, _T2V_CANVAS[tier]["16:9"])
 
         audio_context = job.execution.get("h3_audio_context")
         edits = GraphEdits(

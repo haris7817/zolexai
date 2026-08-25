@@ -22,6 +22,7 @@ from worker.core.config import settings
 
 R2V_GRAPH = settings.h3_comfy_workflows_dir / "minimax_h3_r2v_extender.json"
 I2V_GRAPH = settings.h3_comfy_workflows_dir / "minimax_h3_i2v_extender.json"
+T2V_GRAPH = settings.h3_comfy_workflows_dir / "minimax_h3_t2v_extender.json"
 
 
 # ── Graph compilation ───────────────────────────────────────────────────────
@@ -30,6 +31,7 @@ I2V_GRAPH = settings.h3_comfy_workflows_dir / "minimax_h3_i2v_extender.json"
 def test_frozen_graphs_are_present() -> None:
     assert R2V_GRAPH.is_file()
     assert I2V_GRAPH.is_file()
+    assert T2V_GRAPH.is_file()
 
 
 def test_duration_presets_map_exactly_and_nothing_else() -> None:
@@ -75,6 +77,32 @@ def test_r2v_conversion_applies_only_the_sanctioned_edits() -> None:
     # Linux path fix on the model loaders, per the guide's own note.
     assert api["27"]["inputs"]["unet_name"].startswith("H3/")
     assert api["28"]["inputs"]["clip_name"].startswith("H3/")
+
+
+def test_t2v_conversion_needs_no_images_and_takes_the_canvas() -> None:
+    """The 25 Aug client-test experiment: the T2V graph compiles with prompts
+    and a canvas alone — no image loaders exist to feed."""
+    graph = load_graph(T2V_GRAPH)
+    api = to_api_prompt(
+        graph,
+        GraphEdits(
+            duration_index=1,
+            prompts={1: "STRUCTURED PROMPT ONE"},
+            width=544,
+            height=960,
+            filename_prefix="zolex_job2",
+            output_directory="/tmp/ws",
+        ),
+    )
+    assert api["2"]["inputs"]["value"] == 1
+    assert api["10"]["inputs"]["value"] == "STRUCTURED PROMPT ONE"
+    # Portrait canvas landed on the width/height primitives.
+    assert api["3"]["inputs"]["value"] == 544
+    assert api["4"]["inputs"]["value"] == 960
+    assert api["32"]["inputs"]["filename_prefix"] == "zolex_job2"
+    assert api["32"]["inputs"]["output_directory"] == "/tmp/ws"
+    # No LoadImage node anywhere in the compiled prompt.
+    assert not any(entry["class_type"] == "LoadImage" for entry in api.values())
 
 
 def test_conversion_never_touches_sampling() -> None:
@@ -321,7 +349,8 @@ def test_supports_exactly_the_approved_workflows() -> None:
     adapter = H3ComfyAdapter()
     assert adapter.supports("image-to-video")
     assert adapter.supports("video-to-video")
-    assert not adapter.supports("text-to-video")
+    # 25 Aug client-test experiment: T2V is reachable; routing YAML decides.
+    assert adapter.supports("text-to-video")
     assert not adapter.supports("music-video")
     assert not adapter.supports("extend-video")
 
