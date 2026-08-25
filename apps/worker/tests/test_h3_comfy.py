@@ -106,7 +106,7 @@ def test_t2v_conversion_needs_no_images_and_takes_the_canvas() -> None:
 
 
 def test_conversion_never_touches_sampling() -> None:
-    """steps/sampler/scheduler are the pack's pins, not our dials."""
+    """Without an explicit steps edit, sampling stays exactly the pack's."""
     graph = load_graph(R2V_GRAPH)
     api = to_api_prompt(graph, GraphEdits(duration_index=4))
     extender = api["36"]["inputs"]
@@ -114,6 +114,29 @@ def test_conversion_never_touches_sampling() -> None:
     assert extender["sampler_name"] == "res_multistep"
     assert extender["scheduler"] == "beta"
     assert extender["context_length"] == "22"
+
+
+def test_steps_override_reaches_every_graph_at_the_api_layer() -> None:
+    """The 26 Aug speed dial. On R2V it must override the widget-mapped 20;
+    on T2V — whose list-form widgets never reach the submission at all — it
+    must still land, because the API inputs are the only reliable layer.
+    Sampler and scheduler stay pinned either way."""
+    r2v = to_api_prompt(load_graph(R2V_GRAPH), GraphEdits(duration_index=0, steps=12))
+    assert r2v["36"]["inputs"]["steps"] == 12
+    assert r2v["36"]["inputs"]["sampler_name"] == "res_multistep"
+
+    t2v = to_api_prompt(load_graph(T2V_GRAPH), GraphEdits(duration_index=0, steps=12))
+    extenders = [
+        e for e in t2v.values() if e["class_type"] == "MiniMaxH3Extender"
+    ]
+    assert extenders and all(e["inputs"]["steps"] == 12 for e in extenders)
+
+    # I2V spells its schedule differently: one BasicScheduler node.
+    i2v = to_api_prompt(load_graph(I2V_GRAPH), GraphEdits(duration_index=0, steps=12))
+    schedulers = [
+        e for e in i2v.values() if e["class_type"] == "BasicScheduler"
+    ]
+    assert schedulers and all(e["inputs"]["steps"] == 12 for e in schedulers)
 
 
 def test_i2v_conversion_reaches_the_source_image_loader() -> None:
@@ -326,6 +349,60 @@ async def test_draft_tier_selects_the_pack_canvas(
     prompt = fake.submitted["prompt"]
     assert prompt["3"]["inputs"]["value"] == 544
     assert prompt["4"]["inputs"]["value"] == 320
+
+
+@needs_ffmpeg
+async def test_h3_steps_flows_into_the_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`execution.h3_steps: 12` — the user's 26 Aug speed decision — must be
+    what the server is actually asked to run."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.setattr(settings, "h3_comfy_input_dir", tmp_path / "comfy_in")
+    source = await _png(tmp_path / "face.png")
+    await make_clip(workspace / "zolex_job1_00001.mp4", 5.0)
+
+    fake = FakeComfy(workspace, "job1")
+    adapter = H3ComfyAdapter(client=_client(fake))
+    job = AdapterJob(
+        job_id="job1",
+        workflow_id="image-to-video",
+        workflow_version="1",
+        prompt="p",
+        parameters={"duration": "5s"},
+        inputs=[_input("source_image", source)],
+        execution={"runtime": "h3_comfy", "h3_steps": 12},
+        workspace=workspace,
+    )
+    await adapter.run(job, _progress)
+    prompt = fake.submitted["prompt"]
+    carriers = [
+        e
+        for e in prompt.values()
+        if e["class_type"] in ("MiniMaxH3Extender", "BasicScheduler")
+    ]
+    assert carriers and all(e["inputs"]["steps"] == 12 for e in carriers)
+
+
+async def test_h3_steps_refuses_configuration_typos(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    adapter = H3ComfyAdapter(client=_client(FakeComfy(workspace, "job1")))
+    job = AdapterJob(
+        job_id="job1",
+        workflow_id="text-to-video",
+        workflow_version="1",
+        prompt="p",
+        parameters={"duration": "5s"},
+        inputs=[],
+        execution={"runtime": "h3_comfy", "h3_steps": "fast"},
+        workspace=workspace,
+    )
+    with pytest.raises(AdapterError) as raised:
+        await adapter.run(job, _progress)
+    assert raised.value.retriable is False
+    assert "h3_steps" in raised.value.internal_detail
 
 
 async def test_reference_v2v_without_reference_is_refused(tmp_path: Path) -> None:

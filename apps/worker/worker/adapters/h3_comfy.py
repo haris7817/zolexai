@@ -133,6 +133,29 @@ class H3ComfyAdapter:
         return path
 
     @staticmethod
+    def _steps(job: AdapterJob) -> int | None:
+        """`execution.h3_steps` — the user-decided speed dial (26 Aug).
+
+        None keeps the pack's pinned 20. 12 was measured 28% faster at the
+        quality canvas and judged visually acceptable by the user; the bounds
+        refuse configuration typos rather than render garbage from them.
+        """
+        raw = job.execution.get("h3_steps")
+        if raw is None:
+            return None
+        try:
+            steps = int(raw)
+        except (TypeError, ValueError):
+            steps = -1
+        if not 4 <= steps <= 40:
+            raise AdapterError(
+                "This tool is temporarily unavailable.",
+                internal_detail=f"h3_steps={raw!r} is not an integer in 4..40",
+                retriable=False,
+            )
+        return steps
+
+    @staticmethod
     def _tier(job: AdapterJob) -> str:
         tier = str(job.execution.get("h3_tier") or "").strip().lower()
         if tier in ("draft", "quality"):
@@ -287,6 +310,7 @@ class H3ComfyAdapter:
             width, height = _T2V_CANVAS[tier].get(aspect, _T2V_CANVAS[tier]["16:9"])
 
         audio_context = job.execution.get("h3_audio_context")
+        steps = self._steps(job)
         edits = GraphEdits(
             duration_index=index,
             prompts=prompts,
@@ -299,12 +323,17 @@ class H3ComfyAdapter:
             audio_context_length=(
                 int(audio_context) if audio_context is not None else None
             ),
+            steps=steps,
         )
         api_prompt = to_api_prompt(graph, edits)
 
         # ── Submit and wait ──────────────────────────────────────────
         service = self._service()
         expected = nominal_seconds * _EXPECTED_RATE.get((job.workflow_id, tier), 40.0)
+        if steps is not None:
+            # Pacing only. Measured shape at the quality canvas: sampling is
+            # ~72% of the wall at 20 steps, the rest is fixed pipeline cost.
+            expected *= 0.28 + 0.72 * (steps / 20.0)
         await reporter.generating(GENERATE_FROM, "Starting your video…")
 
         async def tick(elapsed: float) -> None:

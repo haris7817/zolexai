@@ -80,6 +80,17 @@ class GraphEdits:
     60 s seams (25 Aug). None keeps the pack's behaviour; a value is an
     explicit, recorded experiment — never a silent default change."""
 
+    steps: int | None = None
+    """Sampler step count on the Extender. The pack pins 20; None keeps that.
+
+    A value is a recorded, user-decided deviation: measured 25 Aug on the
+    RTX PRO 6000 (quality canvas, same seed) — 20 steps 150.3 s, 15 steps
+    130.4 s, 12 steps 108.5 s for 5 s of video — and judged acceptable at 12
+    by the user on 26 Aug. Applied to the compiled API inputs directly, which
+    also closes the T2V gap where the list-form widgets never reached the
+    submission and the server's defaults silently applied. Sampler and
+    scheduler remain untouchable."""
+
 
 def load_graph(path: Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -168,6 +179,18 @@ def to_api_prompt(graph: dict[str, Any], edits: GraphEdits) -> dict[str, Any]:
     if edits.height is not None:
         for nid in having("OUTPUT HEIGHT"):
             api[nid]["inputs"]["value"] = edits.height
+
+    if edits.steps is not None:
+        # On the API inputs, not the UI widgets: the T2V graph's list-form
+        # widgets never reach the submission (verified in production history,
+        # 25 Aug — the server's defaults applied), so the inputs dict is the
+        # only layer where a step count reliably lands on every graph.
+        # R2V/T2V carry steps on the Extender itself; the I2V graph holds its
+        # schedule in a single BasicScheduler ("Validated schedule — beta /
+        # 20 steps"). Both spellings of the same pinned 20.
+        for entry in api.values():
+            if entry["class_type"] in ("MiniMaxH3Extender", "BasicScheduler"):
+                entry["inputs"]["steps"] = edits.steps
 
     if edits.audio_context_length is not None:
         for entry in api.values():

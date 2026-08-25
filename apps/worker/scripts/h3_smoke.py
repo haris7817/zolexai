@@ -78,6 +78,8 @@ async def main() -> None:
         raise SystemExit(f"unknown MODE {mode!r} (i2v | refv2v)")
 
     execution: dict[str, object] = {"runtime": "h3_comfy"}
+    if os.getenv("STEPS"):
+        execution["h3_steps"] = int(os.environ["STEPS"])
     if os.getenv("TIER"):
         execution["h3_tier"] = os.environ["TIER"]
 
