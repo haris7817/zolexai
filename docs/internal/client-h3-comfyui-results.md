@@ -190,3 +190,42 @@ What these four cells settle:
    architecture, not the runtime.
 
 FL2VA INT8 downloaded and SHA-verified (`e889202c…`); disk still >300 GB free.
+
+## 8. The discipline proof — 60 s with per-segment re-stated prompts (25 Aug)
+
+Same graph, same seeds, same references and duration plan as the drifting
+default-prompt 60 s run; the only change is Prompts 1–5 rewritten in the
+ZolexAI style — every segment re-describes the subject ("still the man from
+<Picture 1>: grey beard, navy wool coat"), the room, and the camera, and names
+its handoff pose.
+
+```text
+wall 718.4 s (12.0 min) · 5 clips · 1,433 frames · 59.708 s · VRAM 58.4 GB
+```
+
+**Sampled mid-segment (frames 150/450/750/1020/1300): the same man, same coat,
+same microphone, same room, same framing in all five segments.** The
+default-prompt run's failures — the wardrobe change, the portrait collapse,
+the scene reset — are all gone. Nothing else changed.
+
+That is the client system, settled:
+
+```text
+client pack architecture (pinned graphs, official INT8 weights)
+        + ZolexAI per-segment prompt discipline
+        = stable 60 s reference video at ~12x real time on one RTX PRO 6000
+```
+
+## 9. Final status
+
+| Workflow | Path | Verdict |
+|---|---|---|
+| Reference video (R2V) | pack + discipline prompts, 544x320 draft / 960x544 delivery | **production candidate** |
+| Photo animation (I2V) | pack FL2VA graph, 1280x736 | **production candidate** (identity is photographic) |
+| Long form 60 s | R2V index 4 + discipline prompts | **proven stable** |
+| Turbo 4-step | official LoRA v0.1 | **rejected at defaults** — speed 3.7x, quality collapse |
+| T2V | LTX 2.5 (28.2 s, 5.6x RT) | unchanged — LTX remains the T2V engine |
+| Music video | LTX native A2V (14.7x RT, Goal-B) | unchanged |
+
+Unchanged and true: production untouched, `auto → ltx`, hybrid and H3 API
+paused, Tier 2 / 406 pack not started, `P0 LTX CODE FOLLOW-UP` open.
