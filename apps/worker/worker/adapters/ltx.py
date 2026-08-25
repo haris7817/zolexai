@@ -114,6 +114,7 @@ from worker.adapters.base import (
     cancellable,
     parse_duration_seconds,
 )
+from worker.comfy import evict_comfy_vram
 from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.director import (
@@ -1046,6 +1047,12 @@ class LtxAdapter:
         reporter = StageReporter(on_progress)
         await reporter.preparing()
         self._require_models()
+
+        # Lazy co-tenancy eviction (25 Aug 2026): H3's ComfyUI keeps its
+        # ~52 GB warm between H3 jobs so they stop paying a 40-60 s reload;
+        # the engine that actually needs the card clears it on the way in.
+        # Milliseconds when nothing is loaded or no ComfyUI exists.
+        await evict_comfy_vram()
 
         # Deterministic prompt structuring, per workflow via the private
         # execution block. The user's text survives verbatim as the first

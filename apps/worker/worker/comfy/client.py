@@ -248,3 +248,23 @@ class ComfyClient:
             except BaseException:  # noqa: BLE001 - best effort while dying
                 logger.warning("comfy_cancel_on_teardown_failed", exc_info=True)
             raise
+
+
+async def evict_comfy_vram(client: ComfyClient | None = None) -> None:
+    """Frees ComfyUI's VRAM before another engine takes the card.
+
+    The lazy half of the co-tenancy policy (25 Aug 2026): H3 keeps its ~52 GB
+    warm between H3 jobs — saving the measured 40-60 s model reload every job
+    used to pay — and the engine that actually needs the memory, LTX or
+    music, calls this on its way in. Best-effort and cheap: a node with no
+    ComfyUI, or one already empty, answers in milliseconds, and any failure
+    is the health check's problem rather than this job's.
+    """
+    if client is None:
+        from worker.core.config import settings
+
+        client = ComfyClient(
+            settings.h3_comfy_base_url,
+            request_timeout=min(settings.h3_comfy_request_timeout, 10.0),
+        )
+    await client.free_memory()

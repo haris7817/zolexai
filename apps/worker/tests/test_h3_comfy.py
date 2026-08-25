@@ -529,18 +529,41 @@ async def test_vram_is_freed_after_a_job_on_cotenanted_nodes(
 
     fake = FreeTrackingFake(workspace, "job1")
     adapter = H3ComfyAdapter(client=_client(fake))
+
+    # The lazy default (25 Aug): H3 keeps its model warm between H3 jobs —
+    # the LTX/music adapters evict it on their way in instead.
+    await adapter.run(
+        _job(workspace, "image-to-video", [_input("source_image", source)]),
+        _progress,
+    )
+    assert not freed
+
+    # Eager freeing remains available for nodes where back-to-back H3 is rare.
+    monkeypatch.setattr(settings, "h3_comfy_free_after_job", True)
+    await make_clip(workspace / "zolex_job1_00002.mp4", 5.0)
     await adapter.run(
         _job(workspace, "image-to-video", [_input("source_image", source)]),
         _progress,
     )
     assert freed and freed[0]["unload_models"] is True
 
-    # A dedicated node can keep the model warm.
-    freed.clear()
-    monkeypatch.setattr(settings, "h3_comfy_free_after_job", False)
-    await make_clip(workspace / "zolex_job1_00002.mp4", 5.0)
-    await adapter.run(
-        _job(workspace, "image-to-video", [_input("source_image", source)]),
-        _progress,
-    )
-    assert not freed
+
+async def test_other_engines_evict_comfy_on_their_way_in(tmp_path: Path) -> None:
+    """The other half of the lazy policy: `evict_comfy_vram` is what LTX and
+    music call before taking the card, and it asks ComfyUI to unload."""
+    from worker.comfy import evict_comfy_vram
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    freed = []
+
+    class FreeTrackingFake(FakeComfy):
+        def handler(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/free":
+                freed.append(json.loads(request.content))
+                return httpx.Response(200, json={})
+            return super().handler(request)
+
+    fake = FreeTrackingFake(workspace, "job1")
+    await evict_comfy_vram(_client(fake))
+    assert freed and freed[0]["unload_models"] is True

@@ -45,6 +45,7 @@ from worker.adapters.base import (
     cancellable,
     parse_duration_seconds,
 )
+from worker.comfy import evict_comfy_vram
 from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.longform import StageReporter, band_for
@@ -139,6 +140,10 @@ class MusicAdapter:
     async def run(self, job: AdapterJob, on_progress: ProgressCallback) -> AdapterResult:
         reporter = StageReporter(on_progress)
         await reporter.preparing("Setting up your track…")
+
+        # Lazy co-tenancy eviction — see ltx.py: H3's ComfyUI stays warm
+        # between its own jobs; whoever needs the card next clears it.
+        await evict_comfy_vram()
 
         provider = self._resolve_provider()
         total_seconds = self._requested_seconds(job)

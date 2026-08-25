@@ -616,11 +616,15 @@ class WorkerSettings(BaseSettings):
     """R2V draft tier — the pack's shipped canvas, measured at ~11-12x real
     time. Multiples of 32, as the guide requires."""
 
-    h3_comfy_free_after_job: bool = True
-    """Unload ComfyUI's models after each H3 job. Default ON because the
-    production node co-tenants ACE-Step (~24 GB resident) and LTX: ComfyUI's
-    ~52 GB idle residency plus either of those does not fit the card. A
-    dedicated H3 node can set this false and keep the model warm."""
+    h3_comfy_free_after_job: bool = False
+    """Unload ComfyUI's models after each H3 job.
+
+    Default OFF since 25 Aug 2026 — the lazy policy: H3 keeps its ~52 GB warm
+    between H3 jobs (saving the measured 40-60 s reload every job paid), and
+    the LTX and music adapters evict it just before they need the card
+    (`evict_comfy_vram`). Same OOM safety, paid only on an actual engine
+    switch instead of on every job. Set True to restore eager freeing on a
+    node whose job mix makes back-to-back H3 rare."""
 
     h3_comfy_quality_canvas: tuple[int, int] = (960, 544)
     """R2V delivery tier — measured at ~33x real time with the best identity

@@ -16,12 +16,13 @@ Two modules:
     honour.
 """
 
-from worker.comfy.client import ComfyClient, ComfyError
+from worker.comfy.client import ComfyClient, ComfyError, evict_comfy_vram
 from worker.comfy.graph import GraphEdits, load_graph, to_api_prompt
 
 __all__ = [
     "ComfyClient",
     "ComfyError",
+    "evict_comfy_vram",
     "GraphEdits",
     "load_graph",
     "to_api_prompt",
