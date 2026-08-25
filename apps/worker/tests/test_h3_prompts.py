@@ -93,9 +93,26 @@ def test_beats_land_in_their_own_segment_only() -> None:
     assert "centres the clay" in prompts[0]
     assert "raises the wall" in prompts[1]
     assert "trims the rim" in prompts[2]
-    # Segments past the supplied beats continue naturally instead of inventing.
-    assert "continues naturally" in prompts[3]
-    assert "continues naturally" in prompts[4]
+    # Segments past the supplied beats get arc discipline instead of a
+    # blank continuation — the 26 Aug frame-audit showed "continues
+    # naturally" let a two-segment video re-enact its whole story twice.
+    assert "never restart" in prompts[3]
+    assert "conclusion" in prompts[4]  # the final segment must land an ending
+
+
+def test_free_text_segments_get_an_arc_not_a_retelling() -> None:
+    """The 26 Aug client frame-audit: a 30s two-segment story prompt told the
+    story twice — climax at 6s, its own setup at 20s. Without structured
+    beats every segment must know its place in ONE story."""
+    plan = plan_from_prompt("A woman transforms into a mech and fights a demon.")
+    prompts = discipline_prompts(plan, 2)
+    assert "OPENING" in prompts[0]
+    assert "must not happen yet" in prompts[0]
+    assert "FINAL" in prompts[1]
+    assert "never restart" in prompts[1]
+    # A single-segment video needs no arc scaffolding.
+    [solo] = discipline_prompts(plan, 1)
+    assert "OPENING" not in solo and "FINAL" not in solo
 
 
 def test_plan_from_prompt_repeats_the_whole_prompt_per_segment() -> None:

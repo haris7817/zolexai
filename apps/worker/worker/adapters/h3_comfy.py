@@ -406,6 +406,23 @@ class H3ComfyAdapter:
                     f"duration {info.duration_seconds:.3f}s vs preset {nominal_seconds}s"
                 ),
             )
+
+        # The pack's decoder ends the track at full level — a hard cut the
+        # client's 26 Aug frame-audit called out. A short tail fade on the
+        # audio alone; the video stream is copied untouched.
+        if info.has_audio and info.duration_seconds > 1.5:
+            faded = output.with_name(f"{output.stem}_faded.mp4")
+            fade_start = max(0.0, info.duration_seconds - 0.75)
+            await ffmpeg(
+                [
+                    "-i", str(output),
+                    "-c:v", "copy",
+                    "-af", f"afade=t=out:st={fade_start:.3f}:d=0.75",
+                    "-c:a", "aac", "-b:a", "192k",
+                    str(faded), "-y",
+                ]
+            )
+            output = faded
         logger.info(
             "h3_comfy_finished",
             extra={

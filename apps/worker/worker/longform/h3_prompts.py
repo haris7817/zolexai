@@ -102,10 +102,34 @@ def _absence_clause(plan: H3ScenePlan, segment: int) -> str:
     )
 
 
-def _beat(plan: H3ScenePlan, segment: int) -> str:
+def _beat(plan: H3ScenePlan, segment: int, segments: int = 1) -> str:
     if segment <= len(plan.beats) and plan.beats[segment - 1].strip():
         return plan.beats[segment - 1].strip().rstrip(".") + "."
-    return "The action continues naturally."
+    # No structured beats — every free-text production job. The old filler
+    # ("The action continues naturally.") let each segment re-enact the whole
+    # prompt: a 30s two-segment video told its story twice, with the climax
+    # appearing before its own setup (client frame-audit, 26 Aug). Absent real
+    # beats, the segments at least get an arc: begin, advance, conclude.
+    if segments <= 1:
+        return "The action plays out completely within this single shot."
+    if segment == 1:
+        return (
+            "This is the OPENING of one single continuous story: establish "
+            "the scene and begin the action — events that belong later must "
+            "not happen yet."
+        )
+    if segment == segments:
+        return (
+            "This is the FINAL part of the same single take: carry the "
+            "ongoing action to its conclusion and a clear final image — "
+            "never restart or replay an earlier moment."
+        )
+    return (
+        f"This is part {segment} of the same single take: continue the SAME "
+        "ongoing action from exactly where it left off — never restart, "
+        "repeat, or replay an earlier moment; what already happened stays "
+        "finished."
+    )
 
 
 def _departure_clause(plan: H3ScenePlan, segment: int) -> str:
@@ -123,7 +147,7 @@ def discipline_prompts(plan: H3ScenePlan, segments: int) -> list[str]:
     prompts: list[str] = []
     for segment in range(1, segments + 1):
         persistence = _persistence_clause(plan)
-        beat = _beat(plan, segment)
+        beat = _beat(plan, segment, segments)
         departure = _departure_clause(plan, segment)
         absence = _absence_clause(plan, segment)
 
