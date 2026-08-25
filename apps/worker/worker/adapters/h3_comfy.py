@@ -313,7 +313,12 @@ class H3ComfyAdapter:
 
         # ── Prompt discipline ────────────────────────────────────────
         plan = plan_from_prompt(job.prompt, reference_labels=reference_labels)
-        prompts = dict(enumerate(discipline_prompts(plan, segments), start=1))
+        prompts = dict(
+            enumerate(
+                discipline_prompts(plan, segments, total_seconds=nominal_seconds),
+                start=1,
+            )
+        )
 
         # ── Canvas tier (I2V's one proven canvas is the graph's own) ──
         width = height = None
@@ -429,8 +434,10 @@ class H3ComfyAdapter:
             )
 
         # The pack's decoder ends the track at full level — a hard cut the
-        # client's 26 Aug frame-audit called out. A short tail fade on the
-        # audio alone; the video stream is copied untouched.
+        # client's 26 Aug frame-audit called out — and its peaks sit at
+        # -0.1 dBFS, which clips audibly after any platform re-encode (same
+        # audit, second video). One audio-only pass: tail fade plus a -1 dBTP
+        # ceiling; the video stream is copied untouched.
         if info.has_audio and info.duration_seconds > 1.5:
             faded = output.with_name(f"{output.stem}_faded.mp4")
             fade_start = max(0.0, info.duration_seconds - 0.75)
@@ -438,7 +445,9 @@ class H3ComfyAdapter:
                 [
                     "-i", str(output),
                     "-c:v", "copy",
-                    "-af", f"afade=t=out:st={fade_start:.3f}:d=0.75",
+                    "-af",
+                    f"afade=t=out:st={fade_start:.3f}:d=0.75,"
+                    "alimiter=limit=0.891:level=disabled",
                     "-c:a", "aac", "-b:a", "192k",
                     str(faded), "-y",
                 ]

@@ -141,3 +141,41 @@ def test_two_references_get_one_owner_each() -> None:
     assert "location, lighting and framing of <Picture 2>" in text
     # Picture 2 must never be offered as an identity source.
     assert "person in <Picture 2>" not in text
+
+
+def test_a_customer_scripted_timeline_is_honoured() -> None:
+    """The 26 Aug military-rescue audit: the customer scripted five timed
+    shots and the compiler stuffed ALL of them into both segments as 'the
+    subject' — so segment 1 raced the whole mission and segment 2 re-enacted
+    it. A timeline prompt must be split: preamble = identity, each block =
+    a beat for its own segment only."""
+    prompt = (
+        "30-second cinematic military rescue. The same battle-worn army "
+        "soldier remains consistent throughout, wearing olive tactical gear. "
+        "[0-6s] A wide aerial shot follows him through the jungle toward the "
+        "compound. [6-12s] He enters the building, flashlight cutting through "
+        "dust. [12-18s] He hears knocking and opens a concealed steel door. "
+        "[18-24s] He descends into the bunker and frees three prisoners. "
+        "[24-30s] He leads the group outside as a helicopter approaches."
+    )
+    plan = plan_from_prompt(prompt)
+    assert plan.subject.startswith("30-second cinematic military rescue")
+    assert "aerial" not in plan.subject  # the timeline is not the subject
+    assert len(plan.timed_beats) == 5
+
+    seg1, seg2 = discipline_prompts(plan, 2, total_seconds=30.0)
+    # Segment 1 owns only its own slice of the story…
+    assert "aerial" in seg1 and "flashlight" in seg1
+    assert "helicopter" not in seg1 and "bunker" not in seg1
+    # …and segment 2 owns the rest, including the payoff.
+    assert "bunker" in seg2 and "helicopter" in seg2
+    assert "aerial" not in seg2
+
+
+def test_prompts_without_a_timeline_keep_the_free_text_path() -> None:
+    plan = plan_from_prompt("A koi pond at dawn, one fish gliding slowly.")
+    assert plan.timed_beats == ()
+    assert plan.subject == "A koi pond at dawn, one fish gliding slowly"
+    # A single stray time tag is not a timeline.
+    plan2 = plan_from_prompt("A parade [0-6s] with floats.")
+    assert plan2.timed_beats == ()

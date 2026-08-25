@@ -22,7 +22,8 @@ long-form latency worse for no measured benefit.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,43 @@ class H3ScenePlan:
     reference_labels: tuple[str, ...] = ()
     """Reference tags to keep alive in every segment ("<Picture 1>", …), so
     the model keeps reading the references instead of its own last guess."""
+
+    timed_beats: tuple[tuple[float, float, str], ...] = ()
+    """(start_s, end_s, action) blocks parsed from a customer's own
+    "[0–6s] …" script. Mapped onto segments at compile time so each segment
+    receives ONLY its own slice of the story — the 26 Aug military-rescue
+    audit showed what happens otherwise: the full five-shot script rode into
+    both segments as "the subject", segment 1 raced the whole mission and
+    segment 2 re-enacted it from the top."""
+
+
+#: "[0–6s]", "[12-18 s]" — en dash, em dash or hyphen, optional decimals.
+_TIMED_SECTION = re.compile(
+    r"\[\s*(\d+(?:\.\d+)?)\s*[–—-]\s*(\d+(?:\.\d+)?)\s*s\s*\]", re.IGNORECASE
+)
+
+
+def parse_timed_sections(
+    prompt: str,
+) -> tuple[str, tuple[tuple[float, float, str], ...]]:
+    """(preamble, timed blocks) from a prompt that scripts its own timeline.
+
+    Fewer than two markers means the prompt is not a timeline — returned
+    unchanged so ordinary prompts keep the free-text path. The preamble
+    (everything before the first marker) is where writers put the identity
+    description, which is exactly what the subject slot wants.
+    """
+    matches = list(_TIMED_SECTION.finditer(prompt))
+    if len(matches) < 2:
+        return prompt, ()
+    preamble = prompt[: matches[0].start()].strip()
+    blocks: list[tuple[float, float, str]] = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(prompt)
+        text = prompt[m.end() : end].strip().strip(";,").strip()
+        if text:
+            blocks.append((float(m.group(1)), float(m.group(2)), text))
+    return preamble or prompt, tuple(blocks)
 
 
 def _reference_bindings(plan: H3ScenePlan) -> tuple[str, str]:
@@ -139,10 +177,27 @@ def _departure_clause(plan: H3ScenePlan, segment: int) -> str:
     return f" By the end of this segment {what} has left the frame completely."
 
 
-def discipline_prompts(plan: H3ScenePlan, segments: int) -> list[str]:
+def discipline_prompts(
+    plan: H3ScenePlan, segments: int, total_seconds: float | None = None
+) -> list[str]:
     """One prompt per segment, each self-sufficient about what persists."""
     if segments < 1:
         raise ValueError("segments must be >= 1")
+
+    if plan.timed_beats and not plan.beats and total_seconds:
+        # The customer scripted their own timeline — honour it: each block
+        # joins the segment its midpoint falls in, so a segment carries only
+        # its own slice of the story instead of the whole script.
+        seg_len = total_seconds / segments
+        per_segment: list[list[str]] = [[] for _ in range(segments)]
+        for start, end, text in plan.timed_beats:
+            mid = (start + end) / 2.0
+            index = min(int(mid / seg_len), segments - 1)
+            per_segment[index].append(text.rstrip("."))
+        plan = replace(
+            plan,
+            beats=tuple(". Then ".join(parts) if parts else "" for parts in per_segment),
+        )
 
     prompts: list[str] = []
     for segment in range(1, segments + 1):
@@ -197,5 +252,14 @@ def plan_from_prompt(prompt: str, *, reference_labels: tuple[str, ...] = ()) -> 
     which is precisely the proven fix. Structured fields (wardrobe, exits)
     arrive when a Director plan exists; a missing plan must not mean missing
     discipline.
+
+    A prompt that scripts its own timeline ("[0–6s] …") is split instead:
+    the preamble becomes the subject and each timed block becomes a beat for
+    the segment it belongs to — the customer already did the Director's job.
     """
-    return H3ScenePlan(subject=prompt.strip().rstrip("."), reference_labels=reference_labels)
+    subject, timed = parse_timed_sections(prompt)
+    return H3ScenePlan(
+        subject=subject.strip().rstrip("."),
+        reference_labels=reference_labels,
+        timed_beats=timed,
+    )
