@@ -644,3 +644,66 @@ async def test_other_engines_evict_comfy_on_their_way_in(tmp_path: Path) -> None
     fake = FreeTrackingFake(workspace, "job1")
     await evict_comfy_vram(_client(fake))
     assert freed and freed[0]["unload_models"] is True
+
+
+def test_seed_base_makes_each_job_its_own_video() -> None:
+    """The 26 Aug cache discovery: fixed seeds + deterministic model +
+    ComfyUI's cache meant 'regenerate' returned the byte-identical file in
+    35 s forever. A seed base shifts every segment seed while keeping the
+    pack's per-segment distinctness; no base keeps the pack untouched."""
+    graph = load_graph(T2V_GRAPH)
+
+    stock = to_api_prompt(graph, GraphEdits(duration_index=4))
+    stock_seeds = sorted(
+        e["inputs"]["value"]
+        for e in stock.values()
+        if e["class_type"] == "PrimitiveInt"
+        and e["inputs"]["value"] > 1_000_000  # the seed primitives
+    )
+    assert stock_seeds == [731003101, 731003102, 731003103, 731003104, 731003105]
+
+    seeded = to_api_prompt(graph, GraphEdits(duration_index=4, seed_base=5_000_000))
+    new_seeds = sorted(
+        e["inputs"]["value"]
+        for e in seeded.values()
+        if e["class_type"] == "PrimitiveInt" and e["inputs"]["value"] >= 5_000_000
+    )
+    assert new_seeds == [5_000_101, 5_000_102, 5_000_103, 5_000_104, 5_000_105]
+    assert len(set(new_seeds)) == 5  # per-segment distinctness survives
+
+    # I2V: literal RandomNoise seeds shift; linked ones (fed by the shifted
+    # SEGMENT SEED primitives) stay as links and inherit through the graph.
+    i2v = to_api_prompt(
+        load_graph(I2V_GRAPH), GraphEdits(duration_index=0, seed_base=5_000_000)
+    )
+    literal_noise = [
+        e["inputs"]["noise_seed"]
+        for e in i2v.values()
+        if e["class_type"] == "RandomNoise"
+        and isinstance(e["inputs"].get("noise_seed"), int)
+    ]
+    assert all(5_000_000 <= s < 5_001_000 for s in literal_noise)
+    i2v_primitive_seeds = [
+        e["inputs"]["value"]
+        for e in i2v.values()
+        if e["class_type"] == "PrimitiveInt"
+        and isinstance(e["inputs"].get("value"), int)
+        and e["inputs"]["value"] >= 5_000_000
+    ]
+    assert len(i2v_primitive_seeds) == 5
+    assert len(set(i2v_primitive_seeds)) == 5
+
+
+def test_seed_base_is_stable_per_job_and_unique_across_jobs(tmp_path: Path) -> None:
+    job_a = _job(tmp_path, "text-to-video", [])
+    same_a = _job(tmp_path, "text-to-video", [])
+    assert H3ComfyAdapter._seed_base(job_a) == H3ComfyAdapter._seed_base(same_a)
+
+    import dataclasses
+
+    job_b = dataclasses.replace(job_a, job_id="another-job")
+    assert H3ComfyAdapter._seed_base(job_a) != H3ComfyAdapter._seed_base(job_b)
+
+    # An explicit seed parameter wins.
+    job_c = _job(tmp_path, "text-to-video", [], seed=1234)
+    assert H3ComfyAdapter._seed_base(job_c) == 1234

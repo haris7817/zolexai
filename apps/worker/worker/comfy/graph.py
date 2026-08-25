@@ -80,6 +80,16 @@ class GraphEdits:
     60 s seams (25 Aug). None keeps the pack's behaviour; a value is an
     explicit, recorded experiment — never a silent default change."""
 
+    seed_base: int | None = None
+    """Per-job seed base. None keeps the pack's fixed seeds — which, with a
+    fully deterministic model and ComfyUI's execution cache, means a customer
+    who regenerates the same prompt receives the byte-identical video in
+    seconds forever (observed in production 26 Aug: a 30 s "render" served
+    from cache in 35 s). A value shifts every SEGMENT N SEED primitive and
+    RandomNoise node to base + (pack seed % 1000), preserving the pack's
+    per-segment distinctness while making each job its own video. Derive it
+    stably from the job id so a retry reproduces its own attempt."""
+
     steps: int | None = None
     """Sampler step count on the Extender. The pack pins 20; None keeps that.
 
@@ -179,6 +189,20 @@ def to_api_prompt(graph: dict[str, Any], edits: GraphEdits) -> dict[str, Any]:
     if edits.height is not None:
         for nid in having("OUTPUT HEIGHT"):
             api[nid]["inputs"]["value"] = edits.height
+
+    if edits.seed_base is not None:
+        # Literal seeds shift; a linked seed (a [node, slot] reference, as in
+        # I2V's RandomNoise fed by the SEGMENT SEED primitives) inherits the
+        # shifted value through its link and must not be touched.
+        for nid in having("SEED", "PrimitiveInt"):
+            old = api[nid]["inputs"].get("value", 0)
+            if isinstance(old, int):
+                api[nid]["inputs"]["value"] = edits.seed_base + (old % 1000)
+        for entry in api.values():
+            if entry["class_type"] == "RandomNoise":
+                old = entry["inputs"].get("noise_seed", 0)
+                if isinstance(old, int):
+                    entry["inputs"]["noise_seed"] = edits.seed_base + (old % 1000)
 
     if edits.steps is not None:
         # On the API inputs, not the UI widgets: the T2V graph's list-form

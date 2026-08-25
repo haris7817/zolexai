@@ -35,6 +35,7 @@ assembled MP4 straight into the job's own workspace.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 import time
@@ -154,6 +155,25 @@ class H3ComfyAdapter:
                 retriable=False,
             )
         return steps
+
+    @staticmethod
+    def _seed_base(job: AdapterJob) -> int:
+        """Every job is its own video; every retry is its own job again.
+
+        The pack's fixed seeds plus a deterministic model plus ComfyUI's
+        cache meant "regenerate" returned the byte-identical file in seconds,
+        forever (production, 26 Aug). A customer-supplied `seed` parameter
+        wins when the product sends one; otherwise the job id — stable across
+        retries of one attempt, different for every new job.
+        """
+        raw = job.parameters.get("seed")
+        try:
+            if raw is not None:
+                return abs(int(raw)) % (2**48)
+        except (TypeError, ValueError):
+            pass
+        digest = hashlib.sha256(job.job_id.encode("utf-8")).hexdigest()
+        return int(digest[:12], 16)
 
     @staticmethod
     def _tier(job: AdapterJob) -> str:
@@ -324,6 +344,7 @@ class H3ComfyAdapter:
                 int(audio_context) if audio_context is not None else None
             ),
             steps=steps,
+            seed_base=self._seed_base(job),
         )
         api_prompt = to_api_prompt(graph, edits)
 
