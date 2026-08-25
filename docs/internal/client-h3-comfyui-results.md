@@ -157,3 +157,36 @@ H3 API paused, Tier 2 and the 406 pack not started, `P0 LTX CODE FOLLOW-UP`
 3. Resolution ladder (`544x320` vs `960x544` vs native) — quality-vs-speed
    curve for the client tiering.
 4. FL2VA INT8 (I2V graph) once R2V quality is judged — one more 21 GB file.
+
+---
+
+## 7. Second pass — structured prompts, turbo, resolution, I2V (25 Aug)
+
+All warm-server runs of the client's graphs via the parameterized runner
+(`--prompt`/`--drop-ref3` are guide-sanctioned edits; `--turbo`/`--width` are
+recorded deviations).
+
+| Cell | Config | Wall | x RT | VRAM | Verdict |
+|---|---|---:|---:|---:|---|
+| **D1 structured, 544x320** | R2V, P1 rewritten, Picture 3 dropped | **55.2 s** | 10.7x | 54.8 GB | **PASS** — Picture-1 man at the mic in the Picture-2 room, identity held, stable, no artifacts |
+| **D1 turbo 4-step** | + official `ref2v_turbo_4step_v0.1` LoRA, steps 4 | **15.1 s** | **2.9x** | 55.0 GB | **QUALITY FAIL** — wrong subject (singer, not Picture 1), oversaturated, light-streak artifacts |
+| **D1 960x544** | 3.07x pixels | **170.9 s** | 33.1x | 59.0 GB | **BEST OUTPUT OF THE EVALUATION** — identity unmistakable, full beard, exact coat, clean detail |
+| **I2V 5 s, 1280x736** | FL2VA graph, source = the man's portrait | **336.6 s** (incl. FL2VA first load) | 65x | 63.1 GB | **PASS, near-perfect** — first frame is the source photo; photographic identity through the clip |
+
+What these four cells settle:
+
+1. **The 60 s drift was the prompts, not the model.** One rewritten prompt
+   turned R2V from subject-wandering into a clean, correct performance shot.
+2. **Turbo v0.1 is not a drop-in.** 3.7x faster and quality collapses on
+   reference identity. The 6-minute claim stays speed-plausible,
+   quality-unacceptable at v0.1 defaults. Re-test on future LoRA versions,
+   or with lower strength / hybrid step counts — as experiments, not defaults.
+3. **Resolution is the honest quality dial.** Cost scales linearly with pixels
+   (3.07x pixels -> 3.10x time). 544x320 = draft tier, 960x544 = delivery
+   tier at ~33x RT, both far below BF16 economics.
+4. **FL2VA pins identity the way Ref2VA cannot.** For customer-photo
+   animation, the I2V graph is the quality path; Ref2VA is for composed
+   scenes and re-enactment. This mirrors our B4 diffusers finding — it is the
+   architecture, not the runtime.
+
+FL2VA INT8 downloaded and SHA-verified (`e889202c…`); disk still >300 GB free.
