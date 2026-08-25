@@ -75,6 +75,26 @@ class WorkerService:
                         "max_concurrency": settings.max_concurrency,
                     },
                 )
+                # A missing Cerebras key degrades SILENTLY to English-only
+                # lyrics — found the hard way twice: 19 Aug (six Spanish
+                # production jobs failed) and 26 Aug (a fresh node's env
+                # missed the key, Spanish refused again). Say it at startup,
+                # loudly, where an environment rebuild will be checked.
+                if (
+                    "music" in settings.runtime_list
+                    and "cerebras" in settings.music_lyrics_writer
+                    and not settings.cerebras_api_key
+                ):
+                    logger.warning(
+                        "cerebras_key_missing_lyrics_english_only",
+                        extra={
+                            "detail": (
+                                "music_lyrics_writer includes 'cerebras' but "
+                                "CEREBRAS_API_KEY is empty: non-English music "
+                                "jobs will be refused"
+                            )
+                        },
+                    )
                 return
             except (ApiUnavailable, KeyError) as exc:
                 logger.warning(
