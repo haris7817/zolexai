@@ -170,6 +170,11 @@ def test_a_customer_scripted_timeline_is_honoured() -> None:
     # …and segment 2 owns the rest, including the payoff.
     assert "bunker" in seg2 and "helicopter" in seg2
     assert "aerial" not in seg2
+    # Identity is re-stated at every scripted shot boundary, not once per
+    # segment — the race audit counted four different hero cars inside
+    # segments that named the subject a single time.
+    for prompt in (seg1, seg2):
+        assert prompt.count("battle-worn army") >= 2
 
 
 def test_prompts_without_a_timeline_keep_the_free_text_path() -> None:

@@ -188,15 +188,25 @@ def discipline_prompts(
         # The customer scripted their own timeline — honour it: each block
         # joins the segment its midpoint falls in, so a segment carries only
         # its own slice of the story instead of the whole script.
+        #
+        # The blocks are joined with a full identity re-statement, because a
+        # segment prompt that names the subject once still drifts SHOT to
+        # shot: the 26 Aug race audit counted four different hero cars, all
+        # inside segments whose prompt described the car exactly once at the
+        # top. Every scripted shot boundary re-reads the subject — the same
+        # redundancy law that holds identity across segment boundaries,
+        # applied one level deeper. Length is the price and it is the proven
+        # mechanism, not a style choice.
         seg_len = total_seconds / segments
         per_segment: list[list[str]] = [[] for _ in range(segments)]
         for start, end, text in plan.timed_beats:
             mid = (start + end) / 2.0
             index = min(int(mid / seg_len), segments - 1)
             per_segment[index].append(text.rstrip("."))
+        restate = f". Still exactly the same {plan.subject}. Then "
         plan = replace(
             plan,
-            beats=tuple(". Then ".join(parts) if parts else "" for parts in per_segment),
+            beats=tuple(restate.join(parts) if parts else "" for parts in per_segment),
         )
 
     prompts: list[str] = []
