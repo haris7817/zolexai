@@ -313,6 +313,8 @@ class H3ComfyAdapter:
             ) from exc
         finally:
             self._cleanup_staged(job)
+            if settings.h3_comfy_free_after_job:
+                await service.free_memory()
         wall = time.monotonic() - started
 
         # ── Collect and validate — a file is not a result until probed ──

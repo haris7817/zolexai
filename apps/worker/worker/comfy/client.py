@@ -129,6 +129,23 @@ class ComfyClient:
             body = resp.json()
         return body.get(prompt_id)
 
+    async def free_memory(self) -> None:
+        """Asks ComfyUI to unload models and release VRAM.
+
+        On a co-tenanted GPU node this is what lets an LTX or ACE-Step job run
+        after an H3 one: ComfyUI otherwise keeps ~52 GB resident between jobs,
+        and 52 (idle ComfyUI) + 24 (ACE-Step) + an LTX pass does not fit the
+        card. The next H3 job pays a model reload (~40-60 s) — measured, and
+        cheap against an OOM'd customer job.
+        """
+        try:
+            async with self._client() as client:
+                await client.post(
+                    "/free", json={"unload_models": True, "free_memory": True}
+                )
+        except Exception:  # noqa: BLE001 - best effort; health will catch worse
+            logger.warning("comfy_free_failed", exc_info=True)
+
     async def interrupt(self) -> None:
         """Best-effort: a cancelled job should stop burning the GPU."""
         try:

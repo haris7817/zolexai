@@ -415,3 +415,43 @@ async def test_v2v_without_duration_follows_the_source_length(
     )
     await adapter.run(job, _progress)
     assert fake.submitted["prompt"]["2"]["inputs"]["value"] == 0  # 5 s preset
+
+
+@needs_ffmpeg
+async def test_vram_is_freed_after_a_job_on_cotenanted_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After an H3 job the adapter unloads ComfyUI's models, because 52 GB of
+    idle residency plus ACE-Step plus an LTX pass does not fit one card."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.setattr(settings, "h3_comfy_input_dir", tmp_path / "comfy_in")
+    source = await _png(tmp_path / "face.png")
+    await make_clip(workspace / "zolex_job1_00001.mp4", 5.0)
+
+    freed = []
+
+    class FreeTrackingFake(FakeComfy):
+        def handler(self, request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/free":
+                freed.append(json.loads(request.content))
+                return httpx.Response(200, json={})
+            return super().handler(request)
+
+    fake = FreeTrackingFake(workspace, "job1")
+    adapter = H3ComfyAdapter(client=_client(fake))
+    await adapter.run(
+        _job(workspace, "image-to-video", [_input("source_image", source)]),
+        _progress,
+    )
+    assert freed and freed[0]["unload_models"] is True
+
+    # A dedicated node can keep the model warm.
+    freed.clear()
+    monkeypatch.setattr(settings, "h3_comfy_free_after_job", False)
+    await make_clip(workspace / "zolex_job1_00002.mp4", 5.0)
+    await adapter.run(
+        _job(workspace, "image-to-video", [_input("source_image", source)]),
+        _progress,
+    )
+    assert not freed

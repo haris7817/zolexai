@@ -616,6 +616,12 @@ class WorkerSettings(BaseSettings):
     """R2V draft tier — the pack's shipped canvas, measured at ~11-12x real
     time. Multiples of 32, as the guide requires."""
 
+    h3_comfy_free_after_job: bool = True
+    """Unload ComfyUI's models after each H3 job. Default ON because the
+    production node co-tenants ACE-Step (~24 GB resident) and LTX: ComfyUI's
+    ~52 GB idle residency plus either of those does not fit the card. A
+    dedicated H3 node can set this false and keep the model warm."""
+
     h3_comfy_quality_canvas: tuple[int, int] = (960, 544)
     """R2V delivery tier — measured at ~33x real time with the best identity
     adherence of the whole H3 evaluation. Cost scales linearly in pixels."""
