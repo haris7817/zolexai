@@ -154,6 +154,34 @@ class ComfyClient:
         except Exception:  # noqa: BLE001 - the job is dying either way
             logger.warning("comfy_interrupt_failed", exc_info=True)
 
+    async def cancel(self, prompt_id: str) -> None:
+        """Best-effort removal of ONE prompt, wherever it sits in the queue.
+
+        `/interrupt` only stops the prompt that is currently *executing*. A
+        prompt still waiting in the queue survives it and runs later as an
+        orphan — observed in production on 25 Aug 2026, when a budget-expired
+        30s render held the GPU for twenty minutes nobody would collect while
+        its own retry queued behind it. So: delete the prompt from the pending
+        queue first, then interrupt only if it is the one actually running —
+        never blindly, because a blind interrupt kills an innocent neighbour.
+        """
+        try:
+            async with self._client() as client:
+                await client.post("/queue", json={"delete": [prompt_id]})
+                resp = await client.get("/queue")
+                state = resp.json() if resp.status_code < 400 else {}
+                running = {
+                    entry[1]
+                    for entry in state.get("queue_running", [])
+                    if isinstance(entry, (list, tuple)) and len(entry) > 1
+                }
+                if prompt_id in running:
+                    await client.post("/interrupt")
+        except Exception:  # noqa: BLE001 - the job is dying either way
+            logger.warning(
+                "comfy_cancel_failed", extra={"prompt_id": prompt_id}, exc_info=True
+            )
+
     async def wait(
         self,
         job: AdapterJob,
@@ -170,37 +198,53 @@ class ComfyClient:
         the GPU is released.
         """
         started = time.monotonic()
-        while True:
-            elapsed = time.monotonic() - started
-            if elapsed > timeout_seconds:
-                await self.interrupt()
-                raise ComfyError(
-                    "This generation took too long and was stopped.",
-                    internal_detail=f"prompt {prompt_id} exceeded {timeout_seconds:.0f}s",
-                )
+        try:
+            while True:
+                elapsed = time.monotonic() - started
+                if elapsed > timeout_seconds:
+                    await self.cancel(prompt_id)
+                    raise ComfyError(
+                        "This generation took too long and was stopped.",
+                        internal_detail=(
+                            f"prompt {prompt_id} exceeded {timeout_seconds:.0f}s"
+                        ),
+                    )
+                try:
+                    job.raise_if_cancelled()
+                except BaseException:
+                    await self.cancel(prompt_id)
+                    raise
+
+                try:
+                    entry = await self.history(prompt_id)
+                except httpx.HTTPError as exc:
+                    # One flaky poll is not a failed job; the next tick retries.
+                    logger.warning("comfy_poll_failed", extra={"error": str(exc)})
+                    entry = None
+
+                if entry is not None:
+                    status = (entry.get("status") or {}).get("status_str")
+                    if status == "success":
+                        return entry
+                    messages = json.dumps(
+                        (entry.get("status") or {}).get("messages", [])
+                    )
+                    raise ComfyError(
+                        "This generation failed.",
+                        internal_detail=(
+                            f"prompt {prompt_id} status={status}: {messages[:2000]}"
+                        ),
+                    )
+
+                if on_tick is not None:
+                    await on_tick(elapsed)
+                await asyncio.sleep(self._poll_seconds)
+        except asyncio.CancelledError:
+            # A hard task cancellation (attempt budget expiry, shutdown) must
+            # not leave the prompt queued or rendering as an orphan. Shielded
+            # because this coroutine is already being torn down.
             try:
-                job.raise_if_cancelled()
-            except BaseException:
-                await self.interrupt()
-                raise
-
-            try:
-                entry = await self.history(prompt_id)
-            except httpx.HTTPError as exc:
-                # One flaky poll is not a failed job; the next tick retries.
-                logger.warning("comfy_poll_failed", extra={"error": str(exc)})
-                entry = None
-
-            if entry is not None:
-                status = (entry.get("status") or {}).get("status_str")
-                if status == "success":
-                    return entry
-                messages = json.dumps((entry.get("status") or {}).get("messages", []))
-                raise ComfyError(
-                    "This generation failed.",
-                    internal_detail=f"prompt {prompt_id} status={status}: {messages[:2000]}",
-                )
-
-            if on_tick is not None:
-                await on_tick(elapsed)
-            await asyncio.sleep(self._poll_seconds)
+                await asyncio.shield(self.cancel(prompt_id))
+            except BaseException:  # noqa: BLE001 - best effort while dying
+                logger.warning("comfy_cancel_on_teardown_failed", exc_info=True)
+            raise

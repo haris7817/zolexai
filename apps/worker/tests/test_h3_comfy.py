@@ -16,7 +16,7 @@ import pytest
 from tests.conftest import make_clip, needs_ffmpeg
 from worker.adapters.base import AdapterError, AdapterInput, AdapterJob
 from worker.adapters.h3_comfy import H3ComfyAdapter, h3_comfy_health
-from worker.comfy import ComfyClient, GraphEdits, load_graph, to_api_prompt
+from worker.comfy import ComfyClient, ComfyError, GraphEdits, load_graph, to_api_prompt
 from worker.comfy.graph import duration_index_for
 from worker.core.config import settings
 
@@ -147,6 +147,12 @@ class FakeComfy:
         self.fail_submit = fail_submit
         self.submitted: dict | None = None
         self.polls = 0
+        self.interrupts = 0
+        self.queue_deletes: list[list[str]] = []
+        #: what GET /queue reports as currently executing (prompt ids).
+        self.running: list[str] = []
+        #: when True, /history never reports completion (for timeout tests).
+        self.never_finish = False
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == "/prompt":
@@ -156,14 +162,28 @@ class FakeComfy:
             return httpx.Response(200, json={"prompt_id": "p-1", "node_errors": {}})
         if request.url.path == "/history/p-1":
             self.polls += 1
-            if self.polls < 2:
+            if self.never_finish or self.polls < 2:
                 return httpx.Response(200, json={})
             return httpx.Response(
                 200,
                 json={"p-1": {"status": {"status_str": "success", "messages": []}}},
             )
         if request.url.path == "/interrupt":
+            self.interrupts += 1
             return httpx.Response(200, json={})
+        if request.url.path == "/queue":
+            if request.method == "POST":
+                body = json.loads(request.content)
+                if "delete" in body:
+                    self.queue_deletes.append(list(body["delete"]))
+                return httpx.Response(200, json={})
+            return httpx.Response(
+                200,
+                json={
+                    "queue_running": [[0, pid, {}] for pid in self.running],
+                    "queue_pending": [],
+                },
+            )
         return httpx.Response(404)
 
 
@@ -343,6 +363,46 @@ async def test_submit_failure_is_structured_not_a_traceback(
         )
     assert raised.value.user_message == "This request could not be started."
     assert raised.value.retriable is False
+
+
+async def test_timeout_deletes_a_pending_prompt_and_never_blind_interrupts(
+    tmp_path: Path,
+) -> None:
+    """The 25 Aug production orphan: a budget-expired prompt still PENDING in
+    the queue survived /interrupt and rendered for twenty minutes as an
+    orphan while its own retry queued behind it. Timeout must delete the
+    prompt from the queue — and must NOT send /interrupt when the prompt is
+    not the one executing, because that kills an innocent neighbour."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    fake = FakeComfy(workspace, "job1")
+    fake.never_finish = True
+    fake.running = ["someone-elses-prompt"]
+    client = _client(fake)
+    with pytest.raises(ComfyError) as raised:
+        await client.wait(
+            _job(workspace, "image-to-video", []), "p-1", timeout_seconds=0.05
+        )
+    assert "took too long" in raised.value.user_message
+    assert fake.queue_deletes == [["p-1"]]
+    assert fake.interrupts == 0
+
+
+async def test_timeout_interrupts_the_prompt_only_when_it_is_running(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    fake = FakeComfy(workspace, "job1")
+    fake.never_finish = True
+    fake.running = ["p-1"]
+    client = _client(fake)
+    with pytest.raises(ComfyError):
+        await client.wait(
+            _job(workspace, "image-to-video", []), "p-1", timeout_seconds=0.05
+        )
+    assert fake.queue_deletes == [["p-1"]]
+    assert fake.interrupts == 1
 
 
 def test_supports_exactly_the_approved_workflows() -> None:
