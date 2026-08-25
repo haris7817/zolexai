@@ -83,25 +83,70 @@ _TASK_LINES = {
 
 
 class H3Provider:
+    """Externally always `provider = h3`; the runtime is an internal choice.
+
+    Three runtimes, one product name:
+
+      * `compile_only`   — the research default. Compiles and refuses to run.
+      * `local_diffusers`— the provider-native BF16 path. Proven correct and
+        proven uneconomical (112–326x real time, 25 Aug measurements); kept as
+        the reference implementation, never routed.
+      * `comfyui_int8`   — the client pack proven on 25 Aug 2026: pinned
+        ComfyUI + official Comfy-Org INT8 weights, 11–33x real time. Execution
+        flows through the `h3_comfy` adapter — the same registry path every
+        real job takes — so this provider mode is health + identity, not a
+        second execution engine.
+    """
+
     name = "h3"
+
+    def __init__(self, runtime: str = "compile_only") -> None:
+        if runtime not in ("compile_only", "local_diffusers", "comfyui_int8"):
+            raise ValueError(f"unknown H3 runtime {runtime!r}")
+        self.runtime = runtime
 
     def capabilities(self) -> dict[str, Capability]:
         return MATRIX
 
     def health(self) -> tuple[bool, str]:
-        # Deliberately hard-wired until a node actually carries H3. The
-        # licence is a real gate, not a formality, and it turns on WHERE the
-        # node physically is: the Applicable Territory is worldwide EXCEPT the
-        # EU, UK, South Korea and the US, and an organisation deploying inside
-        # one of those four must APPLY and be authorised first.
-        # (Corrected 24 Aug 2026 — earlier wording here had the polarity
-        # inverted; see docs/internal/h3-rtxpro6000-runtime-research.md §1.1.)
+        if self.runtime == "comfyui_int8":
+            # The full node checklist lives beside the adapter it guards:
+            # service reachable, pinned node classes loaded, frozen graphs
+            # present, official weights at their exact published sizes, VRAM
+            # class, disk, ffmpeg. Any critical miss reports unavailable —
+            # never a silent fallback to LTX.
+            import asyncio
+
+            from worker.adapters.h3_comfy import h3_comfy_health
+
+            try:
+                return asyncio.get_event_loop().run_until_complete(h3_comfy_health())
+            except RuntimeError:
+                # Already inside a loop (the worker): callers there should use
+                # `health_async` instead of the sync convenience.
+                return False, "h3 health must be awaited from async context"
+
+        # compile_only / local_diffusers: deliberately hard-wired until a node
+        # actually carries H3. The licence is a real gate, not a formality,
+        # and it turns on WHERE the node physically is: the Applicable
+        # Territory is worldwide EXCEPT the EU, UK, South Korea and the US,
+        # and an organisation deploying inside one of those four must APPLY
+        # and be authorised first. (Corrected 24 Aug 2026 — earlier wording
+        # here had the polarity inverted; see
+        # docs/internal/h3-rtxpro6000-runtime-research.md §1.1.)
         return False, (
             "H3 is not installed on any node. Before it may be, the MiniMax H3 "
             "Community Licence requires the node's physical location to be "
             "confirmed: deployment inside the EU, UK, South Korea or the US "
             "needs an approved application; elsewhere is licensed by default"
         )
+
+    async def health_async(self) -> tuple[bool, str]:
+        if self.runtime == "comfyui_int8":
+            from worker.adapters.h3_comfy import h3_comfy_health
+
+            return await h3_comfy_health()
+        return self.health()
 
     # ── Validation ───────────────────────────────────────────────────────
 
@@ -324,5 +369,14 @@ class H3Provider:
     async def generate(
         self, job: AdapterJob, on_progress: ProgressCallback
     ) -> AdapterResult:
+        if self.runtime == "comfyui_int8":
+            usable, reason = await self.health_async()
+            if not usable:
+                # Explicitly NOT a fallback to LTX: in client-test mode an H3
+                # job that cannot run must fail as an H3 failure.
+                raise ProviderUnavailable(reason)
+            from worker.adapters.h3_comfy import H3ComfyAdapter
+
+            return await H3ComfyAdapter().run(job, on_progress)
         usable, reason = self.health()
         raise ProviderUnavailable(reason if not usable else "H3 generation is not wired")

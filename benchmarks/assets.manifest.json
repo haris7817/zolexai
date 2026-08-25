@@ -234,8 +234,8 @@
       ],
       "framing": "n/a",
       "provenance": "Generated 2026-08-24 by our own ACE-Step service (acestep-v15-xl-turbo, LM acestep-5Hz-lm-4B, repo commit 6d467e4) on Vast instance C.48538452, from lyrics written by us for lip-sync measurement. No commercial track and no third-party rights. Take 2 of 2; take 1 had no usable instrumental gap. Full generation settings and the lyric sheet are in benchmark-song.lyrics.json.",
-      "acquisition": "acquired",
-      "notes": "FORMAT DEVIATION: manifest originally specified .wav. ACE-Step's API encodes to MP3 before returning and exposes no format switch, so MP3 is what production produces and what both LTX A2V and H3 fully_copy actually receive; a WAV here would be less representative. 44100 Hz stereo, 192 kbps, 120.032653 s. VERIFIED: vocals present (gliding formants with vibrato at 400-950 Hz), structural break at ~53-55 s, content ends ~117 s with ~3 s trailing silence. NOT YET VERIFIED: exact vocal onset/offset and whether the break is vocal-free for >=2 s - a spectrogram cannot separate voice from guitar. Settle with a vocal separator or one listen before treating these as lip-sync ground truth.",
+      "acquisition": "pending",
+      "notes": "CANONICAL FILE FROZEN 24 Aug 2026 \u2014 sha256 above pins it; flip acquisition to 'acquired' on the machine that stages the media (the shipped manifest stays pending because media is deliberately not committed). FORMAT DEVIATION: manifest originally specified .wav. ACE-Step's API encodes to MP3 before returning and exposes no format switch, so MP3 is what production produces and what both LTX A2V and H3 fully_copy actually receive; a WAV here would be less representative. 44100 Hz stereo, 192 kbps, 120.032653 s. VERIFIED: vocals present (gliding formants with vibrato at 400-950 Hz), structural break at ~53-55 s, content ends ~117 s with ~3 s trailing silence. NOT YET VERIFIED: exact vocal onset/offset and whether the break is vocal-free for >=2 s - a spectrogram cannot separate voice from guitar. Settle with a vocal separator or one listen before treating these as lip-sync ground truth.",
       "sha256": "faa7802d0fb79abce58db5438de75f92fccdde57d643eddc2f6443d1b8a88ac4"
     },
     {
@@ -251,8 +251,8 @@
       ],
       "framing": "n/a",
       "provenance": "Written by us on 2026-08-24 specifically for lip-sync measurement; frozen alongside the audio it describes.",
-      "acquisition": "acquired",
-      "notes": "Whisper must not be the source of truth here \u2014 it called an English pop song Khmer once. Vocal presence comes from a Demucs stem, and the sheet is what was actually sung.",
+      "acquisition": "pending",
+      "notes": "CANONICAL FILE FROZEN 24 Aug 2026 \u2014 sha256 above pins it; flip acquisition to 'acquired' on the machine that stages the media (the shipped manifest stays pending because media is deliberately not committed). Whisper must not be the source of truth here \u2014 it called an English pop song Khmer once. Vocal presence comes from a Demucs stem, and the sheet is what was actually sung.",
       "sha256": "0242a4f4f1418d1748a45303a607a748054ce573b811bfcc0063193ec60e3645"
     },
     {

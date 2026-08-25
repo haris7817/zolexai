@@ -13,6 +13,7 @@ expensive to discover than a failed job.
 from __future__ import annotations
 
 from worker.adapters.base import AdapterError, GenerationAdapter
+from worker.adapters.h3_comfy import H3ComfyAdapter
 from worker.adapters.harness import HarnessAdapter
 from worker.adapters.ltx import LtxAdapter
 from worker.adapters.mock import MockAdapter
@@ -33,6 +34,13 @@ _ADAPTERS: dict[str, GenerationAdapter] = {
     # resolved lazily on first use, so a node that never runs music pays
     # nothing for this entry. See adapters/music.py and music/provider.py.
     "music": MusicAdapter(),
+    # MiniMax H3 through the pinned ComfyUI INT8 client pack (proven 25 Aug
+    # 2026). Registered but not routed: no shipped workflow says
+    # `runtime: h3_comfy` — the client-test environment flips the YAML line
+    # for image-to-video and reference video-to-video, exactly the M2
+    # mechanism. Connects to a local ComfyUI like music connects to ACE-Step.
+    # See adapters/h3_comfy.py and docs/internal/h3-client-runtime-freeze.md.
+    "h3_comfy": H3ComfyAdapter(),
 }
 
 

@@ -1902,6 +1902,24 @@ class LtxAdapter:
         self._record_audio_mode(job, AudioMode.SOURCE_AUDIO)
         dimensions = self._requested_dimensions(job)
         audio_conditioned = bool(job.execution.get("audio_conditioning"))
+        if job.execution.get("require_audio_conditioning") and not audio_conditioned:
+            # The client-test guard. The default music-video path generates
+            # from the prompt alone and muxes the track afterwards — measured
+            # 24 Aug 2026: the output envelope matched the input within 0.5 dB
+            # and mouth motion did not correlate with the vocal. A client-test
+            # environment that promises lip response must be UNABLE to run the
+            # unconditioned route by a config slip; the two keys are set
+            # together in the client-test YAML, and this refuses when they
+            # disagree instead of shipping a video that quietly cannot sync.
+            raise AdapterError(
+                "This tool is temporarily unavailable.",
+                internal_detail=(
+                    "require_audio_conditioning is set but audio_conditioning "
+                    "is not: the prompt-only + post-mux route is forbidden in "
+                    "client-test mode"
+                ),
+                retriable=False,
+            )
         per_pass = (
             self._audio_pass_seconds(job)
             if audio_conditioned

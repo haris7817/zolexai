@@ -577,6 +577,49 @@ class WorkerSettings(BaseSettings):
     still five minutes after the fades have eaten into it.
     """
 
+    # ── H3 through the pinned ComfyUI INT8 stack (client-test runtime) ───
+    #
+    # The service is the client pack proven on 25 Aug 2026: ComfyUI v0.33.3,
+    # Extender 6a3583d, Easy-Use 4de1ab3, official Comfy-Org INT8 weights.
+    # Like ACE-Step, it is a long-lived local process the worker connects to
+    # and never manages. `docs/internal/h3-client-runtime-freeze.md` is the
+    # source of truth for every pin.
+
+    h3_comfy_base_url: str = "http://127.0.0.1:8188"
+    """Where the pinned ComfyUI listens. Loopback on the GPU node."""
+
+    h3_comfy_workflows_dir: Path = REPO_ROOT / "benchmarks" / "client-pack"
+    """The frozen client workflow graphs. These files are the contract; the
+    adapter edits only what the pack itself sanctions."""
+
+    h3_comfy_input_dir: Path | None = None
+    """ComfyUI's own `input/` directory. Required to run: LoadImage validates
+    files there at submit time, so the adapter stages job inputs into it.
+    None means this node does not carry the H3 ComfyUI runtime."""
+
+    h3_comfy_models_dir: Path | None = None
+    """Root of the official Comfy-Org weights, for health verification
+    (existence + exact published size every check; full SHA at provisioning)."""
+
+    h3_comfy_request_timeout: float = 30.0
+    """Per-HTTP-call budget — control-plane round trips only."""
+
+    h3_comfy_poll_seconds: float = 3.0
+    """How often to ask whether the prompt finished."""
+
+    h3_comfy_generation_timeout: float = 3600.0
+    """Whole-generation ceiling. The measured worst case is the 60 s quality
+    run at ~13 minutes; an hour covers a cold model load plus a slow run
+    without letting a wedged service hold a lease forever."""
+
+    h3_comfy_draft_canvas: tuple[int, int] = (544, 320)
+    """R2V draft tier — the pack's shipped canvas, measured at ~11-12x real
+    time. Multiples of 32, as the guide requires."""
+
+    h3_comfy_quality_canvas: tuple[int, int] = (960, 544)
+    """R2V delivery tier — measured at ~33x real time with the best identity
+    adherence of the whole H3 evaluation. Cost scales linearly in pixels."""
+
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
 
