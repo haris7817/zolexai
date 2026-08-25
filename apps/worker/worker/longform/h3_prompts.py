@@ -54,28 +54,38 @@ class H3ScenePlan:
     the model keeps reading the references instead of its own last guess."""
 
 
+def _reference_bindings(plan: H3ScenePlan) -> tuple[str, str]:
+    """(identity tag, scene clause) — each reference gets exactly one owner.
+
+    The R2V mapping is a convention the prose must not blur: the FIRST label
+    is the identity photograph, everything after it is scene. Offering every
+    label as "the subject" let the model pick — on 25 Aug it picked the
+    source video's singer over the customer's reference (review pack 03),
+    and the 26 Aug 12-step sample picked the right person but kept his
+    photo's backdrop. Worse, the opening segment never named the labels at
+    all, so a single-segment video left the binding entirely to chance.
+    """
+    if not plan.reference_labels:
+        return "", ""
+    identity, *rest = plan.reference_labels
+    identity_tag = f" (exactly the person in {identity})"
+    scene_clause = (
+        f"the location, lighting and framing of {', '.join(rest)}"
+        if rest and not plan.environment
+        else ""
+    )
+    return identity_tag, scene_clause
+
+
 def _persistence_clause(plan: H3ScenePlan) -> str:
-    parts = [f"The subject is still {plan.subject}"]
-    scene_labels: tuple[str, ...] = ()
-    if plan.reference_labels:
-        # The R2V mapping is a convention this clause must not blur: the
-        # FIRST label is the identity photograph, everything after it is
-        # scene. Offering every label as "the subject" let the model pick —
-        # and on 25 Aug it picked the source video's singer over the
-        # customer's reference (review pack 03), while the 26 Aug 12-step
-        # sample picked the right person but kept the photo's backdrop.
-        # Identity and scene each get exactly one owner.
-        identity, *rest = plan.reference_labels
-        scene_labels = tuple(rest)
-        parts[0] += f" (exactly the person in {identity})"
+    identity_tag, scene_clause = _reference_bindings(plan)
+    parts = [f"The subject is still {plan.subject}{identity_tag}"]
     if plan.wardrobe:
         parts.append(f"wearing the same {plan.wardrobe}")
     if plan.environment:
         parts.append(f"in the same {plan.environment}")
-    elif scene_labels:
-        parts.append(
-            f"in the location, lighting and framing of {', '.join(scene_labels)}"
-        )
+    elif scene_clause:
+        parts.append(f"in {scene_clause}")
     for prop in plan.props:
         parts.append(f"with the same {prop}")
     return ", ".join(parts) + "."
@@ -118,10 +128,12 @@ def discipline_prompts(plan: H3ScenePlan, segments: int) -> list[str]:
         absence = _absence_clause(plan, segment)
 
         if segment == 1:
+            identity_tag, scene_clause = _reference_bindings(plan)
             opening = (
-                f"One continuous cinematic shot: {plan.subject}"
+                f"One continuous cinematic shot: {plan.subject}{identity_tag}"
                 + (f", wearing {plan.wardrobe}" if plan.wardrobe else "")
                 + (f", in {plan.environment}" if plan.environment else "")
+                + (f", in {scene_clause}" if scene_clause else "")
                 + (
                     f", with {', '.join(plan.props)}"
                     if plan.props
