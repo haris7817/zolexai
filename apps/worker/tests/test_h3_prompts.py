@@ -108,3 +108,19 @@ def test_plan_from_prompt_repeats_the_whole_prompt_per_segment() -> None:
         assert "drummer in a red jacket" in prompt
     for prompt in prompts[1:]:
         assert "<Picture 1>" in prompt
+
+
+def test_two_references_get_one_owner_each() -> None:
+    """The 25/26 Aug identity flip-flop: with both labels offered as 'the
+    subject', the model chose — once the source video's singer (review pack
+    03, wrong person), once the reference with its backdrop (sample 14,
+    wrong scene). Picture 1 must own the person, Picture 2 the scene."""
+    plan = plan_from_prompt(
+        "He sings at the microphone.",
+        reference_labels=("<Picture 1>", "<Picture 2>"),
+    )
+    [text] = discipline_prompts(plan, 1)
+    assert "exactly the person in <Picture 1>" in text
+    assert "location, lighting and framing of <Picture 2>" in text
+    # Picture 2 must never be offered as an identity source.
+    assert "person in <Picture 2>" not in text

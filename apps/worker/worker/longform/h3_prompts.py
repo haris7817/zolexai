@@ -56,12 +56,26 @@ class H3ScenePlan:
 
 def _persistence_clause(plan: H3ScenePlan) -> str:
     parts = [f"The subject is still {plan.subject}"]
+    scene_labels: tuple[str, ...] = ()
     if plan.reference_labels:
-        parts[0] += f" (exactly as in {', '.join(plan.reference_labels)})"
+        # The R2V mapping is a convention this clause must not blur: the
+        # FIRST label is the identity photograph, everything after it is
+        # scene. Offering every label as "the subject" let the model pick —
+        # and on 25 Aug it picked the source video's singer over the
+        # customer's reference (review pack 03), while the 26 Aug 12-step
+        # sample picked the right person but kept the photo's backdrop.
+        # Identity and scene each get exactly one owner.
+        identity, *rest = plan.reference_labels
+        scene_labels = tuple(rest)
+        parts[0] += f" (exactly the person in {identity})"
     if plan.wardrobe:
         parts.append(f"wearing the same {plan.wardrobe}")
     if plan.environment:
         parts.append(f"in the same {plan.environment}")
+    elif scene_labels:
+        parts.append(
+            f"in the location, lighting and framing of {', '.join(scene_labels)}"
+        )
     for prop in plan.props:
         parts.append(f"with the same {prop}")
     return ", ".join(parts) + "."
