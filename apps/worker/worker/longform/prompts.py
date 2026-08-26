@@ -19,6 +19,8 @@ import math
 import re
 from dataclasses import dataclass
 
+from worker.longform.h3_prompts import parse_timed_sections
+
 _SECTION_LINE = re.compile(
     r"^\s*(?:section\s+\d+(?:\s*/\s*(?:\d+|\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?(?:\s*(?:s|sec|seconds))?))?|\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?\s*(?:s|sec|seconds)?)\s*[:\-]\s*(.+)$",
     re.IGNORECASE,
@@ -151,6 +153,19 @@ def plan_section_prompts(
 
 
 def _separate(master_prompt: str, *, v2: bool = False) -> tuple[str, list[_Action]]:
+    # The inline paragraph format first — "[0–6s] aerial shot … [6–12s] he
+    # enters …" flowing through one paragraph, the way the client actually
+    # writes scripts. The line-based patterns below cannot see it (nothing
+    # matches at line starts), which on the H3 path put the whole script in
+    # every segment until 26 Aug. Same parser, same contract: the preamble
+    # is the identity/style brief (persistent, restated every section) and
+    # each block is a shot pinned to its own moment, all verbatim.
+    preamble, blocks = parse_timed_sections(master_prompt)
+    if blocks:
+        return preamble.strip(), [
+            _Action(text, start, end) for start, end, text in blocks
+        ]
+
     lines = [line for line in master_prompt.splitlines() if line.strip()]
     persistent: list[str] = []
     actions: list[_Action] = []

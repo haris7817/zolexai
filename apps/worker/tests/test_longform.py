@@ -438,3 +438,37 @@ async def test_onsets_are_found_in_a_track_that_actually_pulses(
     assert onsets, "a pulsing track produced no detectable events"
     per_second = len(onsets) / 8.0
     assert 0.5 <= per_second <= 8.0, f"implausible event rate: {per_second:.1f}/s"
+
+
+def test_inline_timed_paragraph_splits_like_the_h3_path() -> None:
+    """The client's actual script format — "[0–6s] …" markers flowing through
+    ONE paragraph — matched none of the line-based patterns, so the whole
+    script rode into every section (the same failure the H3 path fixed on
+    26 Aug). The inline parser now feeds the existing timed distribution:
+    preamble = persistent identity restated per section, each block lands in
+    the section holding its midpoint."""
+    prompt = (
+        "30-second cinematic military rescue. The same battle-worn army "
+        "soldier remains consistent throughout, wearing olive tactical gear. "
+        "[0-6s] A wide aerial shot follows him through the jungle toward the "
+        "compound. [6-12s] He enters the building, flashlight cutting through "
+        "dust. [12-18s] He hears knocking and opens a concealed steel door. "
+        "[18-24s] He descends into the bunker and frees three prisoners. "
+        "[24-30s] He leads the group outside as a helicopter approaches."
+    )
+    seg1, seg2 = plan_section_prompts(prompt, 2, total_seconds=30.0)
+    # Identity preamble is restated in BOTH sections.
+    for section in (seg1, seg2):
+        assert "battle-worn army soldier" in section
+    # Each section carries only its own slice of the timeline.
+    assert "aerial" in seg1 and "flashlight" in seg1
+    assert "helicopter" not in seg1 and "bunker" not in seg1
+    assert "bunker" in seg2 and "helicopter" in seg2
+    assert "aerial" not in seg2
+
+
+def test_prompts_without_inline_markers_are_unchanged() -> None:
+    prompt = "A koi pond at dawn, one fish gliding slowly beneath the mist."
+    planned = plan_section_prompts(prompt, 2, total_seconds=10.0)
+    # No timeline: the whole prompt stays the persistent brief in each section.
+    assert all("koi pond" in section for section in planned)
