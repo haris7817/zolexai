@@ -276,6 +276,15 @@ class WorkerSettings(BaseSettings):
     side; the VRAM ceiling is an engineering fact independent of it).
     """
 
+    ltx_unquantized_offload: str = "cpu"
+    """How the UNQUANTIZED tiers (audio-conditioned music video, IC-LoRA,
+    reference anchor) fit the card: "cpu" streams the 22B transformer's
+    weights from host RAM each pass — safe anywhere, and measured 23-30%
+    slower than "none", which keeps the weights resident. "none" needs the
+    headroom that lazy ComfyUI eviction created on the 96 GB production node
+    (27 Aug 2026); a node where it OOMs sets this back to "cpu". Per-node
+    hardware property, hence a setting and not a workflow key."""
+
     ltx_max_seconds: int = 60
     """
     Operational brake on single-pass length, not the real ceiling.

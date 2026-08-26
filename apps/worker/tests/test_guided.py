@@ -118,6 +118,27 @@ async def test_the_guided_tier_runs_the_guided_pipeline_unquantized(
 
 
 @needs_ffmpeg
+async def test_a_node_with_headroom_can_keep_the_weights_resident(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ltx_unquantized_offload: none` — the 27 Aug music-video speed lever:
+    on the 96 GB node (with lazy ComfyUI eviction making room) the audio
+    tier stops streaming the 22B transformer from host RAM, measured 23-30%
+    faster. Quantization stays off either way."""
+    from worker.core.config import settings
+
+    monkeypatch.setattr(settings, "ltx_unquantized_offload", "none")
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "r.mp4", 2.0, audio=True))
+
+    await collect(guided_job(workspace))
+
+    argv = invocations(log)[0]
+    assert "--offload" not in argv
+    assert "--quantization" not in argv
+
+
+@needs_ffmpeg
 async def test_every_guided_pass_lands_on_the_measured_frame_count(
     workspace: Path, fake_models: Path, stub_repo: Path,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,

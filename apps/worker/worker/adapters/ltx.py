@@ -2832,10 +2832,12 @@ class LtxAdapter:
         ]
         if pipeline.quantize:
             cmd += ["--quantization", settings.ltx_quantization]
-        if pipeline.offload_cpu:
+        if pipeline.offload_cpu and settings.ltx_unquantized_offload != "none":
             # The other half of dropping quantization: the unquantized 22B
-            # transformer is fitted by streaming weights from host RAM.
-            cmd += ["--offload", "cpu"]
+            # transformer is fitted by streaming weights from host RAM —
+            # unless this node has the VRAM to keep it resident, which is
+            # measured 23-30% faster (see ltx_unquantized_offload).
+            cmd += ["--offload", settings.ltx_unquantized_offload]
         if pipeline.distilled_lora:
             cmd += [
                 "--distilled-lora",
