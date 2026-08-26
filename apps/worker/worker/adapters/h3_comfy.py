@@ -204,11 +204,23 @@ class H3ComfyAdapter:
                 retriable=False,
             )
         index = duration_index_for(seconds)
-        if index is None:
-            supported = ", ".join(f"{int(v)}s" for v in DURATION_PRESETS.values())
+        # The Fast/Best product decision (client-approved 27 Aug): Best (H3)
+        # offers up to 30s — the 60s preset exists in the pack but is not
+        # sold on this engine. The cap is config so the decision stays a
+        # YAML line, and the refusal lists only what is actually on offer.
+        max_seconds = job.execution.get("h3_max_seconds")
+        offered = {
+            i: v
+            for i, v in DURATION_PRESETS.items()
+            if max_seconds is None or v <= float(max_seconds)
+        }
+        if index is None or index not in offered:
+            supported = ", ".join(f"{int(v)}s" for v in offered.values())
             raise AdapterError(
                 f"This tool supports these lengths: {supported}.",
-                internal_detail=f"{seconds}s does not match a client-pack preset",
+                internal_detail=(
+                    f"{seconds}s not offered (h3_max_seconds={max_seconds!r})"
+                ),
                 retriable=False,
             )
         return index
@@ -438,7 +450,17 @@ class H3ComfyAdapter:
         # -0.1 dBFS, which clips audibly after any platform re-encode (same
         # audit, second video). One audio-only pass: tail fade plus a -1 dBTP
         # ceiling; the video stream is copied untouched.
-        if info.has_audio and info.duration_seconds > 1.5:
+        wants_sound = str(
+            job.parameters.get("sound", True)
+        ).strip().lower() not in ("false", "no", "off", "0")
+        if info.has_audio and not wants_sound:
+            # The customer asked for a silent video (part of the Fast/Best
+            # product round, 27 Aug): drop the audio stream outright — the
+            # video stream is copied untouched, so this costs milliseconds.
+            muted = output.with_name(f"{output.stem}_muted.mp4")
+            await ffmpeg(["-i", str(output), "-an", "-c:v", "copy", str(muted), "-y"])
+            output = muted
+        elif info.has_audio and info.duration_seconds > 1.5:
             faded = output.with_name(f"{output.stem}_faded.mp4")
             fade_start = max(0.0, info.duration_seconds - 0.75)
             await ffmpeg(

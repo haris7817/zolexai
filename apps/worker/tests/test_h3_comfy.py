@@ -707,3 +707,56 @@ def test_seed_base_is_stable_per_job_and_unique_across_jobs(tmp_path: Path) -> N
     # An explicit seed parameter wins.
     job_c = _job(tmp_path, "text-to-video", [], seed=1234)
     assert H3ComfyAdapter._seed_base(job_c) == 1234
+
+
+async def test_best_tier_does_not_offer_sixty_seconds(tmp_path: Path) -> None:
+    """The Fast/Best product decision: Best caps at 30s. The refusal lists
+    only what is actually on offer — no 60s in the menu."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    adapter = H3ComfyAdapter(client=_client(FakeComfy(workspace, "job1")))
+    job = AdapterJob(
+        job_id="job1",
+        workflow_id="text-to-video",
+        workflow_version="1",
+        prompt="p",
+        parameters={"duration": "60s"},
+        inputs=[],
+        execution={"runtime": "h3_comfy", "h3_max_seconds": 30},
+        workspace=workspace,
+    )
+    with pytest.raises(AdapterError) as raised:
+        await adapter.run(job, _progress)
+    assert "60s" not in raised.value.user_message
+    assert "30s" in raised.value.user_message
+
+
+@needs_ffmpeg
+async def test_sound_off_strips_the_audio_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`sound: false` — the customer asked for a silent video; the stream is
+    dropped, the picture copied untouched."""
+    from worker.media.probe import probe_media
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.setattr(settings, "h3_comfy_input_dir", tmp_path / "comfy_in")
+    source = await _png(tmp_path / "face.png")
+    await make_clip(workspace / "zolex_job1_00001.mp4", 5.0, audio=True)
+
+    fake = FakeComfy(workspace, "job1")
+    adapter = H3ComfyAdapter(client=_client(fake))
+    job = AdapterJob(
+        job_id="job1",
+        workflow_id="image-to-video",
+        workflow_version="1",
+        prompt="p",
+        parameters={"duration": "5s", "sound": "false"},
+        inputs=[_input("source_image", source)],
+        execution={"runtime": "h3_comfy"},
+        workspace=workspace,
+    )
+    result = await adapter.run(job, _progress)
+    info = await probe_media(result.path)
+    assert info.has_video and not info.has_audio

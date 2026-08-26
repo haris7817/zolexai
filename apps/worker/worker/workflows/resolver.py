@@ -53,6 +53,16 @@ def resolve_adapter(job: AdapterJob) -> GenerationAdapter:
     Routing lives in version-controlled YAML rather than in worker code, so
     moving a workflow onto a real provider in M2 is a configuration change and a
     deploy — not a code change in three places.
+
+    `runtime_by_quality` is the Fast/Best toggle (client-approved 27 Aug
+    2026): a mapping from the public `quality` parameter's value to a
+    runtime, e.g. `{fast: ltx, best: h3_comfy}`. A missing or unmapped
+    quality falls back to plain `runtime`, so the toggle being absent from a
+    request — or a value the YAML never named — routes exactly as before.
     """
     runtime = str(job.execution.get("runtime") or "mock")
+    by_quality = job.execution.get("runtime_by_quality")
+    if isinstance(by_quality, dict):
+        quality = str(job.parameters.get("quality") or "").strip().lower()
+        runtime = str(by_quality.get(quality) or runtime)
     return get_adapter(runtime)

@@ -79,3 +79,27 @@ def test_default_h3_provider_still_refuses() -> None:
     ok, reason = H3Provider().health()
     assert not ok
     assert "Licence" in reason or "licence" in reason
+
+
+def test_quality_toggle_routes_between_engines(tmp_path: Path) -> None:
+    """The client-approved Fast/Best toggle: `runtime_by_quality` maps the
+    public quality parameter to an engine; anything unmapped or absent falls
+    back to plain `runtime` — the toggle can never strand a request."""
+    from worker.adapters.h3_comfy import H3ComfyAdapter
+    from worker.workflows.resolver import resolve_adapter
+
+    execution = {
+        "runtime": "ltx",
+        "runtime_by_quality": {"fast": "ltx", "best": "h3_comfy"},
+    }
+    fast = make_job(tmp_path, execution=execution, parameters={"quality": "fast", "duration": "5s"})
+    best = make_job(tmp_path, execution=execution, parameters={"quality": "best", "duration": "5s"})
+    unset = make_job(tmp_path, execution=execution, parameters={"duration": "5s"})
+    weird = make_job(
+        tmp_path, execution=execution, parameters={"quality": "ultra", "duration": "5s"}
+    )
+
+    assert isinstance(resolve_adapter(fast), LtxAdapter)
+    assert isinstance(resolve_adapter(best), H3ComfyAdapter)
+    assert isinstance(resolve_adapter(unset), LtxAdapter)
+    assert isinstance(resolve_adapter(weird), LtxAdapter)
