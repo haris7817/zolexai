@@ -351,6 +351,12 @@ _MEASURED_SAFE_CONDITIONED = frozenset({120, 240, 360, 720, 1289, 1385, 1441, 15
 #: own command builder), the night the first production 60s I2V chained:
 #:
 #:   PASS: 120 (production-shape test render, 19 Aug), 240, 360
+#:   PASS: 481 — the AUDIO tier's 20.04s pass, measured 27 Aug 2026 on the
+#:         RTX PRO 6000: a three-section music-video probe whose third pass
+#:         carried seam frame + section-1 identity anchor decoded clean
+#:         (483 s wall, output probed; the run that ended the three-women
+#:         drift). Note this cell was measured on the a2vid tier, not the
+#:         distilled path the other cells used.
 #:   FAIL: 720 (the production crash, reproduced deterministically),
 #:         736 (so the render-extra-and-trim dodge does NOT work here —
 #:         this cell family fails by size, not by lattice point)
@@ -362,7 +368,7 @@ _MEASURED_SAFE_CONDITIONED = frozenset({120, 240, 360, 720, 1289, 1385, 1441, 15
 #: captions — the exact configuration the 60s two-section validation ran
 #: clean. Growing this set is a `frame_probe2.py` measurement, not an
 #: opinion.
-_TWO_IMAGE_SAFE_FRAMES = frozenset({120, 240, 360})
+_TWO_IMAGE_SAFE_FRAMES = frozenset({120, 240, 360, 481})
 
 #: The model's native frame convention: counts of the form 8k+1.
 #:
