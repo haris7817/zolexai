@@ -162,6 +162,7 @@ from worker.media import (
     probe_media,
     verify_output,
 )
+from worker.media.vocals import vocal_activity, vocal_fraction
 
 logger = get_logger(__name__)
 
@@ -1957,6 +1958,25 @@ class LtxAdapter:
                 ),
             )
 
+        # Where the track is actually SUNG — so the performance direction can
+        # match the audio instead of commanding singing throughout. The
+        # client's 27 Aug audit measured mouth-vs-audio correlation at 0.027,
+        # with the singer mouthing words through a forty-second instrumental
+        # intro: the prompt's unconditional "she sings" out-shouted the audio
+        # conditioning. None (separation unavailable) keeps old behaviour.
+        vocal_spans: list[tuple[float, float]] | None = None
+        if audio_conditioned and job.execution.get("vocal_aware_prompts", True):
+            vocal_spans = await cancellable(job, vocal_activity(conditioning_master))
+            logger.info(
+                "vocal_spans",
+                extra={
+                    "job_id": job.job_id,
+                    "spans": [
+                        (round(a, 1), round(b, 1)) for a, b in (vocal_spans or [])
+                    ][:20],
+                },
+            )
+
         prompt_plan: list[str] | None = None
 
         def prompt_for_step(step: ChainStep) -> str:
@@ -1970,7 +1990,27 @@ class LtxAdapter:
                     total_seconds=target_seconds,
                     v2=bool(job.execution.get("prompt_structuring_v2")),
                 )
-            return prompt_plan[step.index]
+            prompt = prompt_plan[step.index]
+            if vocal_spans is not None:
+                sung = vocal_fraction(
+                    vocal_spans,
+                    step.segment.start_seconds,
+                    step.segment.start_seconds + step.segment.duration_seconds,
+                )
+                if sung < 0.2:
+                    prompt += (
+                        " The music in this passage is INSTRUMENTAL — nobody "
+                        "sings here: the performer's lips stay closed, she "
+                        "sways and feels the beat, no mouth movement of "
+                        "singing at any point in this section."
+                    )
+                elif sung > 0.6:
+                    prompt += (
+                        " The vocal is active in this passage: she sings the "
+                        "words, her mouth clearly articulating in time with "
+                        "the voice in the music."
+                    )
+            return prompt
 
         boundaries = await self._musical_boundaries(job, staged, target_seconds, per_pass)
 

@@ -276,6 +276,17 @@ class WorkerSettings(BaseSettings):
     side; the VRAM ceiling is an engineering fact independent of it).
     """
 
+    vocal_separator_python: Path | None = None
+    """Python of the stem-separation venv (demucs), e.g.
+    /workspace/vocal-sep/.venv/bin/python. None disables vocal-aware
+    performance direction entirely — the music-video prompt then behaves as
+    it always did. A dedicated venv because the worker's own environment
+    stays light and the pinned pipeline venvs stay untouched."""
+
+    vocal_separator_timeout: float = 300.0
+    """Stem separation budget. htdemucs on the production GPU does a 3-minute
+    track in well under a minute; five covers a cold model download."""
+
     ltx_unquantized_offload: str = "cpu"
     """How the UNQUANTIZED tiers (audio-conditioned music video, IC-LoRA,
     reference anchor) fit the card: "cpu" streams the 22B transformer's
