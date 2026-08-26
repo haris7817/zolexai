@@ -85,12 +85,11 @@ export function durationsForQuality(
 }
 
 /**
- * Whether the sound on/off control renders: the workflow must declare it AND
- * the Best level must be selected — Best's engine generates native audio;
- * Fast's does not, so the control would be a lie there.
+ * Whether the sound on/off control renders — on every quality level
+ * (client round two, 27 Aug): both engines deliver an audio track.
  */
-export function showsSound(workflow: Workflow, quality: string | null | undefined): boolean {
-  return workflow.settings.sound && quality === "best";
+export function showsSound(workflow: Workflow): boolean {
+  return workflow.settings.sound;
 }
 
 /**

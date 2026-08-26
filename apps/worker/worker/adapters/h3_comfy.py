@@ -186,7 +186,7 @@ class H3ComfyAdapter:
         return "quality"
 
     @staticmethod
-    async def _duration_index(job: AdapterJob) -> int:
+    async def _duration_index(job: AdapterJob) -> tuple[int, float | None]:
         seconds = parse_duration_seconds(job.parameters.get("duration"))
         if seconds is None and job.workflow_id == "video-to-video":
             # `duration_mode: source`: the API sends no duration because the
@@ -196,7 +196,7 @@ class H3ComfyAdapter:
             if source is not None and source.path is not None:
                 info = await probe_media(source.require_path())
                 if info.duration_seconds:
-                    return nearest_duration_index(info.duration_seconds)
+                    return nearest_duration_index(info.duration_seconds), None
         if seconds is None:
             raise AdapterError(
                 "Please choose a video length.",
@@ -214,6 +214,15 @@ class H3ComfyAdapter:
             for i, v in DURATION_PRESETS.items()
             if max_seconds is None or v <= float(max_seconds)
         }
+        if index is None and seconds is not None:
+            # A length the lattice cannot render exactly (the client sells
+            # 20s; the pack's plans are 5/10/15/30/60): render the NEXT
+            # preset up and trim the finished file to the promised length.
+            # The render costs the larger preset — an engineering fact the
+            # product accepted (27 Aug) in exchange for the exact duration.
+            longer = [i for i, v in sorted(offered.items()) if v > seconds]
+            if longer:
+                return longer[0], float(seconds)
         if index is None or index not in offered:
             supported = ", ".join(f"{int(v)}s" for v in offered.values())
             raise AdapterError(
@@ -223,7 +232,7 @@ class H3ComfyAdapter:
                 ),
                 retriable=False,
             )
-        return index
+        return index, None
 
     # ── Input staging ────────────────────────────────────────────────────
 
@@ -280,7 +289,7 @@ class H3ComfyAdapter:
         await reporter.preparing("Setting up your video…")
 
         graph = load_graph(self._graph_path(job.workflow_id))
-        index = await self._duration_index(job)
+        index, trim_to = await self._duration_index(job)
         tier = self._tier(job)
         segments = PROMPTS_PER_INDEX[index]
         nominal_seconds = DURATION_PRESETS[index]
@@ -450,6 +459,24 @@ class H3ComfyAdapter:
         # -0.1 dBFS, which clips audibly after any platform re-encode (same
         # audit, second video). One audio-only pass: tail fade plus a -1 dBTP
         # ceiling; the video stream is copied untouched.
+        if trim_to is not None:
+            # The promised length is not on the lattice: the render was the
+            # next preset up, the delivery is an exact cut. Re-encoded (a
+            # copy cut lands on the previous keyframe, seconds early) at the
+            # pack's own quality settings.
+            cut = output.with_name(f"{output.stem}_cut.mp4")
+            await ffmpeg(
+                [
+                    "-i", str(output),
+                    "-t", f"{trim_to:.3f}",
+                    "-c:v", "libx264", "-crf", "17", "-preset", "fast",
+                    "-c:a", "aac", "-b:a", "192k",
+                    str(cut), "-y",
+                ]
+            )
+            output = cut
+            info = await probe_media(output)
+
         wants_sound = str(
             job.parameters.get("sound", True)
         ).strip().lower() not in ("false", "no", "off", "0")

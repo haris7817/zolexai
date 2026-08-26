@@ -390,23 +390,26 @@ export function GenerationSettingsPanel({
                 </div>
               )}
             />
-            {showsSound(workflow, selectedQuality) ? (
-              <Controller
-                control={form.control}
-                name="soundOn"
-                render={({ field }) => (
-                  <div className="mb-6">
-                    <ToggleField
-                      id="zx-sound"
-                      label="Sound"
-                      checked={field.value}
-                      onChange={field.onChange}
-                    />
-                  </div>
-                )}
-              />
-            ) : null}
           </>
+        ) : null}
+
+        {/* ── Sound — on every quality level (client round two, 27 Aug):
+            both engines deliver an audio track ─────────────────────── */}
+        {showsSound(workflow) ? (
+          <Controller
+            control={form.control}
+            name="soundOn"
+            render={({ field }) => (
+              <div className="mb-6">
+                <ToggleField
+                  id="zx-sound"
+                  label="Sound"
+                  checked={field.value}
+                  onChange={field.onChange}
+                />
+              </div>
+            )}
+          />
         ) : null}
 
         {/* ── Advanced ─────────────────────────────────────────────── */}

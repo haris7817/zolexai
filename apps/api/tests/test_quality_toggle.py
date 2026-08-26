@@ -36,7 +36,7 @@ async def test_the_catalogue_serves_the_toggle(client: AsyncClient) -> None:
     workflow = (await client.get("/api/v1/workflows/text-to-video")).json()
     assert workflow["supported_quality_levels"] == ["fast", "best"]
     assert workflow["supported_durations_by_quality"] == {
-        "best": ["5s", "10s", "15s", "30s"]
+        "best": ["5s", "10s", "15s", "20s", "30s"]
     }
     assert workflow["settings"]["quality"] is True
     assert workflow["settings"]["sound"] is True

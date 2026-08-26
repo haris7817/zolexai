@@ -1211,7 +1211,7 @@ class LtxAdapter:
         )
 
         await reporter.uploading()
-        return _video_result(output, info)
+        return await _video_result(job, output, info)
 
     # ── extend-video ─────────────────────────────────────────────────────
 
@@ -1393,7 +1393,7 @@ class LtxAdapter:
         )
 
         await reporter.uploading()
-        return _video_result(output, info)
+        return await _video_result(job, output, info)
 
     # ── video-to-video ───────────────────────────────────────────────────
 
@@ -1885,7 +1885,7 @@ class LtxAdapter:
         )
 
         await reporter.uploading()
-        return _video_result(output, info)
+        return await _video_result(job, output, info)
 
     # ── music-video ──────────────────────────────────────────────────────
 
@@ -2127,7 +2127,7 @@ class LtxAdapter:
         )
 
         await reporter.uploading()
-        return _video_result(output, info)
+        return await _video_result(job, output, info)
 
     async def _musical_boundaries(
         self, job: AdapterJob, track: Path, total_seconds: float, per_pass: float
@@ -3315,7 +3315,17 @@ def _delivery_fps(source: MediaInfo) -> float:
     return min(60.0, max(10.0, source.fps or float(settings.ltx_frame_rate)))
 
 
-def _video_result(output: Path, info: MediaInfo) -> AdapterResult:
+async def _video_result(job: AdapterJob, output: Path, info: MediaInfo) -> AdapterResult:
+    # The global sound choice (client round two, 27 Aug): LTX results carry
+    # an audio track as well, so "sound: false" is honoured on every engine.
+    # The video stream is copied untouched; this costs milliseconds.
+    wants_sound = str(job.parameters.get("sound", True)).strip().lower() not in (
+        "false", "no", "off", "0",
+    )
+    if info.has_audio and not wants_sound:
+        muted = output.with_name(f"{output.stem}_muted.mp4")
+        await ffmpeg(["-i", str(output), "-an", "-c:v", "copy", str(muted), "-y"])
+        output = muted
     return AdapterResult(
         path=output,
         content_type="video/mp4",

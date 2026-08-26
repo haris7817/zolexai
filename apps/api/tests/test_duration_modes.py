@@ -50,7 +50,8 @@ async def test_image_to_video_offers_the_same_five_durations(
     """
     workflow = (await client.get("/api/v1/workflows/image-to-video")).json()
     assert workflow["duration_mode"] == "fixed"
-    assert workflow["supported_durations"] == ["5s", "10s", "15s", "30s", "60s"]
+    # 20s joined the ladder in the Fast/Best round two (27 Aug 2026).
+    assert workflow["supported_durations"] == ["5s", "10s", "15s", "20s", "30s", "60s"]
 
 
 async def test_a_sixty_second_image_to_video_duration_passes_validation(

@@ -48,8 +48,8 @@ class GenerationParameters(BaseModel):
     """Whether the finished video carries its soundtrack. Absent means yes —
     every existing client keeps its exact behaviour, and the worker's own
     default agrees. Only workflows whose definition sets `settings.sound`
-    accept it (the Best/H3 engine generates native audio; Fast/LTX does
-    not, so the control is pointless there and rejected)."""
+    accept it — on every quality level (client round two, 27 Aug): both
+    engines deliver an audio track."""
 
     prompt_mode: str | None = Field(default=None, max_length=32)
     """How the prompt should be read: `standard` (the default — the text IS

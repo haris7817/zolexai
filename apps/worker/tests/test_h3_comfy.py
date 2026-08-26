@@ -413,9 +413,26 @@ async def test_reference_v2v_without_reference_is_refused(tmp_path: Path) -> Non
     assert raised.value.retriable is False
 
 
-async def test_unsupported_duration_is_refused_with_the_menu(tmp_path: Path) -> None:
-    adapter = H3ComfyAdapter(client=_client(FakeComfy(tmp_path, "job1")))
+async def test_off_lattice_duration_renders_the_next_preset_and_trims(
+    tmp_path: Path,
+) -> None:
+    """The client sells 20s; the pack's lattice has no such plan. The render
+    is the next preset up (30s, index 3) and the delivery is an exact cut —
+    the 27 Aug round-two decision."""
     job = _job(tmp_path, "image-to-video", [], duration="20s")
+    index, trim_to = await H3ComfyAdapter._duration_index(job)
+    assert (index, trim_to) == (3, 20.0)
+
+    # Exact lattice lengths still carry no trim.
+    exact = _job(tmp_path, "image-to-video", [], duration="15s")
+    assert await H3ComfyAdapter._duration_index(exact) == (2, None)
+
+
+async def test_a_length_beyond_the_ladder_is_refused_with_the_menu(
+    tmp_path: Path,
+) -> None:
+    adapter = H3ComfyAdapter(client=_client(FakeComfy(tmp_path, "job1")))
+    job = _job(tmp_path, "image-to-video", [], duration="90s")
     with pytest.raises(AdapterError) as raised:
         await adapter.run(job, _progress)
     assert "5s" in raised.value.user_message

@@ -99,9 +99,8 @@ class SettingsSpec(BaseModel):
     and Image to Video today; a workflow that does not declare it rejects
     `prompt_mode` in `validate_request`, same policy as lyrics."""
     sound: bool = False
-    """Whether the panel offers a sound on/off control. Shown by the client
-    only when the Best quality level is selected — the Best engine generates
-    native audio, Fast does not. A workflow that does not declare it rejects
+    """Whether the panel offers a sound on/off control — on every quality
+    level (client round two, 27 Aug). A workflow that does not declare it rejects
     the `sound` parameter in `validate_request`, same policy as lyrics."""
 
 

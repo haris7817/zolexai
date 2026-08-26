@@ -392,11 +392,9 @@ export function toCreateInput(
       ...(workflow.settings.seed && values.seedLocked ? { seed: 123456 } : {}),
       // "With sound" is expressed by ABSENCE — the worker's own default —
       // so every request from before this control existed is byte-identical.
-      // Sent only when the control is actually offered: the workflow
-      // declares it and Best is selected (Fast's engine has no audio).
-      ...(workflow.settings.sound && values.quality === "best" && !values.soundOn
-        ? { sound: false }
-        : {}),
+      // On every quality level (client round two, 27 Aug): both engines
+      // deliver an audio track.
+      ...(workflow.settings.sound && !values.soundOn ? { sound: false } : {}),
       // The customer's own words are sent exactly as typed (trimmed only at
       // the ends) — the platform never rewrites a lyric sheet. The language
       // matters when we write the lyrics, so it is sent whenever the control

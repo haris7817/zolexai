@@ -34,7 +34,7 @@ duration_mode: fixed
 # chained safe-duration passes (see apps/worker/worker/longform/chain.py), and
 # a customer has no reason to find the longest option on two video tools but
 # not the third.
-supported_durations: ["5s", "10s", "15s", "30s", "60s"]
+supported_durations: ["5s", "10s", "15s", "20s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1", "4:5"]
 # The Fast/Best engine toggle (client-approved 27 Aug 2026). Fast is the
 # speed engine and offers the full ladder; Best is the quality engine, whose
@@ -43,12 +43,13 @@ supported_aspect_ratios: ["16:9", "9:16", "1:1", "4:5"]
 # never named here: engines are private.
 supported_quality_levels: ["fast", "best"]
 supported_durations_by_quality:
-  best: ["5s", "10s", "15s", "30s"]
+  best: ["5s", "10s", "15s", "20s", "30s"]
 
 settings:
   quality: true
-  # A sound on/off choice, shown only at Best — that engine generates native
-  # audio with the video; Fast does not, so the control would be a lie there.
+  # A sound on/off choice, on every quality level (client round two,
+  # 27 Aug): both engines deliver an audio track, and a customer may want
+  # a silent file from either.
   sound: true
   # The current distilled runtime exposes no real motion or guidance
   # controls. Keep fake sliders out of the product until the guided path lands.

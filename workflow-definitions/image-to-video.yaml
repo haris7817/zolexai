@@ -29,18 +29,18 @@ duration_mode: fixed
 # beyond one GPU pass are rendered as chained segments behind the scenes —
 # that is the backend's business, and the option list must not shrink because
 # of it. See apps/worker/worker/adapters/ltx.py, `_render_chain`.
-supported_durations: ["5s", "10s", "15s", "30s", "60s"]
+supported_durations: ["5s", "10s", "15s", "20s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
 # The Fast/Best engine toggle — see text-to-video.yaml for the full note.
 # Best's lattice sells 5-30s; the engines behind each level are the
 # deployment's execution.runtime_by_quality, never named here.
 supported_quality_levels: ["fast", "best"]
 supported_durations_by_quality:
-  best: ["5s", "10s", "15s", "30s"]
+  best: ["5s", "10s", "15s", "20s", "30s"]
 
 settings:
   quality: true
-  # Sound on/off, Best only — see text-to-video.yaml.
+  # Sound on/off, all quality levels — see text-to-video.yaml.
   sound: true
   motion_strength: false
   prompt_adherence: false

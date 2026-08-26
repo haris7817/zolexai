@@ -72,7 +72,7 @@ async def test_rejects_unsupported_duration_and_lists_the_valid_ones(
     )
     assert response.status_code == 422
     fields = {f["field"]: f for f in response.json()["error"]["details"]["fields"]}
-    assert fields["duration"]["allowed"] == ["5s", "10s", "15s", "30s", "60s"]
+    assert fields["duration"]["allowed"] == ["5s", "10s", "15s", "20s", "30s", "60s"]
 
 
 async def test_accepts_director_mode_on_text_to_video(
