@@ -107,6 +107,11 @@ export const workflowSchema = z.object({
   supported_durations: z.array(z.string()),
   supported_aspect_ratios: z.array(z.string()),
   supported_quality_levels: z.array(z.string()),
+  // Quality level → the duration ladder offered AT that level (Fast/Best,
+  // 27 Aug 2026: Best's engine sells 5-30s, not 60s). A level absent here
+  // offers the full supported_durations. Defaulted so API responses
+  // predating the field still parse.
+  supported_durations_by_quality: z.record(z.string(), z.array(z.string())).default({}),
 
   settings: z.object({
     quality: z.boolean(),
@@ -120,6 +125,9 @@ export const workflowSchema = z.object({
     // prompt-mode toggle plus, in Director mode, a dialogue-language choice.
     // Defaulted for the same reason as `lyrics`.
     prompt_modes: z.boolean().default(false),
+    // A sound on/off control, shown only at the Best quality level — that
+    // engine generates native audio, Fast does not. Defaulted likewise.
+    sound: z.boolean().default(false),
   }),
 
   capabilities: z.object({

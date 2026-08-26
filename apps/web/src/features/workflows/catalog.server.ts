@@ -68,6 +68,7 @@ interface RawWorkflow {
   supported_durations: string[];
   supported_aspect_ratios?: string[];
   supported_quality_levels?: string[];
+  supported_durations_by_quality?: Record<string, string[]>;
   settings?: Record<string, boolean>;
   capabilities?: Record<string, boolean>;
   ui: { icon: string; thumb: string };
@@ -114,6 +115,7 @@ function toPublicWorkflow(raw: RawWorkflow): Workflow {
     supported_durations: raw.supported_durations,
     supported_aspect_ratios: raw.supported_aspect_ratios ?? [],
     supported_quality_levels: raw.supported_quality_levels ?? [],
+    supported_durations_by_quality: raw.supported_durations_by_quality ?? {},
     // Passed through WHOLE, not key by key. The shared contract is the
     // allowlist for these two blocks: `workflowSchema` names every public
     // flag and zod strips anything it does not know, so nothing private can

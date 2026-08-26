@@ -46,6 +46,12 @@ export interface GenerationFormValues {
   lyrics: string;
   /** null when the workflow has no lyrics support. */
   lyricsLanguage: string | null;
+  /** Whether the finished video keeps its soundtrack. Only meaningful when
+   *  the workflow declares `settings.sound` AND quality is "best" — the Best
+   *  engine generates native audio, Fast does not. Holds its value while the
+   *  control is hidden so toggling quality back and forth does not forget
+   *  the choice; it is simply not submitted. */
+  soundOn: boolean;
   /** "standard" | "director"; null when the workflow has no prompt modes. */
   promptMode: string | null;
   /** Language for Director-mode dialogue; null when there are no prompt
@@ -171,6 +177,7 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
     motionStrength: z.number().int().min(0).max(100),
     promptAdherence: z.number().int().min(0).max(100),
     seedLocked: z.boolean(),
+    soundOn: z.boolean(),
 
     // Same stale-state discipline as choiceOrNull: on a workflow without the
     // control, anything but the empty/null resting state means values survived
@@ -222,6 +229,21 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
           }
         }
       }),
+  }).superRefine((values, ctx) => {
+    // The Fast/Best round: a quality level may narrow the duration ladder
+    // (Best sells 5-30s, not 60s). The panel filters its chips and snaps the
+    // selection, so this only fires on state that slipped past both — better
+    // a named error here than the API's rejection after submit.
+    const byQuality = workflow.supported_durations_by_quality;
+    if (values.quality && values.duration && byQuality[values.quality]) {
+      if (!byQuality[values.quality].includes(values.duration)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["duration"],
+          message: "That duration is not available at this quality level.",
+        });
+      }
+    }
   });
 
   return schema as unknown as GenerationSchema;
@@ -238,6 +260,7 @@ export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
     motionStrength: 60,
     promptAdherence: 75,
     seedLocked: false,
+    soundOn: true,
     lyrics: "",
     lyricsLanguage: workflow.settings.lyrics ? LYRIC_LANGUAGES[0] : null,
     promptMode: workflow.settings.prompt_modes ? PROMPT_MODES[0] : null,
@@ -289,12 +312,23 @@ export function preserveValues(
   const defaults = defaultValuesFor(workflow);
   if (!previous) return defaults;
 
+  const survivingQuality =
+    previous.quality &&
+    workflow.settings.quality &&
+    workflow.supported_quality_levels.includes(previous.quality)
+      ? previous.quality
+      : defaults.quality;
+  const survivingDurations =
+    (survivingQuality && workflow.supported_durations_by_quality[survivingQuality]) ||
+    workflow.supported_durations;
+
   return {
     ...defaults,
     prompt: previous.prompt,
     motionStrength: previous.motionStrength,
     promptAdherence: previous.promptAdherence,
     seedLocked: previous.seedLocked,
+    soundOn: previous.soundOn,
     // Lyrics travel only between workflows that both have the control —
     // stale lyrics on a video workflow would trip its own validation.
     lyrics: workflow.settings.lyrics ? previous.lyrics : defaults.lyrics,
@@ -316,20 +350,17 @@ export function preserveValues(
       (DIALOGUE_LANGUAGES as readonly string[]).includes(previous.dialogueLanguage)
         ? previous.dialogueLanguage
         : defaults.dialogueLanguage,
-    duration:
-      previous.duration !== null && workflow.supported_durations.includes(previous.duration)
-        ? previous.duration
-        : defaults.duration,
     aspectRatio:
       previous.aspectRatio && workflow.supported_aspect_ratios.includes(previous.aspectRatio)
         ? previous.aspectRatio
         : defaults.aspectRatio,
-    quality:
-      previous.quality &&
-      workflow.settings.quality &&
-      workflow.supported_quality_levels.includes(previous.quality)
-        ? previous.quality
-        : defaults.quality,
+    quality: survivingQuality,
+    // Judged against the surviving quality's (possibly narrowed) ladder, or
+    // a workflow switch could arrive pre-broken (Best offers no 60s).
+    duration:
+      previous.duration !== null && survivingDurations.includes(previous.duration)
+        ? previous.duration
+        : (survivingDurations[0] ?? defaults.duration),
   };
 }
 
@@ -359,6 +390,13 @@ export function toCreateInput(
       ...(workflow.settings.motion_strength ? { motion_strength: values.motionStrength } : {}),
       ...(workflow.settings.prompt_adherence ? { prompt_adherence: values.promptAdherence } : {}),
       ...(workflow.settings.seed && values.seedLocked ? { seed: 123456 } : {}),
+      // "With sound" is expressed by ABSENCE — the worker's own default —
+      // so every request from before this control existed is byte-identical.
+      // Sent only when the control is actually offered: the workflow
+      // declares it and Best is selected (Fast's engine has no audio).
+      ...(workflow.settings.sound && values.quality === "best" && !values.soundOn
+        ? { sound: false }
+        : {}),
       // The customer's own words are sent exactly as typed (trimmed only at
       // the ends) — the platform never rewrites a lyric sheet. The language
       // matters when we write the lyrics, so it is sent whenever the control
@@ -434,6 +472,7 @@ export function valuesFromJob(
         ? parameters.prompt_adherence
         : defaults.promptAdherence,
     seedLocked: parameters.seed != null,
+    soundOn: parameters.sound !== false,
     lyrics:
       workflow.settings.lyrics && typeof parameters.lyrics === "string"
         ? parameters.lyrics

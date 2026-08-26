@@ -23,9 +23,12 @@ import {
 import {
   autoDurationLabel,
   durationLabel,
+  durationsForQuality,
   hasAdvancedSettings,
+  qualityLabel,
   showsAspectRatio,
   showsQuality,
+  showsSound,
 } from "@/services/workflows";
 import { cn } from "@/lib/cn";
 
@@ -68,6 +71,14 @@ export function GenerationSettingsPanel({
   /** Only meaningful on workflows that declare `settings.prompt_modes`. */
   const directorMode =
     workflow.settings.prompt_modes && form.watch("promptMode") === "director";
+
+  /**
+   * The selected quality level narrows what the other controls offer
+   * (Fast/Best, 27 Aug: Best's engine sells 5-30s and generates native
+   * audio; Fast is the full ladder with no sound choice).
+   */
+  const selectedQuality = form.watch("quality");
+  const offeredDurations = durationsForQuality(workflow, selectedQuality);
 
   /**
    * Director mode on an image-fed workflow is source-anchored: the upload
@@ -331,7 +342,7 @@ export function GenerationSettingsPanel({
                 aria-label="Duration"
                 className="mb-6 flex flex-wrap gap-[7px]"
               >
-                {workflow.supported_durations.map((duration) => (
+                {offeredDurations.map((duration) => (
                   <OptionChip
                     key={duration}
                     selected={duration === field.value}
@@ -358,15 +369,43 @@ export function GenerationSettingsPanel({
                   <SegmentedControl
                     label="Quality"
                     value={field.value}
-                    onChange={field.onChange}
+                    onChange={(level: string) => {
+                      field.onChange(level);
+                      // The new level may not offer the selected duration
+                      // (Best has no 60s). Snap to the nearest offered value
+                      // rather than leaving the form invalid.
+                      const offered = durationsForQuality(workflow, level);
+                      const current = form.getValues("duration");
+                      if (current && !offered.includes(current)) {
+                        form.setValue("duration", offered[offered.length - 1] ?? null, {
+                          shouldValidate: true,
+                        });
+                      }
+                    }}
                     options={workflow.supported_quality_levels.map((level) => ({
                       value: level,
-                      label: level,
+                      label: qualityLabel(level),
                     }))}
                   />
                 </div>
               )}
             />
+            {showsSound(workflow, selectedQuality) ? (
+              <Controller
+                control={form.control}
+                name="soundOn"
+                render={({ field }) => (
+                  <div className="mb-6">
+                    <ToggleField
+                      id="zx-sound"
+                      label="Sound"
+                      checked={field.value}
+                      onChange={field.onChange}
+                    />
+                  </div>
+                )}
+              />
+            ) : null}
           </>
         ) : null}
 

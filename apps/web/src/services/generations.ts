@@ -23,6 +23,8 @@ export interface CreateGenerationInput {
     seed?: number | null;
     lyrics?: string;
     lyrics_language?: string;
+    /** Only ever sent as false — "with sound" is expressed by absence. */
+    sound?: boolean;
     /** Only ever sent as "director" — Standard mode is expressed by absence. */
     prompt_mode?: string;
     dialogue_language?: string;

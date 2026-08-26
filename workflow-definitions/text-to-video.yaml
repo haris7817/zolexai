@@ -36,12 +36,22 @@ duration_mode: fixed
 # not the third.
 supported_durations: ["5s", "10s", "15s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1", "4:5"]
-supported_quality_levels: []
+# The Fast/Best engine toggle (client-approved 27 Aug 2026). Fast is the
+# speed engine and offers the full ladder; Best is the quality engine, whose
+# lattice sells 5-30s — 60s exists there but is not offered. Which engine
+# each level actually runs is the deployment's execution.runtime_by_quality,
+# never named here: engines are private.
+supported_quality_levels: ["fast", "best"]
+supported_durations_by_quality:
+  best: ["5s", "10s", "15s", "30s"]
 
 settings:
-  # The current distilled runtime exposes no real quality, motion or guidance
+  quality: true
+  # A sound on/off choice, shown only at Best — that engine generates native
+  # audio with the video; Fast does not, so the control would be a lie there.
+  sound: true
+  # The current distilled runtime exposes no real motion or guidance
   # controls. Keep fake sliders out of the product until the guided path lands.
-  quality: false
   motion_strength: false
   prompt_adherence: false
   seed: true

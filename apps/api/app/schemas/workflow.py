@@ -98,6 +98,11 @@ class SettingsSpec(BaseModel):
     toggle and, in Director mode, a dialogue-language choice. Text to Video
     and Image to Video today; a workflow that does not declare it rejects
     `prompt_mode` in `validate_request`, same policy as lyrics."""
+    sound: bool = False
+    """Whether the panel offers a sound on/off control. Shown by the client
+    only when the Best quality level is selected — the Best engine generates
+    native audio, Fast does not. A workflow that does not declare it rejects
+    the `sound` parameter in `validate_request`, same policy as lyrics."""
 
 
 class CapabilitiesSpec(BaseModel):
@@ -187,6 +192,13 @@ class WorkflowDefinition(BaseModel):
     constraint depends on the mode."""
     supported_aspect_ratios: list[str] = Field(default_factory=list)
     supported_quality_levels: list[str] = Field(default_factory=list)
+    supported_durations_by_quality: dict[str, list[str]] = Field(default_factory=dict)
+    """Quality level → the duration ladder offered AT that level, when it
+    differs from `supported_durations`. The Fast/Best product round
+    (client-approved 27 Aug 2026): Best runs the H3 engine, whose lattice is
+    5/10/15/30s — 60s exists there but is not sold. A level absent from this
+    map offers the full `supported_durations`; every entry must be a subset
+    of it and every key a declared quality level — enforced at startup."""
 
     settings: SettingsSpec = Field(default_factory=SettingsSpec)
     capabilities: CapabilitiesSpec = Field(default_factory=CapabilitiesSpec)
@@ -207,6 +219,27 @@ class WorkflowDefinition(BaseModel):
             raise ValueError("settings.quality is true but supported_quality_levels is empty")
         if not self.settings.quality and self.supported_quality_levels:
             raise ValueError("supported_quality_levels is set but settings.quality is false")
+
+        # The per-quality duration map must reference only declared quality
+        # levels and only durations from the main ladder — anything else is a
+        # control offering a length the validator would then reject.
+        for level, durations in self.supported_durations_by_quality.items():
+            if level not in self.supported_quality_levels:
+                raise ValueError(
+                    f"supported_durations_by_quality names '{level}', which is "
+                    "not in supported_quality_levels"
+                )
+            unknown = [d for d in durations if d not in self.supported_durations]
+            if unknown:
+                raise ValueError(
+                    f"supported_durations_by_quality['{level}'] lists {unknown}, "
+                    "not present in supported_durations"
+                )
+            if not durations:
+                raise ValueError(
+                    f"supported_durations_by_quality['{level}'] is empty — omit "
+                    "the level instead to offer the full ladder"
+                )
 
         # Audio has no frame. Advertising an aspect ratio for it would be a
         # control the result cannot honour.
@@ -296,6 +329,7 @@ class WorkflowDefinition(BaseModel):
             supported_durations=self.supported_durations,
             supported_aspect_ratios=self.supported_aspect_ratios,
             supported_quality_levels=self.supported_quality_levels,
+            supported_durations_by_quality=self.supported_durations_by_quality,
             settings=self.settings,
             capabilities=self.capabilities,
             ui=self.ui,
@@ -329,6 +363,7 @@ class WorkflowPublic(BaseModel):
     supported_durations: list[str]
     supported_aspect_ratios: list[str]
     supported_quality_levels: list[str]
+    supported_durations_by_quality: dict[str, list[str]] = {}
 
     settings: SettingsSpec
     capabilities: CapabilitiesSpec

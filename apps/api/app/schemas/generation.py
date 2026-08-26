@@ -44,6 +44,13 @@ class GenerationParameters(BaseModel):
     none. Recorded and passed to the worker's lyric writer; writers that
     cannot honour it say so in the log rather than silently singing English."""
 
+    sound: bool | None = Field(default=None)
+    """Whether the finished video carries its soundtrack. Absent means yes —
+    every existing client keeps its exact behaviour, and the worker's own
+    default agrees. Only workflows whose definition sets `settings.sound`
+    accept it (the Best/H3 engine generates native audio; Fast/LTX does
+    not, so the control is pointless there and rejected)."""
+
     prompt_mode: str | None = Field(default=None, max_length=32)
     """How the prompt should be read: `standard` (the default — the text IS
     the generation prompt) or `director` (the text is an IDEA, and the worker

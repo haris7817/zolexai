@@ -31,10 +31,17 @@ duration_mode: fixed
 # of it. See apps/worker/worker/adapters/ltx.py, `_render_chain`.
 supported_durations: ["5s", "10s", "15s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
-supported_quality_levels: []
+# The Fast/Best engine toggle — see text-to-video.yaml for the full note.
+# Best's lattice sells 5-30s; the engines behind each level are the
+# deployment's execution.runtime_by_quality, never named here.
+supported_quality_levels: ["fast", "best"]
+supported_durations_by_quality:
+  best: ["5s", "10s", "15s", "30s"]
 
 settings:
-  quality: false
+  quality: true
+  # Sound on/off, Best only — see text-to-video.yaml.
+  sound: true
   motion_strength: false
   prompt_adherence: false
   seed: true

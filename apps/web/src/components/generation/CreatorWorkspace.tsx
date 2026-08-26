@@ -349,4 +349,5 @@ const FIELD_MAP: Record<string, string> = {
   prompt: "prompt",
   prompt_mode: "promptMode",
   dialogue_language: "dialogueLanguage",
+  sound: "soundOn",
 };

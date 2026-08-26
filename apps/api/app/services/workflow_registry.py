@@ -111,6 +111,7 @@ class WorkflowRegistry:
         lyrics_language: str | None = None,
         prompt_mode: str | None = None,
         dialogue_language: str | None = None,
+        sound: bool | None = None,
     ) -> WorkflowDefinition:
         """Checks a submitted generation request against its workflow.
 
@@ -146,22 +147,33 @@ class WorkflowRegistry:
                         "reason": "This tool sets the duration from your file automatically.",
                     }
                 )
-        elif duration is None:
-            problems.append(
-                {
-                    "field": "duration",
-                    "reason": "A duration is required.",
-                    "allowed": definition.supported_durations,
-                }
+        else:
+            # The Fast/Best round (27 Aug): a quality level may narrow the
+            # duration ladder (Best's engine sells 5-30s, not 60s). The
+            # narrowed list applies only when the submitted quality actually
+            # names one; an invalid quality is its own problem below, and
+            # duration then judges against the full ladder rather than
+            # compounding the error message.
+            offered = (
+                definition.supported_durations_by_quality.get(quality or "")
+                or definition.supported_durations
             )
-        elif duration not in definition.supported_durations:
-            problems.append(
-                {
-                    "field": "duration",
-                    "reason": "Unsupported duration for this tool.",
-                    "allowed": definition.supported_durations,
-                }
-            )
+            if duration is None:
+                problems.append(
+                    {
+                        "field": "duration",
+                        "reason": "A duration is required.",
+                        "allowed": offered,
+                    }
+                )
+            elif duration not in offered:
+                problems.append(
+                    {
+                        "field": "duration",
+                        "reason": "Unsupported duration for this tool.",
+                        "allowed": offered,
+                    }
+                )
 
         # Absent-and-unsupported is correct (audio has no frame); present-and-
         # unsupported is a client bug worth reporting rather than ignoring.
@@ -180,7 +192,10 @@ class WorkflowRegistry:
             )
 
         if definition.supported_quality_levels:
-            if quality not in definition.supported_quality_levels:
+            # Absent means the FIRST level — the default engine — exactly the
+            # absence-is-default contract prompt_mode and sound follow, so a
+            # client from before the toggle existed keeps its behaviour.
+            if quality is not None and quality not in definition.supported_quality_levels:
                 problems.append(
                     {
                         "field": "quality",
@@ -191,6 +206,14 @@ class WorkflowRegistry:
         elif quality is not None:
             problems.append(
                 {"field": "quality", "reason": "This tool does not use a quality level."}
+            )
+
+        # Sound follows the lyrics policy: a workflow that does not declare
+        # the control rejects the parameter. Absent means "with sound" — the
+        # worker's own default — so every existing client is untouched.
+        if sound is not None and not definition.settings.sound:
+            problems.append(
+                {"field": "sound", "reason": "This tool does not offer a sound choice."}
             )
 
         # Lyrics on a video workflow is a client bug, same policy as the rest:

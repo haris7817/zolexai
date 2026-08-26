@@ -62,6 +62,38 @@ export function durationLabel(value: string): string {
 }
 
 /**
+ * Display label for a quality level. Wire values stay lowercase ("fast",
+ * "best"); the control shows them capitalised.
+ */
+export function qualityLabel(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+/**
+ * The duration ladder offered at the given quality level. A level absent
+ * from the per-quality map — or no quality selected yet — offers the full
+ * ladder, so the toggle can only ever narrow, never strand.
+ */
+export function durationsForQuality(
+  workflow: Workflow,
+  quality: string | null | undefined,
+): string[] {
+  if (!quality) return workflow.supported_durations;
+  return (
+    workflow.supported_durations_by_quality[quality] ?? workflow.supported_durations
+  );
+}
+
+/**
+ * Whether the sound on/off control renders: the workflow must declare it AND
+ * the Best level must be selected — Best's engine generates native audio;
+ * Fast's does not, so the control would be a lie there.
+ */
+export function showsSound(workflow: Workflow, quality: string | null | undefined): boolean {
+  return workflow.settings.sound && quality === "best";
+}
+
+/**
  * Customer copy for an automatic-duration workflow — worded from the source
  * input's kind, so Music Video says "audio" and Video to Video says "video"
  * without either being special-cased anywhere.

@@ -33,6 +33,7 @@ const MIRRORED = [
   "supported_durations",
   "supported_aspect_ratios",
   "supported_quality_levels",
+  "supported_durations_by_quality",
 ];
 
 /** Anything under here must never appear in a public response. */
@@ -74,7 +75,13 @@ for (const [id, disk] of onDisk) {
   if (!api) continue;
 
   for (const field of MIRRORED) {
-    const expected = disk[field] ?? (Array.isArray(api[field]) ? [] : "");
+    const expected =
+      disk[field] ??
+      (Array.isArray(api[field])
+        ? []
+        : typeof api[field] === "object" && api[field] !== null
+          ? {}
+          : "");
     if (JSON.stringify(expected) !== JSON.stringify(api[field])) {
       fail(
         `${id}.${field}: yaml ${JSON.stringify(expected)} != api ${JSON.stringify(api[field])}`,
@@ -97,6 +104,7 @@ for (const [id, disk] of onDisk) {
     "seed",
     "lyrics",
     "prompt_modes",
+    "sound",
   ]) {
     const expected = disk.settings?.[key] ?? false;
     if (expected !== api.settings[key]) {

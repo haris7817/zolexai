@@ -129,6 +129,7 @@ class GenerationService:
             lyrics_language=params.lyrics_language,
             prompt_mode=params.prompt_mode,
             dialogue_language=params.dialogue_language,
+            sound=params.sound,
         )
 
         await self._validate_inputs(user, request, definition)
