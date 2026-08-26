@@ -385,3 +385,40 @@ async def test_a_video_that_does_not_cover_the_song_fails_validation(
     assert "planning failure" in raised.value.internal_detail or (
         "failed validation" in raised.value.internal_detail
     )
+
+
+@needs_ffmpeg
+async def test_later_sections_carry_the_first_seam_as_identity_anchor(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The three-women problem (27 Aug audit: the specified singer held 15 of
+    180 seconds): sections that inherit identity only from their
+    predecessor's frame drift copy-by-copy. From section 3 onward every pass
+    must ALSO pin section 1's final frame — when the frame count is measured
+    safe for a second conditioning image."""
+    import worker.adapters.ltx as ltx_module
+
+    monkeypatch.setattr(
+        ltx_module, "_TWO_IMAGE_SAFE_FRAMES", frozenset(range(1, 200))
+    )
+    track = await make_track(workspace / "song.mp3", 4.0)
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+
+    job = music_video_job(
+        workspace,
+        track,
+        execution={"runtime": "ltx", "max_segment_seconds": 1, "align_cuts_to_audio": False},
+    )
+    await collect(job)
+
+    calls = invocations(log)
+    def images(argv: list[str]) -> list[str]:
+        return [argv[i + 1] for i, a in enumerate(argv) if a == "--image"]
+
+    assert images(calls[0]) == []            # section 1: nothing to continue
+    assert len(images(calls[1])) == 1        # section 2: seam only (anchor IS the seam)
+    for argv in calls[2:]:
+        found = images(argv)
+        assert len(found) == 2               # seam + section-1 anchor
+        assert found[1] == images(calls[1])[0]  # the anchor never changes

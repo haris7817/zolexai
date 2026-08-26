@@ -2014,9 +2014,32 @@ class LtxAdapter:
 
         boundaries = await self._musical_boundaries(job, staged, target_seconds, per_pass)
 
+        anchor_state: dict[str, Path] = {}
+
         def conditioning(step: ChainStep) -> list[ConditioningFrame]:
             frame = step.previous_frame
-            return [ConditioningFrame(frame, 0, 1.0)] if frame else []
+            if not frame:
+                return []
+            frames = [ConditioningFrame(frame, 0, 1.0)]
+            # The three-women problem (client frame-audit, 27 Aug: the
+            # specified singer held 15 of 180 seconds). Each section inherits
+            # identity only from its predecessor's final frame, and nine
+            # copy-of-a-copy hops let the model's prior overwrite the face —
+            # the restated captions alone could not hold it. Pin SECTION 1's
+            # final frame as the identity reference for every later section:
+            # the same anchor mechanism as image-to-video, including its
+            # measured decoder guard — a two-image pass at an unmeasured
+            # frame count drops the anchor with a log line rather than
+            # gambling on the decode.
+            if job.execution.get("mv_identity_anchor", True):
+                anchor = anchor_state.setdefault("first_seam", frame)
+                if anchor != frame:
+                    extra = self._identity_anchor(
+                        job, anchor, step.segment.duration_seconds
+                    )
+                    if extra is not None:
+                        frames.append(extra)
+            return frames
 
         def audio_window(step: ChainStep, frames: int) -> AudioConditioning:
             # The MASTER file, seeked — never a slice. Cutting the track into
