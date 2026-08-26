@@ -1932,6 +1932,31 @@ class LtxAdapter:
             if audio_conditioned
             else self._per_pass_seconds(job, dimensions)
         )
+
+        conditioning_master = staged
+        if audio_conditioned:
+            # A container's declared duration can overstate its decodable
+            # samples (MP3 encoder padding). Production, 27 Aug 2026: the
+            # final pass of nine asked for its window at the track's tail,
+            # the decoder came up one audio latent short (500 against 501),
+            # and the pipeline's shape assert took down a 35-minute render at
+            # its very last step — on every attempt, deterministically. The
+            # conditioning copy is the master decoded ONCE to WAV (lossless,
+            # no codec seams) with two seconds of appended silence, so every
+            # window can always be filled. The delivered soundtrack remains
+            # the untouched original, muxed once at the end.
+            conditioning_master = job.workspace / "conditioning-master.wav"
+            await cancellable(
+                job,
+                ffmpeg(
+                    [
+                        "-i", str(staged),
+                        "-af", "apad=pad_dur=2.0",
+                        str(conditioning_master), "-y",
+                    ]
+                ),
+            )
+
         prompt_plan: list[str] | None = None
 
         def prompt_for_step(step: ChainStep) -> str:
@@ -1961,7 +1986,7 @@ class LtxAdapter:
             # rendered, so a pass the shape tables nudged still gets audio that
             # covers it.
             return AudioConditioning(
-                path=staged,
+                path=conditioning_master,
                 start_seconds=step.segment.start_seconds,
                 max_duration_seconds=self._audio_window_seconds(frames),
             )
