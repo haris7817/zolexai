@@ -137,6 +137,12 @@ from worker.longform import (
     render_chain,
     structure_prompt,
 )
+from worker.longform.h3_prompts import parse_timed_sections
+from worker.longform.music_video import (
+    ShotDirection,
+    plan_shots,
+    section_prompt,
+)
 from worker.media import (
     BACKGROUND_ATTENTION,
     DEFAULT_EDGE_HIGH,
@@ -162,6 +168,7 @@ from worker.media import (
     probe_media,
     verify_output,
 )
+from worker.media.audio import audio_envelope
 from worker.media.vocals import vocal_activity, vocal_fraction
 
 logger = get_logger(__name__)
@@ -1971,6 +1978,18 @@ class LtxAdapter:
         # intro: the prompt's unconditional "she sings" out-shouted the audio
         # conditioning. None (separation unavailable) keeps old behaviour.
         vocal_spans: list[tuple[float, float]] | None = None
+        # Loudness over the track, for the shot planner: a chorus is mixed
+        # hotter and denser than a verse, which is the only genre-proof
+        # "this is the big moment" signal available without a music-theory
+        # model. Failure is silent — the plan falls back to position alone.
+        track_envelope: list[float] = []
+        if audio_conditioned:
+            try:
+                track_envelope = await cancellable(
+                    job, audio_envelope(conditioning_master)
+                )
+            except FfmpegError as exc:
+                logger.info("loudness_analysis_skipped", extra={"detail": str(exc)})
         if audio_conditioned and job.execution.get("vocal_aware_prompts", True):
             vocal_spans = await cancellable(job, vocal_activity(conditioning_master))
             logger.info(
@@ -1983,24 +2002,59 @@ class LtxAdapter:
                 },
             )
 
-        prompt_plan: list[str] | None = None
+        shot_plan: list[ShotDirection] | None = None
+        beats_by_section: dict[int, str] = {}
+        subject_text = job.prompt
 
         def prompt_for_step(step: ChainStep) -> str:
-            nonlocal prompt_plan
-            if prompt_plan is None:
-                # Timestamped shots in a music-video prompt refer to positions
-                # in the SONG, which is exactly the timeline of the chain.
-                # `dialogue=False`: the song IS this workflow's audio, so the
-                # scaffolding's three mentions of dialogue were priming people
-                # talking on camera in a video that has none.
-                prompt_plan = plan_section_prompts(
-                    job.prompt,
-                    step.total,
-                    total_seconds=target_seconds,
-                    v2=bool(job.execution.get("prompt_structuring_v2")),
-                    dialogue=False,
+            nonlocal shot_plan, subject_text
+            if shot_plan is None:
+                # A music video is DIRECTED here, not just captioned: each
+                # section gets a role read from the audio (who is singing, how
+                # loud this passage is, where it sits in the song) and a
+                # framing that differs from the section before it. The old
+                # path repeated one prompt inside generic scaffolding, whose
+                # own labels rendered into the frame as garbled on-screen text
+                # — this runtime reads captions as content (client frame,
+                # 27 Aug 2026).
+                subject_text, blocks = parse_timed_sections(job.prompt)
+                span = target_seconds / step.total
+                windows = [(i * span, span) for i in range(step.total)]
+                for start, end, text in blocks:
+                    index = min(int(((start + end) / 2.0) / span), step.total - 1)
+                    beats_by_section[index] = (
+                        f"{beats_by_section[index]}. Then {text}"
+                        if index in beats_by_section
+                        else text
+                    )
+                fractions = None
+                if vocal_spans is not None:
+                    fractions = [
+                        vocal_fraction(vocal_spans, start, start + length)
+                        for start, length in windows
+                    ]
+                loudness = None
+                if track_envelope:
+                    hop = target_seconds / len(track_envelope)
+                    loudness = []
+                    for start, length in windows:
+                        chunk = track_envelope[
+                            int(start / hop) : int((start + length) / hop)
+                        ]
+                        loudness.append(sum(chunk) / len(chunk) if chunk else 0.0)
+                shot_plan = plan_shots(
+                    windows, sung_fractions=fractions, loudness=loudness
                 )
-            prompt = prompt_plan[step.index]
+                logger.info(
+                    "music_video_shot_plan",
+                    extra={
+                        "job_id": job.job_id,
+                        "shots": [f"{s.role}:{s.framing}" for s in shot_plan],
+                    },
+                )
+
+            shot = shot_plan[min(step.index, len(shot_plan) - 1)]
+            performance = ""
             if vocal_spans is not None:
                 sung = vocal_fraction(
                     vocal_spans,
@@ -2008,25 +2062,26 @@ class LtxAdapter:
                     step.segment.start_seconds + step.segment.duration_seconds,
                 )
                 # Conditional on a person being there, and no gender: the
-                # first cut of this said "she sings the words", which
-                # INVENTED a female singer in every music video whatever the
-                # customer asked for (client report, 27 Aug — "all the videos
-                # look the same"). Lip behaviour is the only thing this may
-                # direct; who is on screen belongs to the customer's prompt.
+                # first cut of this said "she sings the words", which INVENTED
+                # a female singer in every music video whatever the customer
+                # asked for (client report, 27 Aug).
                 if sung < 0.2:
-                    prompt += (
-                        " The music in this passage is INSTRUMENTAL — nobody "
-                        "sings here. If a person is visible, their lips stay "
-                        "closed: no singing mouth movement anywhere in this "
-                        "section."
+                    performance = (
+                        "No one sings during this passage; if a person is "
+                        "visible their lips stay closed."
                     )
                 elif sung > 0.6:
-                    prompt += (
-                        " The vocal is active in this passage. If a person is "
-                        "visible singing, their mouth articulates the words in "
-                        "time with the voice in the music."
+                    performance = (
+                        "If a person is visible singing, their mouth "
+                        "articulates the words in time with the voice."
                     )
-            return prompt
+            return section_prompt(
+                subject_text,
+                shot,
+                total=step.total,
+                beat=beats_by_section.get(step.index, ""),
+                performance=performance,
+            )
 
         boundaries = await self._musical_boundaries(job, staged, target_seconds, per_pass)
 
