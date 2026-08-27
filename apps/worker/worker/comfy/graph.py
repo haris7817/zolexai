@@ -80,6 +80,18 @@ class GraphEdits:
     60 s seams (25 Aug). None keeps the pack's behaviour; a value is an
     explicit, recorded experiment — never a silent default change."""
 
+    context_length: int | None = None
+    """Frames of VISUAL motion context the Extender carries across a segment
+    boundary. The pack ships 22 (~0.9 s at 24 fps), and that narrow window is
+    the mechanical half of the 28 Aug seam failure: whatever the last frames
+    of segment N happen to show is ALL segment N+1 knows about the scene, so
+    an ambiguous handoff frame has nothing around it to disambiguate the
+    scale. The prompt discipline closes the other half.
+
+    None keeps the pack's 22. A value is an explicit, recorded experiment —
+    a wider window costs VRAM and has not been measured on this card, so it
+    is a YAML line somebody chooses, never a silent default change."""
+
     seed_base: int | None = None
     """Per-job seed base. None keeps the pack's fixed seeds — which, with a
     fully deterministic model and ComfyUI's execution cache, means a customer
@@ -215,6 +227,13 @@ def to_api_prompt(graph: dict[str, Any], edits: GraphEdits) -> dict[str, Any]:
         for entry in api.values():
             if entry["class_type"] in ("MiniMaxH3Extender", "BasicScheduler"):
                 entry["inputs"]["steps"] = edits.steps
+
+    if edits.context_length is not None:
+        for entry in api.values():
+            if entry["class_type"] == "MiniMaxH3Extender":
+                # The pack stores this widget as a STRING ("22"); keep the
+                # type the node was validated against.
+                entry["inputs"]["context_length"] = str(edits.context_length)
 
     if edits.audio_context_length is not None:
         for entry in api.values():

@@ -777,3 +777,21 @@ async def test_sound_off_strips_the_audio_stream(
     result = await adapter.run(job, _progress)
     info = await probe_media(result.path)
     assert info.has_video and not info.has_audio
+
+
+def test_context_length_is_left_alone_unless_asked_for() -> None:
+    """The pack's 22-frame handoff window is an invariant until measured."""
+    graph = load_graph(T2V_GRAPH)
+    api = to_api_prompt(graph, GraphEdits(duration_index=3))
+    extenders = [e for e in api.values() if e["class_type"] == "MiniMaxH3Extender"]
+    assert extenders
+    for entry in extenders:
+        assert entry["inputs"]["context_length"] == "22"
+
+
+def test_a_wider_handoff_window_reaches_the_extender() -> None:
+    graph = load_graph(T2V_GRAPH)
+    api = to_api_prompt(graph, GraphEdits(duration_index=3, context_length=48))
+    for entry in api.values():
+        if entry["class_type"] == "MiniMaxH3Extender":
+            assert entry["inputs"]["context_length"] == "48"

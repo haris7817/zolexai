@@ -14,6 +14,16 @@ invitation to reinvent it. Every segment prompt produced here re-states:
 
   subject identity · clothing · environment · persistent props · camera
   what changes THIS segment · what must NOT reappear · how it hands off
+  the SCALE of the scene and the framing the next segment inherits
+
+The scale line is the 28 Aug addition, from a 30s T2V frame-audit: segment 1
+was told to push in "until the subject fills the frame", so the handoff frame
+was a face with no floor, no furniture and no body in it. A head filling the
+frame is equally consistent with "camera close to a person" and "camera at
+normal distance from a head-sized object on a desk" — H3 read it the second
+way and built a whole room around the object, and the rest of the clip
+inherited the wreck. A continuation prompt that does not state the scale is
+an invitation to reinvent the scale.
 
 Deterministic templates, no model in the loop — the discipline is structure,
 not prose quality, and a compiler that phoned an LLM per segment would make
@@ -124,6 +134,16 @@ _ACTION_VERBS = (
     "rides", "riding", "swims", "swimming", "falls", "falling",
     "smiles", "smiling", "laughs", "laughing", "cries", "crying",
     "holds", "raises", "raising", "lowers", "pulls", "pushes",
+    # Speech verbs beyond "talks/speaks/says". Their absence is why
+    # "Donald Trump at the oval office telling about aliens" left the whole
+    # prompt in the identity slot, so segment 2 was told the subject "is
+    # still ... telling about aliens" and started the telling over
+    # (client frame-audit, 28 Aug 2026).
+    "tells", "telling", "explains", "explaining", "describes", "describing",
+    "announces", "announcing", "addresses", "addressing", "argues", "arguing",
+    "answers", "answering", "greets", "greeting", "reads", "reading",
+    "points", "pointing", "gestures", "gesturing", "presents", "presenting",
+    "whispers", "whispering", "shouts", "shouting", "recounts", "recounting",
 )
 
 #: A split that leaves the identity ending on one of these cut a clause in
@@ -163,6 +183,86 @@ def split_identity_and_action(prompt: str) -> tuple[str, str]:
     # starts one: "…fills the frame. talking on the phone" reads as a typo
     # to a text encoder trained on prose.
     return identity, action[:1].upper() + action[1:]
+
+
+#: One shot per segment for a narrative H3 generation, in the closed motion
+#: vocabulary H3 documents (see `worker.providers.h3_prompt.H3_CAMERA_MOTIONS`).
+#:
+#: Two invariants make these seam-safe, and both were learned from the 30s
+#: T2V audit:
+#:
+#:   1. Every entry STARTS and ENDS at medium or wider. The music-video
+#:      director this path used to borrow from is written for cuts between
+#:      sections, so it happily paired "push in until the subject fills the
+#:      frame" with a following "low-angle tilt up" — but an H3 segment
+#:      boundary is not a cut, it is a handoff, and the second segment reads
+#:      the first one's LAST FRAME. Handing it a face with no floor in it is
+#:      handing it no scale.
+#:   2. Every entry names its END STATE in body-and-room terms, because the
+#:      end state is literally the frame the next segment conditions on.
+#:
+#: Variety still matters — one locked-off frame for thirty seconds is the
+#: complaint that put a per-segment camera here in the first place — so the
+#: moves differ segment to segment. They differ WITHIN a scale band instead
+#: of across it.
+_SEAM_SAFE_SHOTS: tuple[tuple[str, str], ...] = (
+    (
+        "a medium shot at eye level",
+        "the camera performs a slow Push In and settles while the subject is "
+        "still framed from the waist up with the floor and the room behind them",
+    ),
+    (
+        "a medium wide shot at eye level",
+        "the camera performs a slow Arc Shot around the subject and comes to "
+        "rest still showing them from the knees up in the room",
+    ),
+    (
+        "a medium shot at eye level",
+        "the camera performs a slow Truck Right and settles, still holding the "
+        "subject's head and upper body against the room behind them",
+    ),
+    (
+        "a wide shot at eye level",
+        "the camera holds a Static Shot with the whole subject and the "
+        "surrounding room visible",
+    ),
+    (
+        "a medium wide shot at eye level",
+        "the camera performs a slow Truck Left and settles, still showing the "
+        "subject's full body against the room behind them",
+    ),
+)
+
+
+def plan_cameras(segments: int) -> list[str]:
+    """One camera line per segment that no seam can misread.
+
+    The music-video `plan_shots` is the wrong director for this path: it
+    derives roles from audio the H3 path does not have, speaks LTX's camera
+    language rather than H3's, and — the part that actually broke video — is
+    free to change SCALE across a boundary because it was written for cuts.
+    """
+    if segments < 1:
+        return []
+    return [
+        f"The shot is {framing} and {end_state}."
+        for framing, end_state in (
+            _SEAM_SAFE_SHOTS[i % len(_SEAM_SAFE_SHOTS)] for i in range(segments)
+        )
+    ]
+
+
+#: Restated in every continuation. Positive phrasing throughout: the failure
+#: mode is the model resolving an ambiguous handoff frame the wrong way, and
+#: naming the wrong reading ("not a photograph on a desk") is a way to summon
+#: it. Stating the right reading costs one sentence and removes the ambiguity.
+_SCALE_CLAUSE = (
+    "The scene continues at exactly the same scale and camera distance as the "
+    "previous frame: the subject is a living, life-size person standing in the "
+    "room itself, whole head and body together in the frame, hands and head in "
+    "correct proportion to each other and to the furniture, floor and walls "
+    "around them."
+)
 
 
 def _reference_bindings(plan: H3ScenePlan) -> tuple[str, str]:
@@ -250,6 +350,18 @@ def _departure_clause(plan: H3ScenePlan, segment: int) -> str:
     return f" By the end of this segment {what} has left the frame completely."
 
 
+#: How a segment must END when another segment follows. The next generation
+#: conditions on this frame, so it is the one frame in the segment that has a
+#: hard requirement: it must carry the scale of the scene. "A stable pose"
+#: (the previous wording) did not, and a segment whose camera ended on a face
+#: handed the next one a head with no body, no floor and no room around it.
+_HANDOFF = (
+    " End on a steady medium-wide framing that keeps the subject's head and "
+    "body in one frame together with the floor and the furniture around them, "
+    "so the next segment inherits the scale of the room."
+)
+
+
 def discipline_prompts(
     plan: H3ScenePlan,
     segments: int,
@@ -314,27 +426,21 @@ def discipline_prompts(
                 )
                 + f". {camera} {beat}{departure}"
             )
-            handoff = (
-                " End in a stable pose that the next segment can continue from."
-                if segments > 1
-                else " End cleanly with the subject fully visible."
-            )
+            handoff = _HANDOFF if segments > 1 else " End cleanly with the subject fully visible."
             prompts.append(opening + handoff)
             continue
 
         continuation = (
             "Continue directly from the exact prior final frame with no cut, "
-            f"reset, replay, or new subject. {persistence} {camera} "
-            f"{beat}{departure}{absence}"
+            f"reset, replay, or new subject. {persistence} {_SCALE_CLAUSE} "
+            f"{camera} {beat}{departure}{absence}"
         )
         if segment == segments:
             continuation += (
                 " Finish cleanly with the subject fully visible and no abrupt ending."
             )
         else:
-            continuation += (
-                " End in a stable handoff pose for the next segment."
-            )
+            continuation += _HANDOFF
         prompts.append(continuation)
     return prompts
 

@@ -9,8 +9,10 @@ prompt no longer said who was on screen.
 from __future__ import annotations
 
 from worker.longform.h3_prompts import (
+    _SEAM_SAFE_SHOTS,
     H3ScenePlan,
     discipline_prompts,
+    plan_cameras,
     plan_from_prompt,
 )
 
@@ -235,3 +237,56 @@ def test_a_scene_description_with_no_action_is_left_alone() -> None:
     plan = plan_from_prompt("A koi pond at dawn, mist drifting over still water")
     assert plan.subject == "A koi pond at dawn, mist drifting over still water"
     assert plan.beats == ()
+
+
+# ── The 28 Aug seam failure ──────────────────────────────────────────────
+# A 30s T2V render (two 15s segments) cut hard at the boundary: segment 1 had
+# been told to push in "until the subject fills the frame", so segment 2
+# conditioned on a face with no floor, no body and no furniture in it. It read
+# the head as a head-sized OBJECT lying on a desk, and built a whole room
+# around that reading. Nothing about the identity discipline was wrong — the
+# missing constraint was scale.
+
+
+def test_no_segment_hands_off_a_frame_with_no_scale_in_it() -> None:
+    """Every non-final segment must end wide enough to show the scale."""
+    prompts = discipline_prompts(PLAN, 4, cameras=plan_cameras(4))
+    for prompt in prompts[:-1]:
+        assert "so the next segment inherits the scale of the room" in prompt
+    # The last segment has no successor to hand anything to.
+    assert "inherits the scale" not in prompts[-1]
+
+
+def test_planned_cameras_never_end_a_segment_tight() -> None:
+    """The music-video director's "until the subject fills the frame" is what
+    produced a scale-free handoff frame. No planned shot may end there."""
+    for camera in plan_cameras(len(_SEAM_SAFE_SHOTS) + 2):
+        assert "fills the frame" not in camera
+        assert "close-up" not in camera.lower()
+        # Each shot names the body-and-room end state the next one inherits.
+        assert any(word in camera for word in ("room", "floor", "waist", "knees"))
+
+
+def test_planned_cameras_still_vary_between_segments() -> None:
+    """Holding scale must not regress into one locked-off frame for 30s."""
+    cameras = plan_cameras(4)
+    assert len(set(cameras)) == 4
+
+
+def test_every_continuation_restates_the_scale() -> None:
+    for prompt in discipline_prompts(PLAN, 5)[1:]:
+        assert "same scale and camera distance" in prompt
+        assert "life-size person" in prompt
+
+
+def test_the_reported_prompt_no_longer_replays_its_own_action() -> None:
+    """"telling" was not in the action vocabulary, so the whole prompt sat in
+    the identity slot and segment 2 was told the subject "is still ... telling
+    about aliens" — and told it again from the top."""
+    plan = plan_from_prompt("Donald Trump at the oval office telling about aliens")
+    assert plan.subject == "Donald Trump at the oval office"
+    assert plan.beats == ("Telling about aliens",)
+    first, second = discipline_prompts(plan, 2, total_seconds=30.0, cameras=plan_cameras(2))
+    assert "Telling about aliens" in first
+    assert "telling about aliens" not in second.lower()
+    assert "Donald Trump at the oval office" in second

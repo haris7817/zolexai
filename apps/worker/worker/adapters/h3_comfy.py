@@ -57,8 +57,11 @@ from worker.comfy.graph import (
     nearest_duration_index,
 )
 from worker.core.config import settings
-from worker.longform.h3_prompts import discipline_prompts, plan_from_prompt
-from worker.longform.music_video import plan_shots
+from worker.longform.h3_prompts import (
+    discipline_prompts,
+    plan_cameras,
+    plan_from_prompt,
+)
 from worker.longform.progress import GENERATE_FROM, GENERATE_TO, StageReporter
 from worker.media.ffmpeg import ffmpeg
 from worker.media.probe import probe_media
@@ -341,13 +344,17 @@ class H3ComfyAdapter:
         # frame for thirty seconds (client report, 27 Aug 2026). There is no
         # audio to read here — H3 writes its own — so the roles come from
         # position alone, which is what `plan_shots` falls back to anyway.
-        cameras = None
-        if segments > 1:
-            span = nominal_seconds / segments
-            cameras = [
-                shot.camera_line
-                for shot in plan_shots([(i * span, span) for i in range(segments)])
-            ]
+        # `plan_shots` used to supply these. It is the music-video director:
+        # it reads roles from audio this path does not have, speaks LTX's
+        # camera language rather than H3's, and — because it was written for
+        # CUTS between sections — is free to change shot scale across a
+        # boundary. On a 30s two-segment render that meant segment 1 was told
+        # to push in "until the subject fills the frame" and segment 2 was
+        # handed that face plus a low-angle tilt-up: it read the head as an
+        # object on a desk and rebuilt the room around it (client frame-audit,
+        # 28 Aug 2026). An H3 seam is a handoff, not a cut, so the shots come
+        # from a plan that holds scale across the boundary.
+        cameras = plan_cameras(segments) if segments > 1 else None
         prompts = dict(
             enumerate(
                 discipline_prompts(
@@ -372,6 +379,7 @@ class H3ComfyAdapter:
             width, height = _T2V_CANVAS[tier].get(aspect, _T2V_CANVAS[tier]["16:9"])
 
         audio_context = job.execution.get("h3_audio_context")
+        context_length = job.execution.get("h3_context_length")
         steps = self._steps(job)
         edits = GraphEdits(
             duration_index=index,
@@ -384,6 +392,9 @@ class H3ComfyAdapter:
             output_directory=str(job.workspace),
             audio_context_length=(
                 int(audio_context) if audio_context is not None else None
+            ),
+            context_length=(
+                int(context_length) if context_length is not None else None
             ),
             steps=steps,
             seed_base=self._seed_base(job),
