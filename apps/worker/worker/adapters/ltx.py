@@ -102,7 +102,7 @@ import os
 import signal
 import zlib
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -142,6 +142,7 @@ from worker.longform.music_video import (
     ShotDirection,
     plan_shots,
     section_prompt,
+    strip_negations,
 )
 from worker.media import (
     BACKGROUND_ATTENTION,
@@ -2005,9 +2006,13 @@ class LtxAdapter:
         shot_plan: list[ShotDirection] | None = None
         beats_by_section: dict[int, str] = {}
         subject_text = job.prompt
+        # None = not asked yet; "" = asked and the describer had no answer, so
+        # never ask again. The caption costs a checkpoint load and this runs
+        # once per video, not once per section.
+        identity_facts: str | None = None
 
-        def prompt_for_step(step: ChainStep) -> str:
-            nonlocal shot_plan, subject_text
+        async def prompt_for_step(step: ChainStep) -> str:
+            nonlocal shot_plan, subject_text, identity_facts
             if shot_plan is None:
                 # A music video is DIRECTED here, not just captioned: each
                 # section gets a role read from the audio (who is singing, how
@@ -2018,6 +2023,7 @@ class LtxAdapter:
                 # — this runtime reads captions as content (client frame,
                 # 27 Aug 2026).
                 subject_text, blocks = parse_timed_sections(job.prompt)
+                subject_text = strip_negations(subject_text)
                 span = target_seconds / step.total
                 windows = [(i * span, span) for i in range(step.total)]
                 for start, end, text in blocks:
@@ -2075,12 +2081,35 @@ class LtxAdapter:
                         "If a person is visible singing, their mouth "
                         "articulates the words in time with the voice."
                     )
+            # Ask the picture who is in it, once, as soon as there IS a
+            # picture — `conditioning` runs first for this step and has by
+            # then pinned section 1's final frame as `first_seam`. Every
+            # failure path returns "": no checkpoint, a text-only checkpoint,
+            # a timeout, garbage output. The prompt then reads exactly as it
+            # did before this existed, which is why this needs no flag.
+            if (
+                identity_facts is None
+                and step.index > 0
+                and job.execution.get("mv_describe_identity", True)
+            ):
+                seam = anchor_state.get("first_seam")
+                identity_facts = (
+                    await cancellable(job, reference_person_facts(seam))
+                    if seam is not None
+                    else ""
+                )
+                logger.info(
+                    "music_video_identity_facts",
+                    extra={"job_id": job.job_id, "facts": identity_facts},
+                )
+
             return section_prompt(
                 subject_text,
                 shot,
                 total=step.total,
                 beat=beats_by_section.get(step.index, ""),
                 performance=performance,
+                identity=identity_facts or "",
             )
 
         boundaries = await self._musical_boundaries(job, staged, target_seconds, per_pass)
@@ -2110,6 +2139,9 @@ class LtxAdapter:
                         anchor,
                         step.segment.duration_seconds,
                         conforming=audio_conditioned,
+                        landings=(
+                            _A2VID.measured_landings if audio_conditioned else ()
+                        ),
                     )
                     if extra is not None:
                         frames.append(extra)
@@ -2672,6 +2704,7 @@ class LtxAdapter:
         pass_seconds: float,
         *,
         conforming: bool = False,
+        landings: Sequence[int] = (),
     ) -> ConditioningFrame | None:
         """The original upload as a mid-window identity reference — when the
         decoder is measured to survive it.
@@ -2697,8 +2730,28 @@ class LtxAdapter:
         # 27 Aug 2026, which is why the anchor built the day before was doing
         # nothing on most passes. The distilled callers keep the raw count:
         # that path selects a measured grid instead of conforming.
+        #
+        # …and the lattice alone is STILL the wrong question, which is the
+        # same mistake one level deeper (client report, 28 Aug 2026: a
+        # three-minute music video grew a moustache, a different haircut and
+        # face tattoos in its last third). A conforming pipeline does not
+        # render its lattice count either — it snaps up to the nearest entry
+        # in `measured_landings` and trims back afterwards. The audio tier's
+        # landings are 121/241/385/481, so a section the onset planner pulled
+        # to 18.5s conforms to 449, RENDERS 481 — measured safe for a second
+        # image — and the guard dropped the anchor on a count that never
+        # reached the decoder. Because that planner pulls almost every seam
+        # back off the round 20.0s, the effect was an identity anchor that
+        # was live on nearly no pass of a real music video. The guard must
+        # reproduce the renderer's arithmetic exactly, not an approximation
+        # of it.
         raw = self._frame_count(pass_seconds)
-        frames = conforming_frames(raw) if conforming else raw
+        frames = raw
+        if conforming:
+            frames = conforming_frames(raw)
+            landing = next((c for c in landings if c >= frames), None)
+            if landing is not None:
+                frames = landing
         reference_frame = min(frames - 1, max(1, frames // 3))
         strength = job.execution_float("i2v_reference_strength", 0.2)
         if strength <= 0 or reference_frame <= 0:
@@ -2753,7 +2806,7 @@ class LtxAdapter:
         *,
         dimensions: tuple[int, int],
         conditioning,
-        prompt_for_step: Callable[[ChainStep], str] | None = None,
+        prompt_for_step: Callable[[ChainStep], str | Awaitable[str]] | None = None,
         require_audio: bool = False,
         pipeline: LtxPipeline = _DISTILLED,
         loras: Sequence[LoraSpec] = (),
@@ -2853,6 +2906,13 @@ class LtxAdapter:
             audio_item = audio(step, frames) if audio else None
             if asyncio.iscoroutine(audio_item):
                 audio_item = await audio_item
+            # Sync or async, like `conditioning` above and for the same reason:
+            # the music-video prompt asks a vision model what the video's own
+            # opening section actually looks like, which is I/O, while a
+            # text-to-video prompt is string formatting.
+            step_prompt = prompt_for_step(step) if prompt_for_step else None
+            if asyncio.iscoroutine(step_prompt):
+                step_prompt = await step_prompt
 
             await self._execute(
                 job=job,
@@ -2862,7 +2922,7 @@ class LtxAdapter:
                     step.output,
                     conditioning=items,
                     dimensions=dimensions,
-                    prompt=(prompt_for_step(step) if prompt_for_step else None),
+                    prompt=step_prompt,
                     # Distinct per pass or every chained render replays the
                     # same noise; still deterministic so a retry reproduces.
                     seed=self._seed_for_step(job, step.index),

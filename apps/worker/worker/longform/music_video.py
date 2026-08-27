@@ -41,6 +41,7 @@ in the prompt are what it renders as subtitles.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 #: Shot vocabulary per role, built from the camera language Lightricks
@@ -89,6 +90,41 @@ _SUNG_FRACTION = 0.35
 #: by this margin — choruses are mixed hotter and denser than verses, which
 #: is the only genre-proof signal available without a music-theory model.
 _CHORUS_MARGIN = 1.06
+
+
+#: Sentences that only tell the model what NOT to draw. A customer prompt
+#: written in the house style of image-generation forums ends with a long one
+#: — "No identity changes, face drift, clothing mutations, duplicate people,
+#: warped hands, random objects, … text, logos, …" — and this repeats it into
+#: every section of a three-minute video.
+#:
+#: It is removed for two documented reasons, neither of them a guess about
+#: casing. Negative prompting is measured NOT to suppress these artifacts on
+#: this model family (LTX-Video issue #188 documents logos and watermarks
+#: surviving it), and the words are nouns: a text encoder has no operator for
+#: "no", so "no duplicate people, warped hands" contributes the tokens
+#: *duplicate people* and *warped hands* to the conditioning. Deleting the
+#: sentence costs nothing that was working and stops the prompt naming the
+#: failures it is asking to avoid.
+_NEGATION_RE = re.compile(
+    r"(?:^|(?<=[.!?]))\s*(?:no|avoid|without|never)\b[^.!?]*[.!?]",
+    re.IGNORECASE,
+)
+
+
+def strip_negations(prompt: str) -> str:
+    """The prompt with whole "no …" sentences removed.
+
+    Conservative on purpose: only complete sentences that OPEN with a negating
+    word go, because those carry no describable content by construction. A
+    negation buried mid-sentence ("she walks without stopping") stays, since
+    removing it would take real description with it. If the result would be
+    empty the original is returned — a prompt made entirely of prohibitions is
+    still the customer's prompt.
+    """
+    stripped = _NEGATION_RE.sub(" ", prompt)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    return stripped or prompt.strip()
 
 
 @dataclass(frozen=True)
@@ -179,6 +215,7 @@ def section_prompt(
     total: int,
     beat: str = "",
     performance: str = "",
+    identity: str = "",
 ) -> str:
     """One section's complete prompt, as prose.
 
@@ -197,6 +234,33 @@ def section_prompt(
             "This continues the same unbroken performance, the same subject and "
             "the same place as a moment ago."
         )
+        if identity:
+            # WHO is on screen, in visible attributes, taken from this video's
+            # own opening section rather than from the customer's words.
+            #
+            # The failure this answers (client frame-audit, 28 Aug 2026): a
+            # three-minute Latin R&B video whose singer was clean-shaven and
+            # skin-faded for two minutes grew a moustache, a soul patch, a
+            # longer textured haircut and face tattoos between 139s and 145s,
+            # and his nose, brow and jaw drifted throughout. The prompt was
+            # 250 words that never named one visible attribute of him — it
+            # said "Preserve the lead singer's exact face, hairstyle, tattoos"
+            # and left the model nothing to preserve, because there is no face
+            # in that sentence. Text conditioning cannot follow an instruction
+            # about pixels it was never given.
+            #
+            # A prompt that DOES describe its subject holds identity across
+            # the same nine sections, which is the whole evidence for this
+            # being a description problem and not a model one. So the worker
+            # supplies the description the customer did not: the anchor still
+            # is captioned once by the local vision checkpoint, in the
+            # vocabulary that caption is written for (age, build, hair length
+            # and style, facial hair NAMED when present, clothing colours),
+            # and every later section is told who the person is instead of
+            # being told to remember.
+            parts.append(
+                f"The performer stays the same person throughout: {identity.rstrip('.')}."
+            )
     parts.append(shot.camera_line)
     if beat:
         parts.append(beat.strip().rstrip(".") + ".")

@@ -7,7 +7,7 @@ rendering into the frame as on-screen text.
 
 from __future__ import annotations
 
-from worker.longform.music_video import plan_shots, section_prompt
+from worker.longform.music_video import plan_shots, section_prompt, strip_negations
 
 
 def _windows(count: int, span: float = 20.0):
@@ -92,3 +92,60 @@ def test_a_scripted_beat_lands_in_its_section() -> None:
         "A singer", shot, total=1, beat="she steps into the rain"
     )
     assert "she steps into the rain." in text
+
+
+def test_the_performer_is_described_in_every_later_section() -> None:
+    """The 28 Aug client frame-audit: a three-minute video's singer was
+    clean-shaven and skin-faded for two minutes, then grew a moustache, a soul
+    patch, a different haircut and face tattoos between 139s and 145s. The
+    prompt was 250 words of "Preserve the lead singer's exact face, hairstyle,
+    tattoos" — an instruction about pixels the text encoder never saw, naming
+    no visible attribute at all. Later sections must be TOLD who the person
+    is, in the words the vision describer supplies from the video's own
+    opening section."""
+    facts = "a man in his late twenties, clean-shaven, very short black hair in a tight fade"
+    shots = plan_shots(_windows(3))
+    first = section_prompt("A Latin R&B singer", shots[0], total=3, identity=facts)
+    later = section_prompt("A Latin R&B singer", shots[1], total=3, identity=facts)
+
+    assert "clean-shaven" in later
+    assert "tight fade" in later
+    assert "stays the same person" in later
+    # Section 1 IS the reference; describing it back to itself would only
+    # compete with the customer's own words.
+    assert "clean-shaven" not in first
+
+
+def test_no_description_leaves_the_prompt_exactly_as_it_was() -> None:
+    """Every describer failure returns "" — no checkpoint, a text-only
+    checkpoint, a timeout, garbage. The render must not notice."""
+    shots = plan_shots(_windows(2))
+    assert section_prompt("A singer", shots[1], total=2, identity="") == (
+        section_prompt("A singer", shots[1], total=2)
+    )
+
+
+def test_whole_prohibition_sentences_are_dropped() -> None:
+    """A text encoder has no operator for "no": the customer's closing
+    sentence contributed the tokens *duplicate people* and *warped hands* to
+    every section of a three-minute video, and negative prompting is measured
+    not to suppress these artifacts on this model family anyway
+    (LTX-Video issue #188)."""
+    subject = strip_negations(
+        "A singer on a rooftop at night. No identity changes, face drift, "
+        "duplicate people, warped hands, text, or logos. Cinematic 4K."
+    )
+    assert subject == "A singer on a rooftop at night. Cinematic 4K."
+
+
+def test_a_negation_inside_a_sentence_keeps_its_description() -> None:
+    """Only sentences that OPEN with a negating word carry no description by
+    construction. "she walks without stopping" is a description."""
+    text = "She walks without stopping along the pier."
+    assert strip_negations(text) == text
+
+
+def test_a_prompt_that_is_all_prohibitions_survives() -> None:
+    """It is still the customer's prompt; an empty one would be worse."""
+    text = "No text. No logos."
+    assert strip_negations(text) == text

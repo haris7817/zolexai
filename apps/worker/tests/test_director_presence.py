@@ -468,3 +468,47 @@ async def test_an_unmeasured_pass_keeps_the_seam_frame_alone(
     second = conditioning_of(calls[1])
     assert len(second) == 1, "unmeasured count must carry the seam frame alone"
     assert second[0][1] == 0 and second[0][2] == 1.0
+
+
+def test_the_anchor_guard_asks_about_the_count_the_renderer_will_land_on(
+    workspace,
+) -> None:
+    """The 28 Aug identity regression, one level below the 27 Aug one.
+
+    A conforming pipeline does not render its lattice count: it snaps up to
+    the nearest entry in `measured_landings` and trims back afterwards. The
+    audio tier lands on 121/241/385/481. The guard was asking about the
+    lattice count instead, so a music-video section the onset planner pulled
+    back to 18.5s — conforming 449, RENDERING 481, a count measured safe with
+    two images — had its anchor dropped on a shape that never reached the
+    decoder. Because that planner pulls nearly every seam off a round 20.0s,
+    the anchor was live on almost no pass of a real three-minute video, and
+    the client's singer drifted into a different man over nine sections.
+    """
+    from pathlib import Path
+
+    from tests.conftest import make_job
+    from worker.adapters.ltx import _A2VID, LtxAdapter
+
+    adapter = LtxAdapter()
+    job = make_job(workspace, execution={"runtime": "ltx"})
+    still = Path("still.png")
+    landings = _A2VID.measured_landings
+
+    # 18.5s: 444 raw → 449 conforming → 481 rendered. The lattice count alone
+    # says "unsafe"; the count the decoder actually sees says otherwise.
+    assert adapter._identity_anchor(job, still, 18.5, conforming=True) is None
+    anchor = adapter._identity_anchor(
+        job, still, 18.5, conforming=True, landings=landings
+    )
+    assert anchor is not None
+    # The index addresses the RENDERED timeline, and stays inside the frames
+    # that survive the trim back to 444.
+    assert anchor.frame_index == 481 // 3
+
+    # Sections that genuinely land on an unmeasured two-image count are still
+    # refused — the landing table is not a licence to skip the measurement.
+    assert (
+        adapter._identity_anchor(job, still, 10.0, conforming=True, landings=landings)
+        is None  # 241 frames: a real landing, not in the two-image safe set
+    )
