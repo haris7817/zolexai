@@ -318,8 +318,17 @@ class H3ComfyAdapter:
                 # A plain restyle has no identity reference; the H3 R2V graph
                 # would generate an unrelated scene. LTX transform owns that
                 # job — refuse rather than half-serve.
+                #
+                # The message names the way out, which until 28 Aug 2026 did
+                # not exist: this workflow ran on one engine, so a customer
+                # restyling footage without a reference photo was told what
+                # was missing and had no setting that would accept the job.
+                # Two production jobs failed that way in one evening. Fast
+                # is now the engine that restyles without a photo.
                 raise AdapterError(
-                    "This tool needs a reference photo of the person.",
+                    "Best quality replaces the person in your video with the "
+                    "one in a reference photo, so it needs that photo. To "
+                    "restyle your video without one, switch quality to Fast.",
                     internal_detail="video-to-video routed to h3_comfy without reference_image",
                     retriable=False,
                 )

@@ -410,6 +410,12 @@ async def test_reference_v2v_without_reference_is_refused(tmp_path: Path) -> Non
     with pytest.raises(AdapterError) as raised:
         await adapter.run(_job(tmp_path, "video-to-video", []), _progress)
     assert "reference photo" in raised.value.user_message
+    # The message must name the way out. Until 28 Aug 2026 there was none:
+    # this workflow ran on one engine, so a customer restyling footage
+    # without a photo was told what was missing and had no setting that
+    # would accept the job. Two production jobs failed that way in one
+    # evening. Fast is now the level that restyles without a photo.
+    assert "Fast" in raised.value.user_message
     assert raised.value.retriable is False
 
 

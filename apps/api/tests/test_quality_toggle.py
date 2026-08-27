@@ -90,3 +90,57 @@ def test_sound_needs_the_workflow_to_declare_it() -> None:
             sound=False,
         )
     assert any(p["field"] == "sound" for p in raised.value.details["fields"])
+
+
+async def test_video_to_video_offers_the_toggle_too(client: AsyncClient) -> None:
+    """Extended to Video to Video on 28 Aug 2026, after two production jobs
+    failed with "needs a reference photo of the person".
+
+    The workflow was routed to one engine that replaces a person from a
+    reference photo and has no plain-restyle behaviour, so the tool's own
+    headline promise — restyling footage from a prompt — was refused before
+    it started, and no setting existed that would accept the job. The two
+    levels are genuinely different work here, not two speeds of the same
+    work, which is why the customer chooses rather than the product guessing.
+    """
+    workflow = (await client.get("/api/v1/workflows/video-to-video")).json()
+    assert workflow["supported_quality_levels"] == ["fast", "best"]
+    assert workflow["settings"]["quality"] is True
+    # Duration stays source-derived: the toggle picks an engine, not a length.
+    assert workflow["duration_mode"] == "source"
+    assert workflow["supported_durations"] == []
+    assert workflow["supported_durations_by_quality"] == {}
+    # The copy has to say which level needs the photo, because one does and
+    # the other does not.
+    roles = {item["role"]: item for item in workflow["inputs"]}
+    help_text = roles["reference_image"]["help"].lower()
+    assert "fast" in help_text and "best" in help_text
+    # Engines stay private here as everywhere else.
+    import json
+
+    assert "ltx" not in json.dumps(workflow).lower()
+
+
+def test_video_to_video_accepts_both_levels_and_refuses_a_third() -> None:
+    import pytest
+
+    from app.services.workflow_registry import ValidationFailed
+
+    for level in ("fast", "best", None):
+        REGISTRY.validate_request(
+            workflow_id="video-to-video",
+            prompt="a rain-soaked neon street",
+            duration=None,
+            aspect_ratio="16:9",
+            quality=level,
+            input_roles={"source_video"},
+        )
+    with pytest.raises(ValidationFailed):
+        REGISTRY.validate_request(
+            workflow_id="video-to-video",
+            prompt="a rain-soaked neon street",
+            duration=None,
+            aspect_ratio="16:9",
+            quality="ultra",
+            input_roles={"source_video"},
+        )
