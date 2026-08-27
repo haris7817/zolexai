@@ -119,3 +119,51 @@ Only prompt generation and section planning changed.
   use the generic planner. Flag-gated, deployment YAML, not yet enabled.
 - **Beat-level cutting.** Cuts land on musical boundaries; shot *changes*
   are per section. Sub-section cutting on the beat is unbuilt.
+
+---
+
+## 6. Research corrections (same day)
+
+A research pass over Lightricks' own guides, the `ComfyUI-LTXVideo` prompt
+enhancer system prompts, and the LTX-Video issue tracker **corrected the
+cause stated in §1, defect 4.**
+
+**The claim that our ALL-CAPS labels were being rendered into the picture is
+unsupported.** No vendor or practitioner source links prompt casing to
+burned-in output text. What is documented:
+
+- **LTX-Video issue #188** — spurious logos, text and watermarks appear in
+  roughly a third of generations *with no prompt cause*, and they survive
+  negative prompting.
+- **Lightricks/LTX-2.3 discussion #13** — garbled end-screen and logo
+  overlays in the final 10–16 frames were traced to the **2× spatial
+  upscaler** and fixed in `…-x2-1.1`. **We run the 2.5 line, whose only
+  published upscaler is 1.0** (verified against the HuggingFace file
+  listing), so that fix is not available to us. Note that in a chained
+  long-form render every section is its own generation, so per-generation
+  tail artifacts land *throughout* the finished video, not only at its end —
+  a trim of the last frames per section is the untested mitigation.
+- **The vendor's own enhancer** is instructed to emit "NO titles, headings,
+  prefaces, code fences, or Markdown". Labelled scaffolding is therefore
+  out-of-distribution input for the text encoder.
+
+So prose is still correct — for that reason, not for the one first given.
+
+### What else changed on the evidence
+
+| Finding (vendor-documented) | Change |
+|---|---|
+| Twelve published camera terms for this model | Vocabulary restricted to them; invented phrasing dropped |
+| "Say where a described move ends" | Every move carries an end state |
+| Enhancer forbidden from intensified wording | "pushes in hard and fast" → "pushes in" |
+| Negative prompting fails for logos/watermarks (#188) | Closing clause no longer **names** them — exclusivity stated positively, because naming a noun is a way to summon it |
+| Camera presets are ignored in audio-driven mode | Camera must be prose — which is where ours already is ✓ |
+| Quotes in an A2V prompt are rendered as subtitles | Never emit quoted speech; speech is detected from the audio |
+| 4–8 sentences, one flowing paragraph | Current output is 3–5 sentences, single paragraph ✓ |
+| Identity: a fixed 50–80 word character block repeated verbatim, and image conditioning is the real lever | Repetition is in place; **image conditioning for music video is unbuilt** and is the higher-value follow-up |
+
+### Still unevidenced, flagged as such
+
+Beat-synced cut-density heuristics rest on vendor marketing blogs; no
+rigorous primary practitioner source was found. The section-role mapping in
+§3 is reasoned from audio analysis, not corroborated practice.
