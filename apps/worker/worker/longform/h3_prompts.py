@@ -40,6 +40,12 @@ class H3ScenePlan:
     environment: str = ""
     props: tuple[str, ...] = ()
     camera: str = "The camera holds one steady shot."
+    """Fallback camera, used when no per-segment shot plan is supplied.
+
+    It is a FALLBACK and not a default worth shipping: forcing "one steady
+    shot" onto every generation is how a customer who asked for a movie
+    scene got a locked-off frame (client report, 27 Aug 2026). Callers that
+    can plan shots should pass `cameras`.""" 
     beats: tuple[str, ...] = ()
     """Optional per-segment action. Shorter than the segment count is fine —
     missing beats become natural continuation."""
@@ -178,7 +184,10 @@ def _departure_clause(plan: H3ScenePlan, segment: int) -> str:
 
 
 def discipline_prompts(
-    plan: H3ScenePlan, segments: int, total_seconds: float | None = None
+    plan: H3ScenePlan,
+    segments: int,
+    total_seconds: float | None = None,
+    cameras: list[str] | None = None,
 ) -> list[str]:
     """One prompt per segment, each self-sufficient about what persists."""
     if segments < 1:
@@ -213,6 +222,14 @@ def discipline_prompts(
     for segment in range(1, segments + 1):
         persistence = _persistence_clause(plan)
         beat = _beat(plan, segment, segments)
+        # A planned shot for THIS segment when the caller has one;
+        # otherwise the plan's fallback. Forcing one fixed camera on
+        # every segment is how a 30s scene became one locked-off frame.
+        camera = (
+            cameras[segment - 1]
+            if cameras and segment <= len(cameras)
+            else plan.camera
+        )
         departure = _departure_clause(plan, segment)
         absence = _absence_clause(plan, segment)
 
@@ -228,7 +245,7 @@ def discipline_prompts(
                     if plan.props
                     else ""
                 )
-                + f". {plan.camera} {beat}{departure}"
+                + f". {camera} {beat}{departure}"
             )
             handoff = (
                 " End in a stable pose that the next segment can continue from."
@@ -240,7 +257,7 @@ def discipline_prompts(
 
         continuation = (
             "Continue directly from the exact prior final frame with no cut, "
-            f"reset, replay, or new subject. {persistence} {plan.camera} "
+            f"reset, replay, or new subject. {persistence} {camera} "
             f"{beat}{departure}{absence}"
         )
         if segment == segments:

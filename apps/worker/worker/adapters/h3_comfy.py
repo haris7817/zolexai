@@ -58,6 +58,7 @@ from worker.comfy.graph import (
 )
 from worker.core.config import settings
 from worker.longform.h3_prompts import discipline_prompts, plan_from_prompt
+from worker.longform.music_video import plan_shots
 from worker.longform.progress import GENERATE_FROM, GENERATE_TO, StageReporter
 from worker.media.ffmpeg import ffmpeg
 from worker.media.probe import probe_media
@@ -334,9 +335,24 @@ class H3ComfyAdapter:
 
         # ── Prompt discipline ────────────────────────────────────────
         plan = plan_from_prompt(job.prompt, reference_labels=reference_labels)
+        # A shot per segment instead of one camera repeated. Without this the
+        # compiler forced "The camera holds one steady shot" onto every
+        # generation, so a customer asking for a movie scene got a locked-off
+        # frame for thirty seconds (client report, 27 Aug 2026). There is no
+        # audio to read here — H3 writes its own — so the roles come from
+        # position alone, which is what `plan_shots` falls back to anyway.
+        cameras = None
+        if segments > 1:
+            span = nominal_seconds / segments
+            cameras = [
+                shot.camera_line
+                for shot in plan_shots([(i * span, span) for i in range(segments)])
+            ]
         prompts = dict(
             enumerate(
-                discipline_prompts(plan, segments, total_seconds=nominal_seconds),
+                discipline_prompts(
+                    plan, segments, total_seconds=nominal_seconds, cameras=cameras
+                ),
                 start=1,
             )
         )
