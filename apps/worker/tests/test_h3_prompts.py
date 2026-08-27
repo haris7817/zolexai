@@ -103,16 +103,32 @@ def test_beats_land_in_their_own_segment_only() -> None:
 def test_free_text_segments_get_an_arc_not_a_retelling() -> None:
     """The 26 Aug client frame-audit: a 30s two-segment story prompt told the
     story twice — climax at 6s, its own setup at 20s. Without structured
-    beats every segment must know its place in ONE story."""
+    beats every segment must know its place in ONE story.
+
+    Since the 27 Aug identity/action split the arc is delivered differently:
+    segment 1 carries the action and segment 2 carries the closing arc, so
+    the action is stated once rather than re-issued. The property under test
+    is the same one — the story must not be told twice."""
     plan = plan_from_prompt("A woman transforms into a mech and fights a demon.")
+    first, second = discipline_prompts(plan, 2)
+    assert "Transforms into a mech" in first     # the action happens here…
+    assert "mech" not in second                  # …and is never re-issued
+    assert "FINAL" in second
+    assert "never restart" in second
+
+    # A single-segment video needs no arc scaffolding, and keeps its action.
+    [solo] = discipline_prompts(plan, 1)
+    assert "FINAL" not in solo
+    assert "Transforms into a mech" in solo
+
+
+def test_an_arc_still_appears_when_the_prompt_has_no_separable_action() -> None:
+    """A pure scene description cannot be split, so the arc beats remain the
+    mechanism that stops the retelling."""
+    plan = plan_from_prompt("A koi pond at dawn, mist over still water")
     prompts = discipline_prompts(plan, 2)
     assert "OPENING" in prompts[0]
-    assert "must not happen yet" in prompts[0]
     assert "FINAL" in prompts[1]
-    assert "never restart" in prompts[1]
-    # A single-segment video needs no arc scaffolding.
-    [solo] = discipline_prompts(plan, 1)
-    assert "OPENING" not in solo and "FINAL" not in solo
 
 
 def test_plan_from_prompt_repeats_the_whole_prompt_per_segment() -> None:
@@ -184,3 +200,38 @@ def test_prompts_without_a_timeline_keep_the_free_text_path() -> None:
     # A single stray time tag is not a timeline.
     plan2 = plan_from_prompt("A parade [0-6s] with floats.")
     assert plan2.timed_beats == ()
+
+
+def test_the_action_leaves_the_subject_slot_so_segment_two_cannot_replay_it() -> None:
+    """The 30s H3 loop, reproduced 27 Aug: with the whole prompt in the
+    subject slot, segment 2 was told "the subject is still a man ... ordering
+    a pizza" and ordered the pizza again — the second half re-enacted the
+    first. Identity must persist; the action must not."""
+    plan = plan_from_prompt(
+        "A man in a hotel room talking on the phone ordering a pizza"
+    )
+    assert plan.subject == "A man in a hotel room"
+    assert plan.beats == ("Talking on the phone ordering a pizza",)
+
+    first, second = discipline_prompts(plan, 2)
+    assert "ordering a pizza" in first          # it happens once…
+    assert "ordering a pizza" not in second     # …and is never re-issued
+    assert "A man in a hotel room" in second    # identity still persists
+    assert "never restart or replay" in second
+
+
+def test_wardrobe_stays_on_the_identity_side_of_the_split() -> None:
+    """Appearance verbs ("wearing") must not be read as actions, or every
+    later segment loses the clothing that identity depends on."""
+    plan = plan_from_prompt(
+        "A woman with long dark curly hair, wearing a deep emerald velvet "
+        "jacket, sings into a vintage silver microphone"
+    )
+    assert "velvet jacket" in plan.subject
+    assert plan.beats == ("Sings into a vintage silver microphone",)
+
+
+def test_a_scene_description_with_no_action_is_left_alone() -> None:
+    plan = plan_from_prompt("A koi pond at dawn, mist drifting over still water")
+    assert plan.subject == "A koi pond at dawn, mist drifting over still water"
+    assert plan.beats == ()

@@ -98,6 +98,73 @@ def parse_timed_sections(
     return preamble or prompt, tuple(blocks)
 
 
+#: Verbs that denote what the subject DOES, as opposed to what it looks like.
+#: The split matters because a continuation prompt restates the subject
+#: verbatim -- the 25 Aug fix for wardrobe drift -- and if the action rides
+#: along in that slot, segment 2 is told "the subject is still ...ordering a
+#: pizza" and orders the pizza again. That is the loop a client reported in
+#: every 30s H3 render (27 Aug 2026).
+#:
+#: Appearance verbs are deliberately ABSENT: "wearing", "dressed in" and
+#: "holding" describe the subject and must stay on the identity side, or a
+#: prompt like "a woman ... wearing a velvet jacket, sings into a microphone"
+#: would lose its wardrobe from every later segment.
+_ACTION_VERBS = (
+    "talks", "talking", "speaks", "speaking", "says", "saying",
+    "sings", "singing", "orders", "ordering", "asks", "asking",
+    "walks", "walking", "runs", "running", "drives", "driving",
+    "dances", "dancing", "plays", "playing", "fights", "fighting",
+    "sits", "sitting", "stands", "steps", "stepping", "turns", "turning",
+    "reaches", "reaching", "opens", "opening", "picks", "picking",
+    "looks", "looking", "watches", "watching", "waits", "waiting",
+    "performs", "performing", "races", "racing", "moves", "moving",
+    "enters", "entering", "leaves", "leaving", "climbs", "climbing",
+    "transforms", "transforming", "flies", "flying", "jumps", "jumping",
+    "throws", "throwing", "breaks", "breaking", "lifts", "lifting",
+    "rides", "riding", "swims", "swimming", "falls", "falling",
+    "smiles", "smiling", "laughs", "laughing", "cries", "crying",
+    "holds", "raises", "raising", "lowers", "pulls", "pushes",
+)
+
+#: A split that leaves the identity ending on one of these cut a clause in
+#: half — the phrase continues into the action and the two are not separable
+#: here. Backing off to no split is better than shipping "A woman ... and".
+_DANGLING = (
+    "and", "or", "but", "then", "while", "as", "who", "which", "that",
+    "with", "of", "in", "on", "at", "to", "for",
+)
+
+_ACTION_RE = re.compile(
+    r"\b(" + "|".join(_ACTION_VERBS) + r")\b", re.IGNORECASE
+)
+
+
+def split_identity_and_action(prompt: str) -> tuple[str, str]:
+    """(who/where persists, what happens) from one free-text prompt.
+
+    Splits at the first ACTION verb, so everything describing the subject --
+    including wardrobe clauses, which use verbs of their own -- stays on the
+    identity side. A prompt with no action verb is pure scene description:
+    it returns unchanged as identity, which is exactly today's behaviour.
+    """
+    text = prompt.strip()
+    match = _ACTION_RE.search(text)
+    if not match or match.start() == 0:
+        return text, ""
+    identity = text[: match.start()].strip().rstrip(",;:").strip()
+    action = text[match.start() :].strip()
+    # A split that leaves almost no identity is worse than none: the whole
+    # prompt is then the action, and the subject slot would be empty.
+    if identity.split()[-1:] and identity.split()[-1].lower() in _DANGLING:
+        return text, ""
+    if len(identity) < 6:
+        return text, ""
+    # The action becomes its own sentence in the compiled prompt, so it
+    # starts one: "…fills the frame. talking on the phone" reads as a typo
+    # to a text encoder trained on prose.
+    return identity, action[:1].upper() + action[1:]
+
+
 def _reference_bindings(plan: H3ScenePlan) -> tuple[str, str]:
     """(identity tag, scene clause) — each reference gets exactly one owner.
 
@@ -275,18 +342,29 @@ def discipline_prompts(
 def plan_from_prompt(prompt: str, *, reference_labels: tuple[str, ...] = ()) -> H3ScenePlan:
     """The minimal plan when all we hold is the customer's free-text prompt.
 
-    The whole prompt becomes the subject description — repeated per segment,
-    which is precisely the proven fix. Structured fields (wardrobe, exits)
-    arrive when a Director plan exists; a missing plan must not mean missing
-    discipline.
+    The subject description is repeated per segment — the proven fix for
+    wardrobe drift — but ONLY the part of the prompt that describes what
+    persists. The action becomes segment 1's beat instead.
 
-    A prompt that scripts its own timeline ("[0–6s] …") is split instead:
-    the preamble becomes the subject and each timed block becomes a beat for
-    the segment it belongs to — the customer already did the Director's job.
+    That split is what stops the loop a client reported in every 30s H3
+    render (27 Aug 2026, reproduced): with the whole prompt in the subject
+    slot, segment 2 was told "the subject is still a man ... ordering a
+    pizza" and ordered the pizza again, so the second half re-enacted the
+    first. Now segment 2 restates only who and where, and its own beat tells
+    it to carry the action to a conclusion.
+
+    A prompt that scripts its own timeline ("[0–6s] …") keeps that path:
+    the customer already did the Director's job, and their blocks win.
     """
     subject, timed = parse_timed_sections(prompt)
+    beats: tuple[str, ...] = ()
+    if not timed:
+        identity, action = split_identity_and_action(subject)
+        if action:
+            subject, beats = identity, (action,)
     return H3ScenePlan(
         subject=subject.strip().rstrip("."),
+        beats=beats,
         reference_labels=reference_labels,
         timed_beats=timed,
     )
