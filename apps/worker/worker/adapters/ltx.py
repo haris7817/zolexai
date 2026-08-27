@@ -2106,7 +2106,10 @@ class LtxAdapter:
                 anchor = anchor_state.setdefault("first_seam", frame)
                 if anchor != frame:
                     extra = self._identity_anchor(
-                        job, anchor, step.segment.duration_seconds
+                        job,
+                        anchor,
+                        step.segment.duration_seconds,
+                        conforming=audio_conditioned,
                     )
                     if extra is not None:
                         frames.append(extra)
@@ -2663,7 +2666,12 @@ class LtxAdapter:
         return max(1, round(seconds * settings.ltx_frame_rate))
 
     def _identity_anchor(
-        self, job: AdapterJob, still: Path, pass_seconds: float
+        self,
+        job: AdapterJob,
+        still: Path,
+        pass_seconds: float,
+        *,
+        conforming: bool = False,
     ) -> ConditioningFrame | None:
         """The original upload as a mid-window identity reference — when the
         decoder is measured to survive it.
@@ -2680,7 +2688,17 @@ class LtxAdapter:
         line records the drop so an identity-drift report can be correlated
         with it.
         """
-        frames = self._frame_count(pass_seconds)
+        # `conforming` pipelines (the audio tier, IC-LoRA) round the count up
+        # to the model's 8k+1 lattice before rendering, so the guard must ask
+        # about the count the DECODER will see. Asking about the raw request
+        # answered a question about a render that never happens: a music-video
+        # pass of 19.957s asks for 479, renders 481 — the measured-safe count
+        # — and the guard skipped the anchor anyway. Observed on a live job,
+        # 27 Aug 2026, which is why the anchor built the day before was doing
+        # nothing on most passes. The distilled callers keep the raw count:
+        # that path selects a measured grid instead of conforming.
+        raw = self._frame_count(pass_seconds)
+        frames = conforming_frames(raw) if conforming else raw
         reference_frame = min(frames - 1, max(1, frames // 3))
         strength = job.execution_float("i2v_reference_strength", 0.2)
         if strength <= 0 or reference_frame <= 0:
