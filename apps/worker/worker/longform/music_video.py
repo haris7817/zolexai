@@ -3,10 +3,19 @@
 Lip-sync was solved by conditioning on the audio; the picture was not. A
 music video reached every section with the same repeated prompt wrapped in
 generic scaffolding, so a three-minute video was one composition held for
-three minutes, and the scaffolding's own labels ("NEW ACTION FOR THIS
-SECTION ONLY") rendered into the frame as garbled on-screen text — this
-runtime reads captions as content, so a label in the prompt becomes a label
-in the picture (client frame, 27 Aug 2026).
+three minutes (client report, 27 Aug 2026: "all the videos no matter the
+prompt come out the same").
+
+The scaffolding was also the wrong SHAPE of input. Lightricks' own prompt
+enhancer is instructed to emit no headings, markdown or leading special
+characters, so a prompt built from ALL-CAPS labels and "(verbatim)" markers
+is out of distribution for the text encoder. (An earlier note here blamed
+those labels for the garbled banner text in a client frame. That was a
+guess: no vendor or practitioner source links prompt casing to burned-in
+output text, while LTX-Video issue #188 documents spurious logos and
+watermarks with no prompt cause at all, and a 2.3-era upscaler bug produced
+exactly that artifact. Prose is right because it matches the training
+distribution — not because it fixes the banners.)
 
 This module gives each section a ROLE and a SHOT, from the audio the worker
 already analyses:
@@ -23,44 +32,53 @@ Deterministic, no model in the loop — the same discipline the rest of the
 prompt layer follows. A song this cannot analyse still gets a plan: the
 roles fall back to position alone, which is better than one shot repeated.
 
-The rendered prompt is PROSE. No headings, no colons introducing a label,
-no quoted markup — anything that looks like a caption is a caption to this
-model.
+The rendered prompt is PROSE: one flowing paragraph, plain language,
+present tense, a camera move with an end state — the format Lightricks
+documents for this model. Quoted speech is deliberately never emitted; in
+audio-driven generation the model detects speech from the audio, and quotes
+in the prompt are what it renders as subtitles.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-#: Shot vocabulary per role. Framings first (what the audience sees), then a
-#: movement. Chosen from terms video models demonstrably act on — shot size
-#: and a single clear move — rather than film-school terms they average away.
+#: Shot vocabulary per role, built from the camera language Lightricks
+#: publishes for this model — follows, tracks, pans across, circles around,
+#: tilts upward, pushes in, pulls back, overhead view, handheld movement,
+#: over-the-shoulder, wide establishing shot, static frame. Terms outside
+#: that list are a gamble on a model that was not trained to hear them.
+#:
+#: Every move carries an END STATE ("pushes in until the face fills the
+#: frame"), which their guide singles out as the difference between a move
+#: the model finishes and one it drifts through. Language stays plain: the
+#: vendor's own prompt enhancer is instructed to avoid intensified wording,
+#: so "pushes in hard and fast" is worse input than "pushes in".
 _SHOTS: dict[str, tuple[tuple[str, str], ...]] = {
     "intro": (
-        ("a wide establishing shot", "the camera drifts slowly forward"),
-        ("a high wide shot", "the camera descends slowly toward the scene"),
-        ("a slow wide reveal", "the camera glides sideways to uncover the scene"),
+        ("a wide establishing shot", "the camera pushes in slowly until the scene fills the frame"),
+        ("an overhead view", "the camera tilts down toward the scene and settles level"),
+        ("a static frame", "the camera holds still while the scene moves through it"),
     ),
     "verse": (
-        ("a medium shot at eye level", "the camera pushes in slowly"),
-        ("a handheld medium shot", "the camera follows the movement, tracking"),
-        ("a three-quarter medium shot", "the camera arcs gently around the subject"),
-        ("a steady eye-level shot", "the camera holds still while the scene moves"),
+        ("a medium shot at eye level", "the camera pushes in until the subject fills the frame"),
+        ("a handheld medium shot", "the camera follows the movement and stays with the subject"),
+        ("an over-the-shoulder shot", "the camera tracks forward past the shoulder"),
+        ("a static frame at eye level", "the camera holds while the subject moves within it"),
     ),
     "chorus": (
-        ("a close-up", "the camera pushes in hard and fast"),
-        ("a low-angle hero shot", "the camera rises, looking up"),
-        ("a sweeping wide shot", "the camera orbits around the subject"),
-        ("a tight close-up", "the camera holds close as light moves across the frame"),
+        ("a close-up", "the camera pushes in until the face fills the frame"),
+        ("a low-angle shot", "the camera tilts upward until the subject stands over it"),
+        ("a wide shot", "the camera circles around the subject and comes to rest facing it"),
     ),
     "bridge": (
-        ("a side-on profile shot", "the camera tracks slowly sideways"),
-        ("a distant silhouette shot", "the camera stays back, barely moving"),
-        ("an over-the-shoulder shot", "the camera drifts behind the subject"),
+        ("a side-on medium shot", "the camera tracks sideways and stops"),
+        ("a distant wide shot", "the camera holds still, far back"),
+        ("an over-the-shoulder shot", "the camera drifts behind the subject and settles"),
     ),
     "outro": (
-        ("a slow pull-back to a wide shot", "the camera retreats, leaving space"),
-        ("a final wide shot", "the camera settles and holds"),
+        ("a wide shot", "the camera pulls back until the whole scene is visible"),
+        ("a static wide frame", "the camera settles and holds"),
     ),
 }
 
@@ -168,8 +186,9 @@ def section_prompt(
     best: what this is, who/what is in it, how it is filmed, what changes
     here, and the closing rule that nothing else may join the scene.
 
-    No labels, no headings, no all-caps: this runtime renders text it reads
-    as text in the picture.
+    Plain prose, no labels or headings — the shape Lightricks' own enhancer
+    is instructed to produce, and therefore the shape this text encoder was
+    trained on.
     """
     subject = subject.strip().rstrip(".")
     parts = [f"{subject}."]
@@ -183,9 +202,9 @@ def section_prompt(
         parts.append(beat.strip().rstrip(".") + ".")
     if performance:
         parts.append(performance.strip())
-    parts.append(
-        "Nothing enters the scene that is not described above — no extra "
-        "people, no crowd, no audience, no text, no logos, no captions and no "
-        "watermark anywhere in the picture."
-    )
+    # Exclusivity, stated positively and naming nothing unwanted. The first
+    # cut of this listed "no logos, no captions, no watermark" — but negative
+    # prompting is documented to fail for exactly those artifacts on this
+    # model (LTX-Video issue #188), and naming a noun is a way to summon it.
+    parts.append("The scene contains only what this description names.")
     return " ".join(parts)

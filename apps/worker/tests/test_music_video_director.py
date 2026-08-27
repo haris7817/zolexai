@@ -48,9 +48,10 @@ def test_a_song_with_no_analysis_still_gets_a_varied_plan() -> None:
     assert len({s.framing for s in shots}) > 1
 
 
-def test_the_prompt_is_prose_with_no_caption_bait() -> None:
-    """This runtime renders text it reads as text in the picture — the client
-    frame that showed garbled banners and 'SECTION 1 ONLY' burned in."""
+def test_the_prompt_is_plain_prose() -> None:
+    """Lightricks' own prompt enhancer is instructed to emit no headings,
+    markdown or leading special characters, so a prompt built from ALL-CAPS
+    labels is out of distribution for this text encoder."""
     [shot] = plan_shots(_windows(1))
     text = section_prompt("A red sports car on a wet street", shot, total=1)
 
@@ -59,8 +60,12 @@ def test_the_prompt_is_prose_with_no_caption_bait() -> None:
     assert "PERSISTENT" not in text
     assert "(verbatim)" not in text
     assert "\n" not in text
-    # And it asks for a picture with no text in it at all.
-    assert "no text" in text and "no watermark" in text
+    # Exclusivity is stated POSITIVELY and names nothing unwanted: negative
+    # prompting is documented to fail for logos/watermarks on this model
+    # (LTX-Video issue #188), and naming a noun is a way to summon it.
+    assert "contains only what this description names" in text
+    for summonable in ("logo", "watermark", "caption", "subtitle"):
+        assert summonable not in text.lower()
     # The customer's subject leads.
     assert text.startswith("A red sports car on a wet street.")
 
