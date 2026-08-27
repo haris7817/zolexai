@@ -86,6 +86,7 @@ def plan_section_prompts(
     *,
     total_seconds: float | None = None,
     v2: bool = False,
+    dialogue: bool = True,
 ) -> list[str]:
     """Return one prompt per section without replaying sequential material.
 
@@ -135,17 +136,33 @@ def plan_section_prompts(
                 f"LONG-FORM CONTINUATION — SECTION {index} OF {section_total}.",
                 "Keep the same subjects, identities, faces, clothing, colours, object counts, vehicles, environment and camera direction established previously.",
             ]
+        # The scaffolding outweighs a short user prompt several times over, so
+        # every generic noun in it is a suggestion the model will happily take:
+        # a music video for "a car on an empty road" came back as a singer with
+        # a crowd behind her, every time (client report, 27 Aug). Naming the
+        # constraints as the ONLY inventory is the counterweight.
         if persistent:
             lines += ["PERSISTENT USER CONSTRAINTS (verbatim):", persistent]
-        lines.append("NEW ACTION OR DIALOGUE FOR THIS SECTION ONLY (verbatim):")
-        lines.append(current or "Continue naturally from the preceding section without introducing a new event.")
-        if opening:
             lines.append(
-                "Complete this section's assigned dialogue before the section ends."
+                "These constraints are the complete inventory of this video: "
+                "introduce no person, crowd, performer, location or object "
+                "they do not name."
             )
+        subject = "ACTION OR DIALOGUE" if dialogue else "ACTION"
+        lines.append(f"NEW {subject} FOR THIS SECTION ONLY (verbatim):")
+        lines.append(current or "Continue naturally from the preceding section without introducing a new event.")
+        finish = (
+            " Complete this section's assigned dialogue before the section ends."
+            if dialogue
+            else ""
+        )
+        if opening:
+            if finish:
+                lines.append(finish.strip())
         else:
             lines.append(
-                "Continue directly from the predecessor frame. Do not replay, restart or summarise any earlier action or dialogue. Complete this section's assigned dialogue before the section ends."
+                "Continue directly from the predecessor frame. Do not replay, "
+                "restart or summarise any earlier action." + finish
             )
         prompts.append("\n".join(lines))
 

@@ -1990,11 +1990,15 @@ class LtxAdapter:
             if prompt_plan is None:
                 # Timestamped shots in a music-video prompt refer to positions
                 # in the SONG, which is exactly the timeline of the chain.
+                # `dialogue=False`: the song IS this workflow's audio, so the
+                # scaffolding's three mentions of dialogue were priming people
+                # talking on camera in a video that has none.
                 prompt_plan = plan_section_prompts(
                     job.prompt,
                     step.total,
                     total_seconds=target_seconds,
                     v2=bool(job.execution.get("prompt_structuring_v2")),
+                    dialogue=False,
                 )
             prompt = prompt_plan[step.index]
             if vocal_spans is not None:
@@ -2003,18 +2007,24 @@ class LtxAdapter:
                     step.segment.start_seconds,
                     step.segment.start_seconds + step.segment.duration_seconds,
                 )
+                # Conditional on a person being there, and no gender: the
+                # first cut of this said "she sings the words", which
+                # INVENTED a female singer in every music video whatever the
+                # customer asked for (client report, 27 Aug — "all the videos
+                # look the same"). Lip behaviour is the only thing this may
+                # direct; who is on screen belongs to the customer's prompt.
                 if sung < 0.2:
                     prompt += (
                         " The music in this passage is INSTRUMENTAL — nobody "
-                        "sings here: the performer's lips stay closed, she "
-                        "sways and feels the beat, no mouth movement of "
-                        "singing at any point in this section."
+                        "sings here. If a person is visible, their lips stay "
+                        "closed: no singing mouth movement anywhere in this "
+                        "section."
                     )
                 elif sung > 0.6:
                     prompt += (
-                        " The vocal is active in this passage: she sings the "
-                        "words, her mouth clearly articulating in time with "
-                        "the voice in the music."
+                        " The vocal is active in this passage. If a person is "
+                        "visible singing, their mouth articulates the words in "
+                        "time with the voice in the music."
                     )
             return prompt
 

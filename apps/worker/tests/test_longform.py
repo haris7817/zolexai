@@ -472,3 +472,32 @@ def test_prompts_without_inline_markers_are_unchanged() -> None:
     planned = plan_section_prompts(prompt, 2, total_seconds=10.0)
     # No timeline: the whole prompt stays the persistent brief in each section.
     assert all("koi pond" in section for section in planned)
+
+
+def test_the_constraints_are_declared_the_complete_inventory() -> None:
+    """Client report, 27 Aug: every music video came back looking the same —
+    a singer with a crowd behind her — whatever the prompt asked for. The
+    scaffolding outweighs a short prompt several times over, so its generic
+    nouns read as suggestions. The constraints must be named as the ONLY
+    inventory."""
+    [section] = plan_section_prompts("A red sports car on an empty road", 1)
+    # A single-pass request is still byte-identical: no scaffolding at all.
+    assert section == "A red sports car on an empty road"
+
+    sections = plan_section_prompts("A red sports car on an empty road", 3)
+    for text in sections:
+        assert "introduce no person, crowd, performer" in text
+
+
+def test_music_video_sections_never_mention_dialogue() -> None:
+    """The song IS the audio of a music video; three mentions of dialogue in
+    the scaffolding were priming people talking on camera."""
+    sections = plan_section_prompts(
+        "A red sports car on an empty road", 3, dialogue=False
+    )
+    for text in sections:
+        assert "dialogue" not in text.lower()
+
+    # Workflows that DO write dialogue keep it — default is unchanged.
+    spoken = plan_section_prompts("Two friends argue in a kitchen", 3)
+    assert any("dialogue" in text.lower() for text in spoken)
