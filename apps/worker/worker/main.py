@@ -25,6 +25,7 @@ import sys
 
 from redis.asyncio import Redis
 
+from worker.adapters.ltx import sweep_orphaned_renders
 from worker.core.client import ApiUnavailable, WorkerApiClient
 from worker.core.config import settings
 from worker.core.logging import bind, configure_logging, get_logger
@@ -75,6 +76,18 @@ class WorkerService:
                         "max_concurrency": settings.max_concurrency,
                     },
                 )
+                # A previous worker's renders do not die with it: killing
+                # the worker leaves the pipeline holding the GPU, and one
+                # such orphan sat on 40.9 GB until a music video OOM'd
+                # behind it. Nothing is claimed yet, so anything running now
+                # belongs to a worker that is gone.
+                orphans = sweep_orphaned_renders()
+                if orphans:
+                    logger.warning(
+                        "swept_orphaned_renders",
+                        extra={"pids": orphans, "count": len(orphans)},
+                    )
+
                 # A missing Cerebras key degrades SILENTLY to English-only
                 # lyrics — found the hard way twice: 19 Aug (six Spanish
                 # production jobs failed) and 26 Aug (a fresh node's env

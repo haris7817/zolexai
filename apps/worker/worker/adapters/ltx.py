@@ -3298,6 +3298,46 @@ def _minutes(seconds: float) -> str:
 #: How long to wait for a killed render — the whole process group — to be gone
 #: before giving up and saying so. A generous ceiling: the alternative to
 #: waiting is claiming another job while the old one still owns the card.
+def sweep_orphaned_renders() -> list[int]:
+    """Kills render processes left behind by a previous worker.
+
+    A render is a child of the worker, but killing the worker does NOT kill
+    it: `pkill -f "python -m worker.main"` leaves the pipeline holding the
+    card, and one such orphan sat on 40.9 GB for hours until a music video
+    OOM'd behind it (27 Aug 2026 — the third orphan class found that week,
+    after queued ComfyUI prompts and abandoned jobs).
+
+    Safe because of what a STARTING worker knows: it has claimed nothing, so
+    every pipeline process alive right now belongs to a worker that is gone.
+    Returns the pids it killed, for the caller to log.
+    """
+    killed: list[int] = []
+    proc = Path("/proc")
+    if not proc.is_dir():  # not Linux — nothing to sweep
+        return killed
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_bytes().replace(b"\x00", b" ").decode(
+                "utf-8", "replace"
+            )
+        except OSError:
+            continue
+        if "ltx_pipelines" not in cmdline:
+            continue
+        pid = int(entry.name)
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                continue
+        killed.append(pid)
+    return killed
+
+
 _KILL_GRACE_SECONDS = 30.0
 
 
