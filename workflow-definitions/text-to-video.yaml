@@ -78,6 +78,25 @@ execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
 
+  # ── The language of generated sound ──────────────────────────────────────
+  #
+  # This runtime writes its own audio from the same prompt that draws the
+  # picture: there is no separate audio prompt and no language flag. So an
+  # unstated language is not a neutral default — it is the model choosing one,
+  # and on 28 Aug 2026 a customer put it plainly: "everything I hit sound in
+  # images comes with a language that is not english".
+  #
+  # Director mode never showed this, because its plan puts real quoted
+  # dialogue in the prompt and the language rides in the words. The standard
+  # path — the default, and what most customers use — said nothing about sound
+  # at all.
+  #
+  # A customer's own `dialogue_language` still wins, and so does a Director
+  # plan's language; this is only what applies when neither has an opinion.
+  # One of: english, spanish, french, german, russian — the set the runtime's
+  # vendor documents as validated for generated speech.
+  spoken_language: english
+
   # ── Single-pass ceiling: 30 seconds (measured, 20 Aug 2026) ──
   #
   # The GPU sustains a 60s pass, but the MODEL does not sustain 60s of story:

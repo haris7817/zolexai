@@ -66,6 +66,11 @@ execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
 
+  # The language of any speech the model generates — see text-to-video.yaml
+  # for the full note. A customer's `dialogue_language` and a Director plan's
+  # own language both win over this.
+  spoken_language: english
+
   # Deterministic prompt structuring — see text-to-video.yaml for the full
   # note and apps/worker/worker/longform/enhance.py for the rules.
   prompt_structuring: true

@@ -256,14 +256,14 @@ class WorkflowRegistry:
                     }
                 )
             if dialogue_language is not None:
-                if prompt_mode != "director":
-                    problems.append(
-                        {
-                            "field": "dialogue_language",
-                            "reason": "A dialogue language only applies to Director mode.",
-                        }
-                    )
-                elif dialogue_language not in DIALOGUE_LANGUAGES:
+                # Accepted in BOTH prompt modes since 28 Aug 2026. It was
+                # Director-only on the reasoning that only a plan writes
+                # dialogue — but the runtime generates audio for every video,
+                # from the same prompt, and with no language stated it picks
+                # one. The customer's report was that everything came back
+                # speaking something other than English, and the control that
+                # would have fixed it was refused with a 400.
+                if dialogue_language not in DIALOGUE_LANGUAGES:
                     problems.append(
                         {
                             "field": "dialogue_language",

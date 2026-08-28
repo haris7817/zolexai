@@ -68,6 +68,11 @@ execution:
   # PRIVATE — stripped from every public API response.
   runtime: mock
 
+  # The language of any speech the model generates — see text-to-video.yaml
+  # for the full note. A customer's `dialogue_language` and a Director plan's
+  # own language both win over this.
+  spoken_language: english
+
   # Single-pass ceiling: 30 seconds — same measured reason as
   # text-to-video.yaml (the model does not hold 60s of story in one pass;
   # 30s passes are the measured-clean regime). 60s becomes two chained

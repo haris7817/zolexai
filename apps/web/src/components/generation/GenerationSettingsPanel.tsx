@@ -206,11 +206,17 @@ export function GenerationSettingsPanel({
           </p>
         ) : null}
 
-        {/* ── Dialogue language — Director mode only ───────────────── */}
-        {directorMode ? (
+        {/* ── Spoken language ───────────────────────────────────────
+            Shown in BOTH prompt modes since 28 Aug 2026. It was Director-only
+            because only a plan writes dialogue — but the runtime generates
+            audio for every video from the same prompt, and with no language
+            stated it picks one. A customer asked "what language you got the
+            backend?", which is what a control hidden behind a mode they never
+            switched into sounds like from outside. */}
+        {workflow.settings.prompt_modes ? (
           <>
             <SectionLabel as="label" htmlFor="zx-dialogue-language">
-              Dialogue language
+              {directorMode ? "Dialogue language" : "Spoken language"}
             </SectionLabel>
             <Controller
               control={form.control}
@@ -225,7 +231,9 @@ export function GenerationSettingsPanel({
                   {DIALOGUE_LANGUAGES.map((language) => (
                     <option key={language} value={language}>
                       {language === "auto"
-                        ? "Auto (match my idea)"
+                        ? directorMode
+                          ? "Auto (match my idea)"
+                          : "Default (English)"
                         : language.charAt(0).toUpperCase() + language.slice(1)}
                     </option>
                   ))}

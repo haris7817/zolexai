@@ -1429,3 +1429,83 @@ async def test_image_to_video_identity_description_is_never_a_dependency(
     for argv in invocations(log):
         prompt = argv[argv.index("--prompt") + 1]
         assert "The same person stays on screen" not in prompt
+
+
+@needs_ffmpeg
+async def test_generated_audio_is_told_what_language_to_speak(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runtime writes its own audio from this same prompt.
+
+    There is no separate audio prompt and no language flag, so a prompt that
+    says nothing about language leaves the model to choose — and it chooses
+    badly. Client, 28 Aug 2026: "everything I hit sound in images comes with a
+    language that is not english". Director mode never showed this because its
+    plan puts quoted dialogue in the prompt and the language rides in the
+    words; the standard path said nothing about sound at all.
+    """
+    log = render_stub(
+        tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0, audio=True)
+    )
+    await collect(make_job(
+        workspace,
+        parameters={"duration": "2s", "aspect_ratio": "16:9", "quality": "High"},
+        execution={"runtime": "ltx", "max_segment_seconds": 1},
+    ))
+
+    for argv in invocations(log):
+        prompt = argv[argv.index("--prompt") + 1]
+        assert "If anyone speaks or sings, they do so in English." in prompt
+
+
+@needs_ffmpeg
+async def test_the_language_sentence_is_conditional_and_the_choice_is_the_customers(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two properties that matter more than the default itself.
+
+    It is phrased "if anyone speaks" because a prompt that says "the woman
+    speaks English" invents a speaking woman in a silent scene — a text
+    encoder cannot hear an instruction as optional, and naming a noun is how
+    you summon it. And a customer who picks a language gets that language.
+    """
+    log = render_stub(
+        tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0, audio=True)
+    )
+    await collect(make_job(
+        workspace,
+        parameters={
+            "duration": "2s", "aspect_ratio": "16:9",
+            "quality": "High", "dialogue_language": "spanish",
+        },
+        execution={"runtime": "ltx", "max_segment_seconds": 1},
+    ))
+
+    prompt = invocations(log)[0][invocations(log)[0].index("--prompt") + 1]
+    assert "If anyone speaks or sings, they do so in Spanish." in prompt
+    assert prompt.startswith("If anyone") is False, "the user's own text stays first"
+
+
+@needs_ffmpeg
+async def test_a_muted_result_is_not_given_a_language_sentence(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`sound: false` strips the audio after rendering, so the sentence would
+    buy nothing — and it is not free, because every word moves the picture."""
+    log = render_stub(
+        tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0, audio=True)
+    )
+    await collect(make_job(
+        workspace,
+        parameters={
+            "duration": "2s", "aspect_ratio": "16:9",
+            "quality": "High", "sound": False,
+        },
+        execution={"runtime": "ltx", "max_segment_seconds": 1},
+    ))
+
+    for argv in invocations(log):
+        assert "speaks or sings" not in argv[argv.index("--prompt") + 1]

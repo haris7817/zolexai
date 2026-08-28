@@ -279,3 +279,50 @@ def _distribute_timed(
         for bucket in buckets
     ]
     return assigned, persistent
+
+
+# ── The language of generated sound ──────────────────────────────────────
+
+#: Languages the video runtime's vendor documents as validated for generated
+#: speech. Mirrors `DIALOGUE_LANGUAGES` in `worker.director.provider` and in
+#: the API's workflow registry; the three lists must not drift apart.
+SPOKEN_LANGUAGE_NAMES: dict[str, str] = {
+    "english": "English",
+    "spanish": "Spanish",
+    "french": "French",
+    "german": "German",
+    "russian": "Russian",
+}
+
+
+def spoken_language_sentence(language: str | None) -> str:
+    """One sentence fixing the language of any speech the model generates.
+
+    This runtime writes its own audio from the same `--prompt` that draws the
+    picture — there is no separate audio prompt and no language flag — so an
+    unstated language is not a neutral default. It is the model choosing, and
+    what it chooses is frequently not the language the customer wrote in.
+    Reported 28 Aug 2026: "everything I hit sound in images comes with a
+    language that is not english".
+
+    Director mode never had this problem, because its plan puts real quoted
+    dialogue in the prompt and the language rides in the words themselves. The
+    standard path — the default, and what most customers use — said nothing
+    about sound at all.
+
+    Phrased as a CONDITIONAL, and that is the whole care in this function. A
+    prompt that says "the woman speaks English" invents a speaking woman in a
+    silent scene, because a text encoder has no way to hear an instruction as
+    optional; naming a noun is how you summon it. "If anyone speaks" binds the
+    language to speech that the scene was going to contain anyway, and adds
+    nothing to one that was not. It is the same shape as the music-video
+    performance line ("if a person is visible singing, their mouth…"), which
+    is there for the same reason.
+
+    An unknown or absent language returns "" — the prompt then reads exactly
+    as it did before this existed.
+    """
+    name = SPOKEN_LANGUAGE_NAMES.get(str(language or "").strip().lower())
+    if name is None:
+        return ""
+    return f"If anyone speaks or sings, they do so in {name}."
