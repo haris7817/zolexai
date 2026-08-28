@@ -103,3 +103,59 @@ def test_quality_toggle_routes_between_engines(tmp_path: Path) -> None:
     assert isinstance(resolve_adapter(best), H3ComfyAdapter)
     assert isinstance(resolve_adapter(unset), LtxAdapter)
     assert isinstance(resolve_adapter(weird), LtxAdapter)
+
+
+def test_video_to_video_never_routes_to_the_stills_engine(tmp_path: Path) -> None:
+    """Best on Video to Video must return the customer's own footage.
+
+    H3's R2V graph reads a reference photo and the source's FIRST FRAME and
+    generates from there, which is what the client saw on 28 Aug 2026 —
+    "I put a video and press better and give me a whole different video". The
+    engine declines the workflow (`h3_comfy_video_to_video`, default off) and
+    the resolver serves the job on the base runtime rather than failing it.
+    """
+    from worker.adapters.h3_comfy import H3ComfyAdapter
+    from worker.workflows.resolver import resolve_adapter
+
+    assert not H3ComfyAdapter().supports("video-to-video")
+
+    stale = {
+        "runtime": "ltx",
+        "runtime_by_quality": {"fast": "ltx", "best": "h3_comfy"},
+    }
+    best = make_job(
+        tmp_path,
+        workflow_id="video-to-video",
+        execution=stale,
+        parameters={"quality": "best"},
+    )
+    assert isinstance(resolve_adapter(best), LtxAdapter)
+
+
+def test_execution_by_quality_overlays_the_execution_block() -> None:
+    """Fast and Best differ by what the engine is ASKED to do.
+
+    Video to Video runs one engine at both levels; Best adds the matting pass
+    that replaces the person. Keys in the overlay replace keys in the block,
+    everything else is inherited, and an unnamed quality reads the block
+    exactly as written.
+    """
+    from worker.workflows.resolver import _execution_for
+
+    claim = {
+        "execution": {
+            "runtime": "ltx",
+            "v2v_engine": "transform",
+            "v2v_reference_identity": False,
+            "execution_by_quality": {"best": {"v2v_reference_identity": True}},
+        }
+    }
+
+    best = _execution_for({**claim, "parameters": {"quality": "Best"}})
+    fast = _execution_for({**claim, "parameters": {"quality": "fast"}})
+    unset = _execution_for(claim)
+
+    assert best["v2v_reference_identity"] is True
+    assert best["v2v_engine"] == "transform"  # inherited, not dropped
+    assert fast["v2v_reference_identity"] is False
+    assert unset["v2v_reference_identity"] is False

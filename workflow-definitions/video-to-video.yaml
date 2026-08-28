@@ -39,8 +39,8 @@ inputs:
     required: false
     label: REFERENCE IMAGE
     drop_hint: an optional reference image
-    help: The person in the result follows this image. Optional on Fast,
-      required on Best. Works best when your video shows one person.
+    help: Optional. On Best, the person in your video is replaced by the
+      person in this photo. Works best when your video shows one person.
     accept: ["image/jpeg", "image/png", "image/webp"]
     max_size_mb: 25
 
@@ -51,21 +51,32 @@ inputs:
 duration_mode: source
 supported_durations: []
 supported_aspect_ratios: ["16:9", "9:16"]
-# The Fast/Best engine toggle, extended to this workflow 28 Aug 2026 after
-# two production jobs failed outright. Video to Video had been routed to a
-# single engine that requires a reference photo, so every plain restyle —
-# the workflow's own headline promise, "Restyle and transform existing
-# footage" — was refused before it started. The two engines genuinely do
-# different jobs here, which is why this is a customer choice and not a
-# default:
+# The Fast/Best toggle. Revised 28 Aug 2026, same day it shipped, on the
+# client's verdict: "I put a video and press better and give me a whole
+# different video."
 #
-#   Fast   restyles the footage from the prompt, with or without a
-#          reference photo. The only engine that can do it without one.
-#   Best   replaces the person with the one in the reference photo, and
-#          needs that photo — it has no plain-restyle behaviour at all.
+# That was accurate. Best had been routed to an engine that reads STILLS —
+# the reference photo plus the source's first frame — and generates a new
+# performance from them. It produced a good video of the right person in a
+# plausible place, and it threw the customer's footage away. Whatever else
+# Video to Video is, it is the workflow where the uploaded video comes back.
+#
+# So both levels now run the engine that drives every frame from the source,
+# and the difference between them is WHAT IS ASKED OF IT — which is a real
+# difference in work and cost, not a label:
+#
+#   Fast   restyles the footage from the prompt. The reference photo, when
+#          one is given, is a look hint. No matting pass.
+#   Best   additionally replaces the PERSON with the one in the reference
+#          photo: each pass mattes the people in its own window and the
+#          reference is re-shown inside it, so the face is the photo's while
+#          the motion stays the footage's. Roughly 27 s per pass on top.
 #
 # Which engine each level runs is the deployment's
-# execution.runtime_by_quality, never named here: engines are private.
+# execution.runtime_by_quality, never named here: engines are private. The
+# worker also refuses to route a level to an engine that cannot serve this
+# workflow — see `resolve_adapter` — so a stale deployment mapping degrades
+# to the base runtime instead of failing a customer's job.
 supported_quality_levels: ["fast", "best"]
 
 settings:
@@ -199,7 +210,12 @@ execution:
   # performing his speech in his kitchen, stable across pass seams; a 30s
   # multi-pass source held the identity to the last section. Costs ~27s of
   # matting per pass on top of the transform.
-  v2v_reference_identity: true
+  #
+  # BEST ONLY since 28 Aug 2026 — see `execution_by_quality` at the end of
+  # this block. It is inert without a reference image either way, so the base
+  # value here is what Fast gets: a plain restyle, and the reference photo (if
+  # one was supplied) reduced to the weak look hint it was before.
+  v2v_reference_identity: false
   #
   # Person lock's mirror image: the person should NOT survive — the uploaded
   # reference image says who they are, the footage keeps saying what they do.
@@ -249,6 +265,22 @@ execution:
   # 19 Aug 2026. `scripts/v2v_identity_matrix.sh` re-measures these defaults
   # when footage says they need moving; the sweep clips backing the current
   # values are on the GPU box in /workspace/idtest/.
+
+  # ── What Fast and Best actually differ by ────────────────────────────────
+  #
+  # The companion to the deployment's `runtime_by_quality`: that key says
+  # which ENGINE a level runs, this one says what that engine is asked to do.
+  # Keys here replace keys in the block above for the matching quality, and a
+  # request naming no level (or a level absent here) reads the block exactly
+  # as written. See `_execution_for` in the worker's resolver.
+  #
+  # Both levels run the transform engine, because both must return the
+  # customer's own footage. Best does the extra work — matte every pass,
+  # re-show the reference inside it — that turns a restyle into a person
+  # replacement, and that is what its longer render buys.
+  execution_by_quality:
+    best:
+      v2v_reference_identity: true
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

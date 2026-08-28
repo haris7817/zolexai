@@ -650,6 +650,26 @@ class WorkerSettings(BaseSettings):
     """R2V delivery tier — measured at ~33x real time with the best identity
     adherence of the whole H3 evaluation. Cost scales linearly in pixels."""
 
+    h3_comfy_video_to_video: bool = False
+    """Whether H3 may serve Video to Video at all. Default OFF since
+    28 Aug 2026.
+
+    The R2V graph consumes IMAGES. Mapped the way the proven D1 run mapped it
+    — reference photo to Picture 1, the source video's FIRST FRAME to
+    Picture 2 — it generates a new performance in a place that resembles the
+    source's opening shot, and the customer's footage is otherwise unused.
+    That is a legitimate thing to sell, but it is not what Video to Video
+    promises, and the client said so in the plainest possible terms on 28 Aug
+    2026: "I put a video and press better and give me a whole different
+    video."
+
+    Following the footage is LTX transform's job — an edge map of the source
+    drives every frame, and `v2v_reference_identity` replaces the person
+    inside it (GPU-verified 19 Aug 2026). So both quality levels route there
+    and this switch is what a benchmark flips to reach the R2V path again.
+    With it off, `supports()` declines the workflow and the resolver's
+    safety net serves the job on the base runtime rather than failing it."""
+
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
 

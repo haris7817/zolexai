@@ -18,6 +18,14 @@ Scope, deliberately narrow:
     job, and a plain restyle without a reference image is refused here rather
     than half-served.
 
+    **OFF by default since 28 Aug 2026** (`h3_comfy_video_to_video`). Not
+    re-enacting the motion turned out to be the whole complaint: a customer
+    who uploads footage and asks for it back better is not asking for a
+    different performance in a similar room. `supports()` declines the
+    workflow while the switch is off, and Video to Video runs on LTX
+    transform at both quality levels — the engine that drives every frame
+    from the source and replaces the person inside it.
+
   * `text-to-video` → the client T2V graph — added 25 Aug at the user's
     explicit request as a client-test experiment. LTX remains the measured
     default for T2V (faster at a larger canvas, and H3's identity edge does
@@ -113,6 +121,12 @@ class H3ComfyAdapter:
         self._client = client
 
     def supports(self, workflow_id: str) -> bool:
+        if workflow_id == "video-to-video" and not settings.h3_comfy_video_to_video:
+            # Off by default — see `h3_comfy_video_to_video`. The R2V graph
+            # re-imagines the scene from two stills instead of following the
+            # customer's footage, which is a different product from the one
+            # Video to Video sells.
+            return False
         return workflow_id in _GRAPHS
 
     # ── Wiring ───────────────────────────────────────────────────────────
