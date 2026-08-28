@@ -149,12 +149,24 @@ def soundscape_clause(
 
     language = _resolve(parameters, execution, plan_language)
     spoken = f" in {language}" if language else ""
-    # Dialogue WAS supplied, so speech is licensed — but only these words. The
-    # quoted line is already in the customer's prompt; this says who says it
-    # and in what language, and closes the door on anything else being read.
+    # Dialogue WAS supplied, so speech is licensed — but only these words,
+    # only once, and only for as long as they take.
+    #
+    # "A single time" is Director's phrasing, and it is there for a measured
+    # reason: a 60s render on 19 Aug spoke three of its fourteen lines twice.
+    # Without it, a five-word line in a twenty-second video loops — a client
+    # on 28 Aug 2026 got "Never mess with the family" repeated for the full
+    # twenty seconds, which is the same uncovered-window failure as the
+    # narration leak wearing a different hat: the model has audio time to
+    # fill and only one thing in the prompt to fill it with.
+    #
+    # So the tail gets an owner in the same breath. Naming what the rest of
+    # the video sounds like is what stops the line being stretched over it.
     return (
         f"The only words anyone speaks are the quoted lines above, spoken"
-        f"{spoken} by the people on screen in natural conversational voices."
+        f"{spoken} by the people on screen in natural conversational voices. "
+        "Each line is spoken a single time and is not repeated; for the rest "
+        "of the video the only sounds are the ones the scene itself makes."
     )
 
 

@@ -1487,7 +1487,7 @@ async def test_the_language_sentence_is_conditional_and_the_choice_is_the_custom
     prompt = invocations(log)[0][invocations(log)[0].index("--prompt") + 1]
     assert "spoken in Spanish by the people on screen" in prompt
     assert 'a woman says "try this today" to camera' in prompt, "the user text survives"
-    assert prompt.rstrip().endswith("in natural conversational voices."), "the clause closes the caption"
+    assert prompt.rstrip().endswith("the ones the scene itself makes."), "the clause closes the caption"
 
 
 @needs_ffmpeg
@@ -1512,3 +1512,50 @@ async def test_a_muted_result_is_not_given_a_language_sentence(
     for argv in invocations(log):
         prompt = argv[argv.index("--prompt") + 1]
         assert "soundtrack" not in prompt and "spoken aloud" not in prompt
+
+
+def test_the_canvas_follows_the_uploaded_picture_not_the_ratio_button() -> None:
+    """Two Homers, side by side, from a one-Homer poster (client, 28 Aug 2026).
+
+    Image to Video conditions frame 0 on the customer's picture, but the
+    canvas came from the `aspect_ratio` parameter alone. Upload a portrait
+    poster, leave the ratio on its 16:9 default, and the model is asked to
+    fill a wide frame from a tall image — so it clones the subject sideways
+    to fill the space. Prompt-independent, which is what a canvas bug looks
+    like from outside.
+    """
+    from worker.adapters.ltx import LtxAdapter
+
+    class _Probed:
+        def __init__(self, width: int, height: int) -> None:
+            self.width, self.height = width, height
+
+    shape = LtxAdapter._canvas_for_source
+    wide = (1024, 576)
+
+    # The client's own poster: 731x1300.
+    assert shape(_Probed(731, 1300), wide) == (576, 1024)
+    # A landscape upload is left where it already was.
+    assert shape(_Probed(1920, 1080), wide) == wide
+    assert shape(_Probed(1000, 1000), wide) == (768, 768)
+    # Nothing to measure: the requested grid stands.
+    assert shape(None, wide) == wide
+
+
+def test_a_supplied_line_is_told_to_be_spoken_once() -> None:
+    """"Never mess with the family" repeated for a full 20 seconds (client,
+    28 Aug 2026).
+
+    Same shape as the narration leak: the model has audio time to fill and
+    one thing in the prompt to fill it with. Director's compiler already
+    carries the counter-phrasing, for the measured reason that a 60s render
+    spoke three of its fourteen lines twice.
+    """
+    from worker.longform.language import soundscape_clause
+
+    clause = soundscape_clause('he says "never mess with the family"', {}, {})
+    assert "a single time" in clause
+    assert "not repeated" in clause
+    # And the rest of the running time is given an owner, so the line is not
+    # stretched across it.
+    assert "the rest of the video" in clause

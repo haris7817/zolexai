@@ -1116,6 +1116,25 @@ class LtxAdapter:
         seconds = self._requested_seconds(job)
         still = await self._conditioning_image(job, "source_image")
         dimensions = self._requested_dimensions(job)
+        if still is not None and job.execution.get("canvas_from_source_image", True):
+            # The customer's picture decides the shape of the video it becomes.
+            # See `_canvas_for_source`: asking a wide canvas to start from a
+            # tall photograph makes the model clone the subject sideways to
+            # fill the space, reported 28 Aug 2026 as one poster returning two
+            # of the same character standing next to each other.
+            probed = await probe_media(still)
+            shaped = self._canvas_for_source(probed, dimensions)
+            if shaped != dimensions:
+                logger.info(
+                    "canvas_from_source_image",
+                    extra={
+                        "job_id": job.job_id,
+                        "requested": dimensions,
+                        "source": (probed.width, probed.height),
+                        "rendered": shaped,
+                    },
+                )
+                dimensions = shaped
         # `execution.generation_engine: guided` swaps the distilled entry point
         # for the guided two-stage pipeline — CFG, STG and a negative prompt
         # active, ~4.3x the render time. Off unless a workflow says so, exactly
@@ -2610,6 +2629,31 @@ class LtxAdapter:
     def _requested_dimensions(self, job: AdapterJob) -> tuple[int, int]:
         return _DIMENSIONS.get(
             str(job.parameters.get("aspect_ratio") or ""), _DEFAULT_DIMENSIONS
+        )
+
+    @staticmethod
+    def _canvas_for_source(source: MediaInfo | None, fallback: tuple[int, int]) -> tuple[int, int]:
+        """The offered grid closest in shape to the customer's own image.
+
+        Image to Video conditions frame 0 on the uploaded picture, and until
+        29 Aug 2026 the canvas came from the `aspect_ratio` parameter alone —
+        the picture's own shape was never consulted. Upload a portrait poster,
+        leave the ratio on its 16:9 default, and the model is asked to fill a
+        wide frame from a tall image. It fills the sides by CLONING the
+        subject: a client's Homer poster came back as two Homers standing side
+        by side, and it was prompt-independent, which is exactly what a canvas
+        bug looks like from the outside.
+
+        Nothing here stretches or crops the customer's image. It picks the
+        offered grid whose aspect is nearest the source's, so the model is
+        never asked to invent picture beside a subject that fills its frame.
+        """
+        if source is None or not source.width or not source.height:
+            return fallback
+        target = source.width / source.height
+        return min(
+            _DIMENSIONS.values(),
+            key=lambda grid: abs((grid[0] / grid[1]) - target),
         )
 
     def _per_pass_seconds(
