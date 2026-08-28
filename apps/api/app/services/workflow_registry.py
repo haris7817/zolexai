@@ -335,6 +335,47 @@ DISPLAY_ORDER: tuple[str, ...] = (
 )
 
 
+#: What a runtime producing this `output_type` actually writes. Mirrors
+#: `_OUTPUT_CONTENT_TYPE` in api/v1/internal.py, which is what the claim
+#: presigns with when a definition declares nothing.
+_NATIVE_CONTENT_TYPE = {"video": "video/mp4", "audio": "audio/mpeg", "image": "image/png"}
+
+
+def _reject_mock_output_on_a_real_runtime(path: Path, definition: WorkflowDefinition) -> None:
+    """`output_content_type` may only contradict `output_type` under the mock.
+
+    The mock runtime writes a placeholder PNG whatever the workflow produces,
+    so a video workflow declaring `image/png` is correct there — the claim
+    presigns for what will actually be uploaded. Under a real runtime the same
+    two lines are a silent data corruption: the worker uploads an MP4 to a key
+    ending `.png`, signed as an image, and every customer's finished video is
+    served with `Content-Type: image/png`. Browsers will not play it.
+
+    Measured in production on 28 Aug 2026: 64 finished generations tagged
+    `image/png` while their asset rows said `video/mp4`. The customer's report
+    was "I can't download anything", and it had been true for weeks. The lines
+    are deleted in the deployment's YAML and had been restored by a
+    `git stash pop` — which is not a mistake anyone makes once.
+
+    So it fails at load. An API that will not boot is discovered by whoever is
+    deploying, in the minute they deploy; a mistagged asset is discovered by a
+    customer, and only if they complain.
+    """
+    execution = definition.execution
+    declared = execution.output_content_type
+    if declared is None or execution.runtime == "mock":
+        return
+    native = _NATIVE_CONTENT_TYPE.get(definition.output_type)
+    if native is None or declared == native:
+        return
+    raise WorkflowRegistryError(
+        f"{path.name}: runtime '{execution.runtime}' produces {definition.output_type} "
+        f"({native}) but execution.output_content_type says '{declared}'. That pairing "
+        "signs every upload as the wrong type and the delivered media will not play. "
+        "Delete output_content_type and output_kind — they belong to the mock runtime."
+    )
+
+
 def load_registry(directory: Path | None = None) -> WorkflowRegistry:
     """Parses and validates every definition. Raises on the first problem."""
     root = directory or settings.workflow_definitions_dir
@@ -371,6 +412,8 @@ def load_registry(directory: Path | None = None) -> WorkflowRegistry:
             )
         if definition.id in definitions:
             raise WorkflowRegistryError(f"duplicate workflow id '{definition.id}'")
+
+        _reject_mock_output_on_a_real_runtime(path, definition)
 
         definitions[definition.id] = definition
 

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.core.config import _repo_root
 
 
@@ -92,3 +94,50 @@ def test_settings_import_yields_a_usable_definitions_directory() -> None:
     from app.core.config import settings
 
     assert settings.workflow_definitions_dir.is_dir()
+
+
+def test_mock_output_lines_are_refused_on_a_real_runtime(tmp_path: Path) -> None:
+    """The two lines that silently mistagged 64 customer videos.
+
+    `output_content_type: image/png` is correct under the mock runtime, which
+    writes a placeholder PNG whatever the workflow produces. Under a real one
+    it presigns every upload as an image: the worker puts an MP4 at a key
+    ending `.png`, MinIO serves `Content-Type: image/png`, and no browser will
+    play it. Production, 28 Aug 2026 — 64 finished generations tagged that way
+    while their asset rows said `video/mp4`, reported by the customer as "I
+    can't download anything".
+
+    The deployment deletes those lines by hand and a `git stash pop` had
+    restored them. That is not a mistake anyone makes once, so it fails at
+    load: an API that will not boot is found by whoever is deploying, in the
+    minute they deploy.
+    """
+    import shutil
+
+    from app.services.workflow_registry import WorkflowRegistryError, load_registry
+
+    source = Path(__file__).resolve().parents[3] / "workflow-definitions"
+    for definition in source.glob("*.yaml"):
+        shutil.copy(definition, tmp_path / definition.name)
+
+    # The shipped tree is all `runtime: mock`, so it must still load untouched.
+    load_registry(tmp_path)
+
+    target = tmp_path / "video-to-video.yaml"
+    text = target.read_text(encoding="utf-8")
+    assert "output_content_type: image/png" in text, "this test needs those lines present"
+    target.write_text(text.replace("runtime: mock", "runtime: ltx"), encoding="utf-8")
+
+    with pytest.raises(WorkflowRegistryError) as raised:
+        load_registry(tmp_path)
+    assert "output_content_type" in str(raised.value)
+    assert "will not play" in str(raised.value)
+
+    # And the fix the message asks for is the one that works.
+    kept = [
+        line
+        for line in target.read_text(encoding="utf-8").splitlines(keepends=True)
+        if not line.startswith(("  output_content_type:", "  output_kind:"))
+    ]
+    target.write_text("".join(kept), encoding="utf-8")
+    load_registry(tmp_path)
