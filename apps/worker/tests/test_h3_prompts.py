@@ -308,12 +308,12 @@ def test_every_segment_is_told_what_language_to_speak() -> None:
     from worker.longform.language import soundscape_clause
 
     plan = plan_from_prompt("a man in a grey coat talks to camera in a kitchen")
-    sentence = soundscape_clause("a man talks to camera", {}, {})
+    sentence = soundscape_clause("a man in a kitchen", {}, {})
     prompts = discipline_prompts(plan, 3, total_seconds=30.0, spoken_language=sentence)
 
     assert len(prompts) == 3
     for prompt in prompts:
-        assert prompt.endswith("in English, in natural conversational voices.")
+        assert prompt.endswith("The only sounds are the ones the scene itself makes.")
 
 
 def test_no_language_sentence_leaves_the_segment_prompts_untouched() -> None:
@@ -324,4 +324,4 @@ def test_no_language_sentence_leaves_the_segment_prompts_untouched() -> None:
     with_none = discipline_prompts(plan, 2, total_seconds=20.0)
     explicit = discipline_prompts(plan, 2, total_seconds=20.0, spoken_language="")
     assert with_none == explicit
-    assert not any("conversational voices" in prompt for prompt in with_none)
+    assert not any("No one speaks" in prompt for prompt in with_none)

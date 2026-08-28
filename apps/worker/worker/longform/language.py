@@ -60,41 +60,18 @@ def spoken_language_sentence(language: str | None) -> str:
     return f"If anyone speaks or sings, they do so in {name}."
 
 
-#: Words that mean the customer asked for talking. Speech VERBS plus the nouns
-#: that name a talking format, because "a podcast interview" never conjugates
-#: anything. Quoted text counts too and is matched separately.
-_SPEECH_WORDS = (
-    "speak", "speaks", "speaking", "talk", "talks", "talking",
-    "say", "says", "saying", "said", "tell", "tells", "telling",
-    "explain", "explains", "explaining", "describe", "describes", "describing",
-    "announce", "announces", "announcing", "address", "addresses", "addressing",
-    "argue", "argues", "arguing", "answer", "answers", "answering",
-    "ask", "asks", "asking", "reply", "replies", "replying",
-    "greet", "greets", "greeting", "whisper", "whispers", "whispering",
-    "shout", "shouts", "shouting", "recount", "recounts", "recounting",
-    "sing", "sings", "singing", "narrate", "narrates", "narrating",
-    "chat", "chats", "chatting", "recite", "recites", "reciting",
-    "conversation", "dialogue", "dialog", "interview", "podcast",
-    "monologue", "speech", "voice-over", "voiceover", "narration",
-    "presenter", "anchor", "host", "vlog", "testimonial",
-)
-
-_SPEECH_RE = re.compile(r"\b(?:" + "|".join(_SPEECH_WORDS) + r")\b", re.IGNORECASE)
+#: Quoted text in the customer's own prompt — the ONLY thing that licenses
+#: generated speech. A speech VERB does not: "a woman explains the product"
+#: describes what she is doing, not what she says, and a model given a verb
+#: with no words invents them or reads the caption instead. That distinction
+#: is the client's backend rule of 28 Aug 2026, and it is stricter than the
+#: verb list this replaced.
 _QUOTED_RE = re.compile(r"[\"“‘'][^\"”’']{3,}[\"”’']")
 
 
-def implies_speech(prompt: str) -> bool:
-    """Whether the customer's own words ask for anyone to talk.
-
-    Deliberately generous about what counts and deliberately dumb about how it
-    decides. Getting this wrong in the "yes" direction costs a sentence saying
-    speech should sound natural, in a video with no speech in it. Getting it
-    wrong in the "no" direction costs the ambience sentence in a video that
-    does talk, which is the milder of the two only because the speech itself
-    still happens.
-    """
-    text = str(prompt or "")
-    return bool(_SPEECH_RE.search(text) or _QUOTED_RE.search(text))
+def supplied_dialogue(prompt: str) -> bool:
+    """Whether the customer explicitly wrote words for someone to say."""
+    return bool(_QUOTED_RE.search(str(prompt or "")))
 
 
 def soundscape_clause(
@@ -149,29 +126,35 @@ def soundscape_clause(
         return ""
     if str(parameters.get("sound", True)).strip().lower() in ("false", "no", "off", "0"):
         return ""
-    if not implies_speech(prompt):
-        # "The sounds the scene itself makes" and not "the scene's ambience",
-        # which is what this said first. Ambience MEANS room tone, and room
-        # tone is quiet by definition — the Director research measured its
-        # described-silence tail at -45 dBFS, inaudible on a phone. Asking a
-        # gun being raised for "ambience" gets a near-silent video, which the
-        # client reported the same evening as "video don't have the sound".
+
+    dialogue = supplied_dialogue(prompt)
+    if not dialogue:
+        # THE RULE. Speech is generated only when the customer supplied the
+        # words; with none supplied, the model is told plainly that nobody
+        # speaks, and the soundtrack is handed to the scene instead.
         #
-        # This keeps the property that matters — the soundtrack has an owner,
-        # so the model stops reading the caption aloud to fill it — while
-        # pointing that owner at events rather than at the room: footsteps,
-        # traffic, a door, whatever the scene is actually doing.
-        return "The soundtrack is the sounds the scene itself makes."
+        # "No one speaks" is a negation, which this file otherwise avoids
+        # because the runtime has no negation mechanism. It earns the
+        # exception on evidence: Director mode's compiler emits exactly that
+        # phrasing and its narration leak went away (research-2026-08-18,
+        # TC2c). The general rule loses to the measurement.
+        #
+        # The second half is what stops it going silent. "Ambience" was the
+        # first wording and ambience MEANS room tone — the Director research
+        # measured its described-silence tail at -45 dBFS, inaudible on a
+        # phone, and the client reported that same evening as "video dont
+        # have the sound". Naming the sounds the scene MAKES points the
+        # soundtrack at events: footsteps, traffic, a door, an engine.
+        return "No one speaks. The only sounds are the ones the scene itself makes."
+
     language = _resolve(parameters, execution, plan_language)
-    if not language:
-        return "Any talking is spoken aloud by the people on screen, in natural conversational voices."
-    # "by the people on screen" is the load-bearing half: it hands the audio to
-    # someone visible, which is what the caption was doing in their absence.
-    # Not "to each other" — one presenter talking to camera is the common case
-    # and that phrasing invents a second person for them to talk to.
+    spoken = f" in {language}" if language else ""
+    # Dialogue WAS supplied, so speech is licensed — but only these words. The
+    # quoted line is already in the customer's prompt; this says who says it
+    # and in what language, and closes the door on anything else being read.
     return (
-        f"Any talking is spoken aloud by the people on screen in {language}, "
-        "in natural conversational voices."
+        f"The only words anyone speaks are the quoted lines above, spoken"
+        f"{spoken} by the people on screen in natural conversational voices."
     )
 
 

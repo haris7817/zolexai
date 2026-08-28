@@ -1456,7 +1456,7 @@ async def test_generated_audio_is_told_what_language_to_speak(
 
     for argv in invocations(log):
         prompt = argv[argv.index("--prompt") + 1]
-        assert "The soundtrack is the sounds the scene itself makes." in prompt
+        assert "No one speaks. The only sounds are the ones the scene itself makes." in prompt
 
 
 @needs_ffmpeg
@@ -1476,7 +1476,7 @@ async def test_the_language_sentence_is_conditional_and_the_choice_is_the_custom
     )
     await collect(make_job(
         workspace,
-        prompt="a woman explains the product to camera",
+        prompt='a woman says "try this today" to camera',
         parameters={
             "duration": "2s", "aspect_ratio": "16:9",
             "quality": "High", "dialogue_language": "spanish",
@@ -1485,8 +1485,8 @@ async def test_the_language_sentence_is_conditional_and_the_choice_is_the_custom
     ))
 
     prompt = invocations(log)[0][invocations(log)[0].index("--prompt") + 1]
-    assert "spoken aloud by the people on screen in Spanish" in prompt
-    assert "a woman explains the product to camera" in prompt, "the user text survives"
+    assert "spoken in Spanish by the people on screen" in prompt
+    assert 'a woman says "try this today" to camera' in prompt, "the user text survives"
     assert prompt.rstrip().endswith("in natural conversational voices."), "the clause closes the caption"
 
 

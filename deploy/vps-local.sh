@@ -61,15 +61,17 @@ block_image_to_video() {
   # 48-second wall clock; two good renders earlier the same afternoon took 47
   # seconds each, so the speed meant nothing and the engine was never at fault.
   #
-  # `soundscape: false` because the appended soundtrack sentence is what
-  # actually changed between those good renders and the bad one — it told the
-  # model the scene was quiet and still. The narration fix it was written for
-  # stays on everywhere else; turning it back on here needs a GPU A/B first.
+  # `soundscape` is back ON. It was switched off when its first wording
+  # ("the scene's own ambience is the whole soundtrack") coincided with a
+  # frozen picture and a silent track — a sentence that tells the model its
+  # scene is quiet and still. It now carries the client's audio safety rule
+  # instead: no supplied dialogue means no speech at all, and the soundtrack
+  # is the sounds the scene MAKES. That is the fix for the prompt being read
+  # aloud, so switching it off would only bring that back.
   cat <<'YAML'
   runtime: ltx
   timeout_seconds: 5400
   prompt_structuring_v2: true
-  soundscape: false
 YAML
 }
 
