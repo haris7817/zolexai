@@ -134,6 +134,19 @@ def soundscape_clause(
     Returns "" when sound is off — the result is muted after rendering, and
     every word in the prompt moves the picture.
     """
+    if not execution.get("soundscape", True):
+        # The off switch, and it exists because this sentence was measured
+        # doing harm. Image to Video, 28 Aug 2026: two renders at 15:50 and
+        # 15:53 (360 frames, 576x1024, 47s each) were good; the 17:37 render
+        # with the same geometry, same engine and the same 48s wall clock came
+        # back with "the image is just moving". The only difference was this
+        # sentence, telling the model the soundtrack was ambience — which is a
+        # statement that the scene is quiet and still, and the picture obeyed.
+        #
+        # The narration leak it was written for is real and still unfixed
+        # wherever this is off. That is a trade a deployment makes per
+        # workflow, with a GPU A/B, and not one a default should make silently.
+        return ""
     if str(parameters.get("sound", True)).strip().lower() in ("false", "no", "off", "0"):
         return ""
     if not implies_speech(prompt):

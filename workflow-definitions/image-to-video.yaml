@@ -25,29 +25,26 @@ inputs:
     max_size_mb: 25
 
 duration_mode: fixed
-# 5-30s. The ladder lost 60s on 28 Aug 2026 when this workflow settled on one
-# engine: 60s exists in that engine's lattice but is proven only on its
-# video-reference path, and offering a length whose render is unmeasured is
-# how a customer waits an hour for a refusal. Lengths the lattice cannot hit
-# exactly (20s) render the next preset up and are trimmed to the promise.
-supported_durations: ["5s", "10s", "15s", "20s", "30s"]
+# The same ladder Extend Video offers (client revision, 13 Aug 2026). Lengths
+# beyond one GPU pass are rendered as chained segments behind the scenes —
+# that is the backend's business, and the option list must not shrink because
+# of it. See apps/worker/worker/adapters/ltx.py, `_render_chain`.
+supported_durations: ["5s", "10s", "15s", "20s", "30s", "60s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
-# NO quality toggle (client decision, 28 Aug 2026), and the engine that stays
-# is the one Best used to reach.
+# NO quality toggle (client decision, 28 Aug 2026). This workflow runs one
+# engine with nothing to select.
 #
-# The first cut of this removed the toggle and left the workflow on the other
-# engine, which was backwards. That engine's image path is the DISTILLED
-# entry point: no CFG, no spatio-temporal guidance, no negative prompt — none
-# of the machinery that makes a render follow its prompt. The client filed
-# the result within the hour: an image, a prompt reading "he points the gun
-# at the camera and looks gangsta", and a video where "the image is just
-# moving". 360 frames in 48 seconds, which is the giveaway — adherence costs
-# time and none was spent.
+# WHICH engine took two wrong turns in one evening, both recorded here so the
+# third attempt does not repeat them. Removing the toggle first left it on the
+# engine Best had NOT used; the client reported a render where "the image is
+# just moving" and I blamed the engine on a 48-second wall clock. That was
+# wrong: two image-to-video jobs from earlier the same afternoon, same 360
+# frames at 576x1024, same engine, took 47 seconds each and were fine. The
+# speed was never the signal. The one thing that had changed between the good
+# renders and the bad one was an appended sentence about the soundtrack, which
+# told the model the scene was quiet and still — see `soundscape` below.
 #
-# They asked for the CHOICE to go away, not for the engine that was making
-# the good videos. So Image to Video is the engine whose I2V graph makes the
-# customer's picture the literal first frame and animates the prompt from
-# there, at every length, with nothing to select.
+# So this stays where it has always been and where the client says it works.
 supported_quality_levels: []
 
 settings:

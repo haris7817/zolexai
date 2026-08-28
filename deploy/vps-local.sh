@@ -56,20 +56,20 @@ YAML
 }
 
 block_image_to_video() {
-  # No `runtime_by_quality`: the quality toggle went on 28 Aug 2026 at the
-  # client's request, so no quality parameter is sent and the base runtime
-  # serves every job. That base is the engine Best used to reach — the other
-  # one's image path is distilled, with none of the guidance machinery that
-  # makes a render follow its prompt, and the client caught it the same hour.
+  # LTX, which is where this workflow has always run and where the client says
+  # it works. It briefly ran the other engine on 28 Aug on my bad reading of a
+  # 48-second wall clock; two good renders earlier the same afternoon took 47
+  # seconds each, so the speed meant nothing and the engine was never at fault.
   #
-  # `h3_max_seconds: 30` is the offered ceiling; the YAML's duration ladder
-  # stops there to match. `h3_steps: 12` is the user-approved speed dial from
-  # 26 Aug — ~28% faster at the quality canvas, judged visually acceptable.
+  # `soundscape: false` because the appended soundtrack sentence is what
+  # actually changed between those good renders and the bad one — it told the
+  # model the scene was quiet and still. The narration fix it was written for
+  # stays on everywhere else; turning it back on here needs a GPU A/B first.
   cat <<'YAML'
-  runtime: h3_comfy
-  h3_max_seconds: 30
-  h3_steps: 12
+  runtime: ltx
   timeout_seconds: 5400
+  prompt_structuring_v2: true
+  soundscape: false
 YAML
 }
 
