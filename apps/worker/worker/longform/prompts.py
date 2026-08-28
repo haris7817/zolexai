@@ -19,7 +19,7 @@ import math
 import re
 from dataclasses import dataclass
 
-from worker.longform.h3_prompts import parse_timed_sections
+from worker.longform.h3_prompts import parse_timed_sections, split_identity_and_action
 
 _SECTION_LINE = re.compile(
     r"^\s*(?:section\s+\d+(?:\s*/\s*(?:\d+|\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?(?:\s*(?:s|sec|seconds))?))?|\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?\s*(?:s|sec|seconds)?)\s*[:\-]\s*(.+)$",
@@ -120,6 +120,27 @@ def plan_section_prompts(
         )
     else:
         assigned = _distribute([a.text for a in actions], section_total)
+    # The user's prompt is restated in EVERY section as the persistent
+    # constraint. With the action riding along in that slot, each section is
+    # told the subject "is still ... telling how to use a gun" and tells it
+    # again from the top -- reported 28 Aug as "person repeating ... in start
+    # repeat telling how to use gun". H3's builder split identity from action
+    # on 27 Aug for the identical failure (a pizza order re-enacted in segment
+    # 2); this path never got the fix. v2 only.
+    identity = persistent
+    if v2 and persistent:
+        # Split the FIRST SENTENCE only. By the time this runs, `persistent`
+        # is usually the structured prompt -- the customer's line followed by
+        # the continuity sentences -- and splitting the whole blob drags those
+        # constraints into section 1's action beat, where they do not belong.
+        head, _, tail = persistent.partition(".")
+        head_identity, trailing = split_identity_and_action(head)
+        identity = (head_identity.rstrip(".") + "." + tail) if tail else head_identity
+        if trailing and assigned and not assigned[0]:
+            # The action becomes section 1's beat instead of every section's
+            # standing order -- the same placement H3 uses.
+            assigned[0] = trailing
+
     prompts: list[str] = []
 
     for index, current in enumerate(assigned, start=1):
@@ -129,42 +150,83 @@ def plan_section_prompts(
         # nonexistent thing is caption noise on a runtime that reads captions
         # as content (the shared section-1 preamble issue, noted 21 Aug).
         opening = v2 and index == 1
-        if opening:
-            lines = [f"LONG-FORM VIDEO — SECTION 1 OF {section_total}."]
-        else:
-            lines = [
-                f"LONG-FORM CONTINUATION — SECTION {index} OF {section_total}.",
-                "Keep the same subjects, identities, faces, clothing, colours, object counts, vehicles, environment and camera direction established previously.",
-            ]
-        # The scaffolding outweighs a short user prompt several times over, so
-        # every generic noun in it is a suggestion the model will happily take:
-        # a music video for "a car on an empty road" came back as a singer with
-        # a crowd behind her, every time (client report, 27 Aug). Naming the
-        # constraints as the ONLY inventory is the counterweight.
-        if persistent:
-            lines += ["PERSISTENT USER CONSTRAINTS (verbatim):", persistent]
-            lines.append(
-                "These constraints are the complete inventory of this video: "
-                "introduce no person, crowd, performer, location or object "
-                "they do not name."
+        if not v2:
+            # v1 keeps its labelled shape: it is what the older workflows
+            # were measured against, and nothing here is worth re-measuring
+            # them for.
+            if index == 1:
+                lines = [f"LONG-FORM VIDEO — SECTION 1 OF {section_total}."]
+            else:
+                lines = [
+                    f"LONG-FORM CONTINUATION — SECTION {index} OF {section_total}.",
+                    "Keep the same subjects, identities, faces, clothing, colours, object counts, vehicles, environment and camera direction established previously.",
+                ]
+            # The scaffolding outweighs a short user prompt several times over, so
+            # every generic noun in it is a suggestion the model will happily take:
+            # a music video for "a car on an empty road" came back as a singer with
+            # a crowd behind her, every time (client report, 27 Aug). Naming the
+            # constraints as the ONLY inventory is the counterweight.
+            if persistent:
+                lines += ["PERSISTENT USER CONSTRAINTS (verbatim):", persistent]
+                lines.append(
+                    "These constraints are the complete inventory of this video: "
+                    "introduce no person, crowd, performer, location or object "
+                    "they do not name."
+                )
+            subject = "ACTION OR DIALOGUE" if dialogue else "ACTION"
+            lines.append(f"NEW {subject} FOR THIS SECTION ONLY (verbatim):")
+            lines.append(current or "Continue naturally from the preceding section without introducing a new event.")
+            finish = (
+                " Complete this section's assigned dialogue before the section ends."
+                if dialogue
+                else ""
             )
-        subject = "ACTION OR DIALOGUE" if dialogue else "ACTION"
-        lines.append(f"NEW {subject} FOR THIS SECTION ONLY (verbatim):")
-        lines.append(current or "Continue naturally from the preceding section without introducing a new event.")
-        finish = (
-            " Complete this section's assigned dialogue before the section ends."
-            if dialogue
-            else ""
-        )
-        if opening:
-            if finish:
-                lines.append(finish.strip())
-        else:
-            lines.append(
-                "Continue directly from the predecessor frame. Do not replay, "
-                "restart or summarise any earlier action." + finish
+            if opening:
+                if finish:
+                    lines.append(finish.strip())
+            else:
+                lines.append(
+                    "Continue directly from the predecessor frame. Do not replay, "
+                    "restart or summarise any earlier action." + finish
+                )
+            prompts.append("\n".join(lines))
+            continue
+
+        # ── v2: prose ────────────────────────────────────────────────
+        #
+        # No headings, no ALL-CAPS labels, no bullets, no "(verbatim)"
+        # markers. Two reasons, and the second one is a client report.
+        #
+        # Lightricks instruct their own prompt enhancer to emit no headings,
+        # markdown or leading special characters, so a prompt built out of
+        # document furniture is out of distribution for this text encoder.
+        # The music-video module moved to prose on exactly that reasoning.
+        #
+        # And this runtime writes its audio from this same text, so a block
+        # that looks like a document gets READ ALOUD. A customer's 28 Aug
+        # image-to-video spoke "the same rules hold for the entire video" at
+        # 0:12 and "same subjects keep the same faces ... every frame" at
+        # 0:15 -- our own scaffolding, verbatim, in the delivered soundtrack.
+        # Prose describing a scene is much harder to mistake for a document
+        # to be read out than a labelled list is.
+        parts: list[str] = []
+        if not opening:
+            parts.append(
+                "This continues the same unbroken scene, the same subjects in "
+                "the same place as a moment ago, with the same faces, "
+                "clothing, colours and object counts."
             )
-        prompts.append("\n".join(lines))
+        if identity:
+            parts.append(identity.strip().rstrip(".") + ".")
+            parts.append("The scene contains only what this description names.")
+        beat = current or ("" if opening else "The action continues from where it was.")
+        if beat:
+            parts.append(beat.strip().rstrip(".") + ".")
+        if dialogue:
+            parts.append("Any spoken lines finish before the section ends.")
+        if not opening:
+            parts.append("The action carries on from the last frame, further along than it was.")
+        prompts.append(" ".join(part for part in parts if part))
 
     return prompts
 

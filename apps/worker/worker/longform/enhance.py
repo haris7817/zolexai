@@ -67,6 +67,10 @@ _NOT_NOUNS = frozenset(
 #: Prompts that are already structured are left entirely alone: the user (or
 #: the section planner) has taken control, and stacking two structures produces
 #: contradictions rather than adherence.
+#: The sentence every v2 block ends up containing. v2 emits prose with no
+#: heading, so this is what "already structured" looks like to a second pass.
+_V2_MARKER = "The same subjects keep the same faces"
+
 _ALREADY_STRUCTURED = re.compile(
     r"^\s*(persistent|section\s+\d+|continuity)\s*:", re.IGNORECASE | re.MULTILINE
 )
@@ -134,6 +138,13 @@ def structure_prompt(prompt: str, *, v2: bool = False) -> str:
     always shipped.
     """
     text = prompt.strip()
+    # v2's output is prose and carries no header, so the header regex below
+    # cannot recognise it on a second pass. Its own constancy sentence is the
+    # marker instead — present in every v2 block, and not a phrase a customer
+    # writes. Without this, structuring its own output appends a second copy
+    # of every rule.
+    if _V2_MARKER in text:
+        return text
     if not text or _ALREADY_STRUCTURED.search(text):
         return prompt
 
@@ -183,32 +194,52 @@ def structure_prompt(prompt: str, *, v2: bool = False) -> str:
     # the v1 header's parenthetical sat before the colon and matched neither,
     # so structure_prompt would restructure its own output if ever called
     # twice.
-    lines = [text, "", "CONTINUITY: these rules hold for the entire video."]
-    lines += [f"- {rule}" for rule in rules]
+    # Prose, not a labelled list. This block used to open "CONTINUITY: these
+    # rules hold for the entire video." above a set of "- " bullets, and on
+    # 28 Aug a customer's image-to-video SPOKE it: "the same rules hold for
+    # the entire video" at 0:12, "same subjects keep the same faces ... every
+    # frame" at 0:15. The runtime writes its audio from this same text, and a
+    # document-shaped block reads as something to be read out loud. It is
+    # also the wrong shape for the text encoder -- Lightricks instruct their
+    # own enhancer to emit no headings, markdown or leading special
+    # characters, which is why the music-video module is prose too.
+    #
+    # Every constraint below is unchanged in content. Only the furniture is
+    # gone, and the furniture is what the model was reciting.
+    # The user's own text closes with a full stop before anything is appended
+    # to it. Without one the constraint sentences fuse onto it -- "a person
+    # telling how to use a gun The same subjects keep..." -- which reads as
+    # one run-on to the encoder and leaves the section planner no sentence
+    # boundary to work from.
+    opening_text = text.rstrip()
+    if opening_text and opening_text[-1] not in ".!?":
+        opening_text += "."
+    sentences = [opening_text]
+    sentences += [rule.rstrip().rstrip(".") + "." for rule in rules]
     if _EXIT_WORDS.search(text):
         # Someone leaves. Identity constancy still holds for whoever is on
         # screen; presence and count assertions would argue with the user's
         # own story, so they are withheld.
-        lines.append(
-            "- The same subjects keep the same faces, clothing and colours "
+        sentences.append(
+            "The same subjects keep the same faces, clothing and colours "
             "in every frame."
         )
     else:
-        lines.append(
-            "- The same subjects keep the same faces, clothing, colours and "
+        sentences.append(
+            "The same subjects keep the same faces, clothing, colours and "
             "count in every frame."
         )
-        lines.append(
-            "- Every subject present at the start is still present at the end."
+        sentences.append(
+            "Every subject present at the start is still present at the end."
         )
     if _STATIC_CAMERA.search(text):
-        lines.append(
-            "- One continuous scene: the camera holds perfectly still in the "
-            "same environment from the first frame to the last."
+        sentences.append(
+            "It is one continuous scene and the camera holds perfectly still "
+            "in the same environment from the first frame to the last."
         )
     else:
-        lines.append(
-            "- One continuous scene: the camera keeps moving through the same "
-            "environment."
+        sentences.append(
+            "It is one continuous scene and the camera keeps moving through "
+            "the same environment."
         )
-    return "\n".join(lines)
+    return " ".join(sentences)

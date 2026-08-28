@@ -24,6 +24,18 @@ from tests.conftest import (
 from worker.adapters.ltx import LtxAdapter
 from worker.longform import plan_section_prompts, structure_prompt
 
+
+def v2_block(structured: str) -> str:
+    """Everything v2 appended to the user's own text.
+
+    v2 emits PROSE with no heading, so there is no "CONTINUITY" marker to
+    split on any more — the customer's own first sentence is the boundary.
+    The heading went on 28 Aug 2026, when a client's image-to-video was
+    delivered with "the same rules hold for the entire video" spoken over it:
+    this runtime writes its audio from the same text and read the block out.
+    """
+    return structured.split(". ", 1)[1] if ". " in structured else ""
+
 # ── structure_prompt: what it adds ───────────────────────────────────────
 
 
@@ -106,16 +118,18 @@ def test_v2_off_is_byte_identical_to_the_shipped_block() -> None:
         assert structure_prompt(prompt) == structure_prompt(prompt, v2=False)
 
 
-def test_v2_splits_the_presence_and_camera_clauses_into_separate_bullets() -> None:
+def test_v2_splits_the_presence_and_camera_clauses_into_separate_sentences() -> None:
     structured = structure_prompt("a quiet mountain lake at dawn", v2=True)
-    block = structured.split("CONTINUITY")[1]
+    block = v2_block(structured)
     assert "still present at the end" in block
     assert "keeps moving" in block
-    # And they are separate bullets, so one can hold while the other yields.
-    for line in block.splitlines():
+    # Separate SENTENCES, so one can hold while the other yields. They were
+    # separate bullets until 28 Aug 2026, when the bullets became prose —
+    # a client heard the bulleted block read aloud in a delivered video.
+    for sentence in block.split(". "):
         assert not (
-            "still present at the end" in line and "keeps moving" in line
-        ), "presence and camera must not share a bullet"
+            "still present at the end" in sentence and "keeps moving" in sentence
+        ), "presence and camera must not share a sentence"
 
 
 def test_v2_answers_a_static_camera_request_with_a_static_rule() -> None:
@@ -126,7 +140,7 @@ def test_v2_answers_a_static_camera_request_with_a_static_rule() -> None:
         "A woman stands at a window in a quiet room.",
         v2=True,
     )
-    added = structured.split("CONTINUITY")[1].lower()
+    added = v2_block(structured).lower()
     assert "keeps moving" not in added
     assert "holds perfectly still" in added
 
@@ -137,7 +151,7 @@ def test_v2_withholds_presence_assertions_when_the_user_says_someone_leaves() ->
     structured = structure_prompt(
         "A man walks out of the room and never comes back.", v2=True
     )
-    added = structured.split("CONTINUITY")[1].lower()
+    added = v2_block(structured).lower()
     assert "still present at the end" not in added
     assert "count in every frame" not in added
     # Identity constancy still holds for whoever is on screen.
@@ -146,7 +160,7 @@ def test_v2_withholds_presence_assertions_when_the_user_says_someone_leaves() ->
 
 def test_v2_keeps_presence_assertions_when_nobody_leaves() -> None:
     structured = structure_prompt("two cars racing through a desert", v2=True)
-    added = structured.split("CONTINUITY")[1].lower()
+    added = v2_block(structured).lower()
     assert "still present at the end" in added
     assert "count in every frame" in added
 
@@ -158,20 +172,15 @@ def test_v2_structuring_is_idempotent() -> None:
     assert structure_prompt(once, v2=True) == once
 
 
-def test_v2_bullets_reach_every_section_instead_of_one() -> None:
+def test_v2_continuity_reaches_every_section_instead_of_one() -> None:
     """The A5 misclassification: the internal colon in '- One continuous
     scene:' read as a dialogue turn and the rule reached exactly one section,
-    presented as something to perform."""
+    presented as something to perform. The colon is gone with the bullets."""
     structured = structure_prompt("a quiet mountain lake at dawn", v2=True)
     prompts = plan_section_prompts(structured, 3, total_seconds=90.0, v2=True)
     for prompt in prompts:
-        assert "One continuous scene" in prompt
+        assert "one continuous scene" in prompt
         assert "still present at the end" in prompt
-    for prompt in prompts:
-        head, _, tail = prompt.partition("NEW ACTION OR DIALOGUE")
-        assert "One continuous scene" not in tail, (
-            "a continuity rule must never be a section's assigned action"
-        )
 
 
 def test_v2_never_adds_negative_phrasing_either() -> None:
@@ -201,11 +210,14 @@ def test_v2_section_one_is_not_told_to_continue_from_a_predecessor() -> None:
     prompts = plan_section_prompts(_STORYBOARD, 3, total_seconds=120.0, v2=True)
     assert "predecessor" not in prompts[0]
     assert "established previously" not in prompts[0]
-    assert prompts[0].startswith("LONG-FORM VIDEO — SECTION 1 OF 3.")
-    # Later sections keep the continuation register in full.
+    assert not prompts[0].startswith("LONG-FORM"), (
+        "v2 sections are prose: the labelled header was being read aloud"
+    )
+    # Later sections keep the continuation register in full — now as prose,
+    # carrying the same two obligations the labels used to spell out.
     for prompt in prompts[1:]:
-        assert "Continue directly from the predecessor frame." in prompt
-        assert "established previously" in prompt
+        assert "This continues the same unbroken scene" in prompt
+        assert "carries on from the last frame" in prompt
 
 
 def test_v2_single_pass_requests_remain_byte_for_byte_unchanged() -> None:
