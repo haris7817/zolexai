@@ -303,6 +303,28 @@ class H3ComfyAdapter:
     # ── The run ──────────────────────────────────────────────────────────
 
     async def run(self, job: AdapterJob, on_progress: ProgressCallback) -> AdapterResult:
+        if not self.supports(job.workflow_id):
+            # `supports()` guides the resolver's quality-level fallback, but a
+            # workflow whose BASE runtime is this engine never consults it —
+            # and that is not hypothetical. Production carried
+            # `runtime: h3_comfy` for video-to-video on 28 Aug 2026, under a
+            # `runtime_by_quality` map, so withdrawing the workflow from this
+            # adapter would have changed nothing at all for Best.
+            #
+            # A misconfiguration must fail loudly rather than quietly ship the
+            # product this engine was withdrawn from. The customer-facing text
+            # says nothing about engines; the internal detail names the exact
+            # YAML key to fix.
+            raise AdapterError(
+                "This tool is temporarily unavailable.",
+                internal_detail=(
+                    f"h3_comfy does not serve '{job.workflow_id}' "
+                    f"(h3_comfy_video_to_video={settings.h3_comfy_video_to_video}); "
+                    "check this deployment's execution.runtime / runtime_by_quality"
+                ),
+                retriable=False,
+            )
+
         reporter = StageReporter(on_progress)
         await reporter.preparing("Setting up your video…")
 

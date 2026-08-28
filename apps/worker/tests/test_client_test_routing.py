@@ -159,3 +159,37 @@ def test_execution_by_quality_overlays_the_execution_block() -> None:
     assert best["v2v_engine"] == "transform"  # inherited, not dropped
     assert fast["v2v_reference_identity"] is False
     assert unset["v2v_reference_identity"] is False
+
+
+@needs_ffmpeg
+async def test_the_stills_engine_refuses_video_to_video_even_as_the_base_runtime(
+    tmp_path: Path,
+) -> None:
+    """`supports()` alone could not have fixed this, and production proved it.
+
+    The resolver's fallback compares a quality level against the BASE runtime,
+    so it never fires for a workflow whose base IS the withdrawn engine — and
+    on 28 Aug 2026 production carried exactly that: `runtime: h3_comfy` for
+    video-to-video, under a `runtime_by_quality` map. Withdrawing the workflow
+    would have changed nothing for Best. A misconfiguration has to fail
+    loudly, not quietly ship the product the engine was withdrawn from.
+    """
+    from worker.adapters.h3_comfy import H3ComfyAdapter
+
+    job = make_job(
+        tmp_path,
+        workflow_id="video-to-video",
+        execution={"runtime": "h3_comfy"},
+        parameters={"quality": "best"},
+    )
+
+    async def progress(status, progress_value, message, details=None) -> None:
+        pass
+
+    with pytest.raises(AdapterError) as raised:
+        await H3ComfyAdapter().run(job, progress)
+    assert "does not serve 'video-to-video'" in raised.value.internal_detail
+    assert "runtime_by_quality" in raised.value.internal_detail
+    assert raised.value.retriable is False
+    # The customer is never told which engine anything runs on.
+    assert "h3" not in raised.value.user_message.lower()
