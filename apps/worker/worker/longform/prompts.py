@@ -286,6 +286,6 @@ def _distribute_timed(
 # already imports h3_prompts, so the shared code cannot live here.
 from worker.longform.language import (  # noqa: E402
     SPOKEN_LANGUAGE_NAMES,
-    spoken_language_clause,
+    soundscape_clause,
     spoken_language_sentence,
 )

@@ -70,7 +70,7 @@ from worker.longform.h3_prompts import (
     plan_cameras,
     plan_from_prompt,
 )
-from worker.longform.language import spoken_language_clause
+from worker.longform.language import soundscape_clause
 from worker.longform.progress import GENERATE_FROM, GENERATE_TO, StageReporter
 from worker.media.ffmpeg import ffmpeg
 from worker.media.probe import probe_media
@@ -413,8 +413,8 @@ class H3ComfyAdapter:
                     segments,
                     total_seconds=nominal_seconds,
                     cameras=cameras,
-                    spoken_language=spoken_language_clause(
-                        job.parameters, job.execution
+                    spoken_language=soundscape_clause(
+                        job.prompt, job.parameters, job.execution
                     ),
                 ),
                 start=1,

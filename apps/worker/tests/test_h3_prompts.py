@@ -305,15 +305,15 @@ def test_every_segment_is_told_what_language_to_speak() -> None:
     language is worse than one that never stated it.
     """
     from worker.longform.h3_prompts import discipline_prompts, plan_from_prompt
-    from worker.longform.language import spoken_language_clause
+    from worker.longform.language import soundscape_clause
 
     plan = plan_from_prompt("a man in a grey coat talks to camera in a kitchen")
-    sentence = spoken_language_clause({}, {})
+    sentence = soundscape_clause("a man talks to camera", {}, {})
     prompts = discipline_prompts(plan, 3, total_seconds=30.0, spoken_language=sentence)
 
     assert len(prompts) == 3
     for prompt in prompts:
-        assert prompt.endswith("If anyone speaks or sings, they do so in English.")
+        assert prompt.endswith("in English, in natural conversational voices.")
 
 
 def test_no_language_sentence_leaves_the_segment_prompts_untouched() -> None:
@@ -324,4 +324,4 @@ def test_no_language_sentence_leaves_the_segment_prompts_untouched() -> None:
     with_none = discipline_prompts(plan, 2, total_seconds=20.0)
     explicit = discipline_prompts(plan, 2, total_seconds=20.0, spoken_language="")
     assert with_none == explicit
-    assert not any("speaks or sings" in prompt for prompt in with_none)
+    assert not any("conversational voices" in prompt for prompt in with_none)

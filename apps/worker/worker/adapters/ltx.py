@@ -137,7 +137,7 @@ from worker.longform import (
     render_chain,
     structure_prompt,
 )
-from worker.longform.language import spoken_language_clause
+from worker.longform.language import soundscape_clause
 from worker.longform.h3_prompts import parse_timed_sections
 from worker.longform.music_video import (
     ShotDirection,
@@ -1203,11 +1203,14 @@ class LtxAdapter:
             # unstated language means the model picks one. Client, 28 Aug 2026:
             # "everything I hit sound in images comes with a language that is
             # not english."
-            language = spoken_language_clause(
-                job.parameters, job.execution, getattr(director_plan, "language", "")
-            )
-            if language:
-                text = f"{text.rstrip()} {language}"
+            # Director mode owns its own soundtrack: its compiler appends a
+            # described-silence beat to any window its dialogue leaves
+            # uncovered, which is the measured fix for the same leak. Adding a
+            # second opinion here would contradict it.
+            if director_plan is None:
+                soundscape = soundscape_clause(job.prompt, job.parameters, job.execution)
+                if soundscape:
+                    text = f"{text.rstrip()} {soundscape}"
             return text
 
         def conditioning(step: ChainStep) -> list[ConditioningFrame]:
@@ -1344,11 +1347,10 @@ class LtxAdapter:
             # An extension generates its own audio too, so it needs the same
             # language sentence — and a continuation that switches language
             # halfway is worse than one that never had it.
-            language = spoken_language_clause(
-                job.parameters, job.execution, getattr(continuation_plan, "language", "")
-            )
-            if language:
-                text = f"{text.rstrip()} {language}"
+            if continuation_plan is None:
+                soundscape = soundscape_clause(job.prompt, job.parameters, job.execution)
+                if soundscape:
+                    text = f"{text.rstrip()} {soundscape}"
             return text
 
         await reporter.probing("Reading your video…")

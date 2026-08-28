@@ -29,7 +29,8 @@ from worker.longform.progress import (
     StageReporter,
     band_for,
 )
-from worker.longform.prompts import plan_section_prompts, spoken_language_sentence
+from worker.longform.language import soundscape_clause
+from worker.longform.prompts import plan_section_prompts
 from worker.longform.timing import plan_musical_boundaries
 
 __all__ = [
@@ -42,7 +43,7 @@ __all__ = [
     "plan_chain_segments",
     "plan_musical_boundaries",
     "plan_section_prompts",
-    "spoken_language_sentence",
+    "soundscape_clause",
     "render_chain",
     "structure_prompt",
 ]
