@@ -605,3 +605,44 @@ async def test_identity_keeps_the_sources_length_and_audio(
     assert info.duration_seconds == pytest.approx(2.0, abs=0.3)
     assert info.has_audio is True
     assert info.audio_stream_count == 1
+
+
+def test_a_caption_without_an_age_is_given_one() -> None:
+    """"Adult" is not an age, and the client said so.
+
+    The describer's measured production answer on 19 Aug was "Woman: adult,
+    dark hair, black leather jacket". A prompt with no age in it lets the
+    model cast from its own prior — a photogenic twenty-something — whatever
+    the photograph showed, which is the 28 Aug report: the result "dont
+    follow the age that I put as reference".
+    """
+    from worker.director.vision import _pin_age
+
+    assert _pin_age("Woman: adult, dark hair, black leather jacket") == (
+        "Woman: 35-year-old, dark hair, black leather jacket"
+    )
+    assert _pin_age("A middle-aged man with a short grey beard").startswith(
+        "A 50-year-old man"
+    )
+    assert "16-year-old" in _pin_age("A teenage boy in a blue tracksuit")
+
+
+def test_an_age_the_describer_supplied_is_never_overwritten() -> None:
+    """Its number beats the table's — the table exists only for the fallback."""
+    from worker.director.vision import _pin_age
+
+    caption = "A man of about 58 with grey hair and a beard, in a navy coat"
+    assert _pin_age(caption) == caption
+    assert _pin_age("") == ""
+
+
+def test_an_old_jacket_does_not_become_an_old_person() -> None:
+    """The one band that describes objects as often as people is absent.
+
+    Rewriting a jacket's age into the person's would be a worse caption than
+    the one it replaced, so a sentence with no usable band is left alone.
+    """
+    from worker.director.vision import _pin_age
+
+    caption = "A man with a gold chain and an old leather jacket"
+    assert _pin_age(caption) == caption

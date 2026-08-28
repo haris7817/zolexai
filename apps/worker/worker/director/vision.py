@@ -73,16 +73,75 @@ _IDENTITY_SYSTEM_PROMPT = """You describe the person in a photograph for a film 
 their exact double. State only what is VISIBLE. Never guess names, emotions,
 backstory or anything outside the frame.
 
-Answer with ONE sentence, nothing else: the person's age group, build, hair
-(colour, LENGTH, style), facial hair (always name a beard or moustache when
-one is visible), headwear if any, and clothing with exact colours.
+Answer with ONE sentence, nothing else, and BEGIN it with the person's
+apparent age stated as a number of years — "a man of about 55" — followed by
+whatever visibly carries that age (grey or greying hair, a receding hairline,
+lines around the eyes and mouth, weathered or youthful skin, a child's or
+teenager's proportions). Then give build, hair (colour, LENGTH, style),
+facial hair (always name a beard or moustache when one is visible), headwear
+if any, and clothing with exact colours.
+Never write "adult", "young adult", "middle-aged" or any other age BAND —
+those are the words that let a video model cast whoever it likes; commit to a
+number even when you are only approximately right.
 Ignore jewellery, chains, necklaces and other accessories entirely — a chain
 described near a face comes back rendered as braided hair. Never mention the
 photograph, the background or the setting."""
 
 _IDENTITY_USER_PROMPT = (
-    "Describe the person in this photograph in one concrete sentence."
+    "Describe the person in this photograph in one concrete sentence, "
+    "starting with their age in years."
 )
+
+#: Roughly where each vague age band sits, in years, longest phrase first so
+#: "young adult" is read before "young". Deliberately coarse: the point is to
+#: put SOME number in front of the model, because the measured failure is a
+#: prompt with no age in it at all, which the model answers with its own prior
+#: — a twenty-something — whatever the photograph actually showed.
+_BAND_YEARS: tuple[tuple[str, int], ...] = (
+    ("young adult", 25),
+    ("middle-aged", 50),
+    ("middle aged", 50),
+    ("teenaged", 16),
+    ("teenage", 16),
+    ("elderly", 72),
+    ("young", 25),
+    ("adult", 35),
+)
+#: "old" is deliberately absent. It is the one band that describes objects as
+#: often as people — "an old leather jacket" — and rewriting a jacket's age
+#: into the person's is a worse caption than the one it replaced. "elderly"
+#: covers the case that matters.
+
+_BAND_RES = tuple(
+    (re.compile(rf"\b{re.escape(band)}\b", re.IGNORECASE), years)
+    for band, years in _BAND_YEARS
+)
+
+
+def _pin_age(caption: str) -> str:
+    """A caption that names no age in years gets the best one available.
+
+    The describer is instructed to lead with a number and usually does. When
+    it falls back to a band ("an adult man in a grey coat"), the band is
+    translated once, here, rather than reaching a video model that reads
+    "adult" as "whoever I usually draw" — the reported failure where an older
+    reference photograph came back as a performer in their twenties.
+
+    A caption already carrying any digit is left exactly as written: the
+    describer's own number is better than this table's.
+    """
+    if not caption or any(char.isdigit() for char in caption):
+        return caption
+    for pattern, years in _BAND_RES:
+        if pattern.search(caption):
+            # Substituted as an ADJECTIVE, in the slot the band already
+            # occupied, because that is the one form that survives every
+            # sentence shape the describer produces: "a middle-aged man" reads
+            # back as "a 50-year-old man", and a bare "Woman: adult, dark
+            # hair" as "Woman: 35-year-old, dark hair".
+            return pattern.sub(f"{years}-year-old", caption, count=1)
+    return caption
+
 
 #: A prompt suffix, not a planning document. One sentence fits well inside
 #: this; a runaway description would dilute the user's own text.
@@ -120,12 +179,19 @@ async def reference_person_facts(image_path) -> str:
     Measured on the production box 19 Aug 2026: the on-box gemma-4-e2b-it
     checkpoint loads as an image-text model in ~4s and answered in ~1s —
     "Woman: adult, dark hair, black leather jacket" for exactly that photo.
+
+    That measured answer is also this function's known weakness and the reason
+    for `_pin_age`: "adult" is not an age, and a prompt that states no age
+    lets the model cast from its own prior. Client report, 28 Aug 2026 — "it
+    doesn't follow the age that I put as reference".
     """
-    caption = await _describe(
-        str(image_path),
-        system_prompt=_IDENTITY_SYSTEM_PROMPT,
-        user_prompt=_IDENTITY_USER_PROMPT,
-        max_chars=_MAX_IDENTITY_CHARS,
+    caption = _pin_age(
+        await _describe(
+            str(image_path),
+            system_prompt=_IDENTITY_SYSTEM_PROMPT,
+            user_prompt=_IDENTITY_USER_PROMPT,
+            max_chars=_MAX_IDENTITY_CHARS,
+        )
     )
     if caption:
         # The caption text itself, not just its length: when a render grows
