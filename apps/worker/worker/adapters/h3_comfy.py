@@ -70,6 +70,7 @@ from worker.longform.h3_prompts import (
     plan_cameras,
     plan_from_prompt,
 )
+from worker.longform.language import spoken_language_clause
 from worker.longform.progress import GENERATE_FROM, GENERATE_TO, StageReporter
 from worker.media.ffmpeg import ffmpeg
 from worker.media.probe import probe_media
@@ -400,10 +401,21 @@ class H3ComfyAdapter:
         # 28 Aug 2026). An H3 seam is a handoff, not a cut, so the shots come
         # from a plan that holds scale across the boundary.
         cameras = plan_cameras(segments) if segments > 1 else None
+        # This engine writes its own audio from these prompts, and said
+        # nothing about what language it should be in — the same silence LTX
+        # had, reported by the client on 28 Aug 2026 as sound coming back "in
+        # a language that is not english". Image to Video on Best routes here,
+        # which is precisely the case they were describing.
         prompts = dict(
             enumerate(
                 discipline_prompts(
-                    plan, segments, total_seconds=nominal_seconds, cameras=cameras
+                    plan,
+                    segments,
+                    total_seconds=nominal_seconds,
+                    cameras=cameras,
+                    spoken_language=spoken_language_clause(
+                        job.parameters, job.execution
+                    ),
                 ),
                 start=1,
             )

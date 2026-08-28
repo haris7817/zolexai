@@ -135,10 +135,9 @@ from worker.longform import (
     plan_musical_boundaries,
     plan_section_prompts,
     render_chain,
-    spoken_language_sentence,
     structure_prompt,
 )
-from worker.longform.prompts import SPOKEN_LANGUAGE_NAMES
+from worker.longform.language import spoken_language_clause
 from worker.longform.h3_prompts import parse_timed_sections
 from worker.longform.music_video import (
     ShotDirection,
@@ -1204,8 +1203,8 @@ class LtxAdapter:
             # unstated language means the model picks one. Client, 28 Aug 2026:
             # "everything I hit sound in images comes with a language that is
             # not english."
-            language = self._spoken_language_clause(
-                job, getattr(director_plan, "language", "")
+            language = spoken_language_clause(
+                job.parameters, job.execution, getattr(director_plan, "language", "")
             )
             if language:
                 text = f"{text.rstrip()} {language}"
@@ -1345,8 +1344,8 @@ class LtxAdapter:
             # An extension generates its own audio too, so it needs the same
             # language sentence — and a continuation that switches language
             # halfway is worse than one that never had it.
-            language = self._spoken_language_clause(
-                job, getattr(continuation_plan, "language", "")
+            language = spoken_language_clause(
+                job.parameters, job.execution, getattr(continuation_plan, "language", "")
             )
             if language:
                 text = f"{text.rstrip()} {language}"
@@ -2584,37 +2583,6 @@ class LtxAdapter:
                 internal_detail=f"LTX weights missing under {root}: {missing}",
                 retriable=False,
             )
-
-    @staticmethod
-    def _spoken_language_clause(job: AdapterJob, plan_language: str = "") -> str:
-        """The language sentence for this job, or "" when it does not apply.
-
-        Resolution, most specific first:
-
-          1. the customer's `dialogue_language`, when they named a real one;
-          2. a Director plan's own language, because its quoted dialogue is
-             already written in it and the sentence must not contradict the
-             words beside it;
-          3. `execution.spoken_language`, the deployment default.
-
-        `auto` at step 1 is not an answer, it is the absence of one, and it
-        falls through — an unstated language is the reported bug, not a
-        neutral default.
-
-        Skipped entirely when the customer turned sound off. The result is
-        muted after rendering either way, so the sentence would buy nothing
-        and it is not free: every word in the prompt moves the picture.
-        """
-        if str(job.parameters.get("sound", True)).strip().lower() in (
-            "false", "no", "off", "0",
-        ):
-            return ""
-        requested = str(job.parameters.get("dialogue_language") or "").strip().lower()
-        if requested in SPOKEN_LANGUAGE_NAMES:
-            return spoken_language_sentence(requested)
-        if str(plan_language or "").strip().lower() in SPOKEN_LANGUAGE_NAMES:
-            return spoken_language_sentence(plan_language)
-        return spoken_language_sentence(job.execution.get("spoken_language", "english"))
 
     def _requested_seconds(self, job: AdapterJob) -> float:
         """The requested length. NOT capped at the single-pass ceiling.

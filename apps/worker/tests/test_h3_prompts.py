@@ -290,3 +290,38 @@ def test_the_reported_prompt_no_longer_replays_its_own_action() -> None:
     assert "Telling about aliens" in first
     assert "telling about aliens" not in second.lower()
     assert "Donald Trump at the oval office" in second
+
+
+def test_every_segment_is_told_what_language_to_speak() -> None:
+    """This engine writes its own audio per segment, from these prompts.
+
+    Image to Video on Best routes here, which is exactly the case the client
+    described on 28 Aug 2026 — "everything i hit sound in images comes with a
+    language that is not english". The LTX fix shipped the same day did not
+    reach this path, because H3 builds its prompts here and never mentioned
+    language at all.
+
+    On EVERY segment, not just the first: a video whose second half switches
+    language is worse than one that never stated it.
+    """
+    from worker.longform.h3_prompts import discipline_prompts, plan_from_prompt
+    from worker.longform.language import spoken_language_clause
+
+    plan = plan_from_prompt("a man in a grey coat talks to camera in a kitchen")
+    sentence = spoken_language_clause({}, {})
+    prompts = discipline_prompts(plan, 3, total_seconds=30.0, spoken_language=sentence)
+
+    assert len(prompts) == 3
+    for prompt in prompts:
+        assert prompt.endswith("If anyone speaks or sings, they do so in English.")
+
+
+def test_no_language_sentence_leaves_the_segment_prompts_untouched() -> None:
+    """"" is a real answer — sound off, or a language nobody recognises."""
+    from worker.longform.h3_prompts import discipline_prompts, plan_from_prompt
+
+    plan = plan_from_prompt("a man in a grey coat talks to camera in a kitchen")
+    with_none = discipline_prompts(plan, 2, total_seconds=20.0)
+    explicit = discipline_prompts(plan, 2, total_seconds=20.0, spoken_language="")
+    assert with_none == explicit
+    assert not any("speaks or sings" in prompt for prompt in with_none)

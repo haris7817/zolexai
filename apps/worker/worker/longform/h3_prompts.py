@@ -367,8 +367,15 @@ def discipline_prompts(
     segments: int,
     total_seconds: float | None = None,
     cameras: list[str] | None = None,
+    spoken_language: str = "",
 ) -> list[str]:
-    """One prompt per segment, each self-sufficient about what persists."""
+    """One prompt per segment, each self-sufficient about what persists.
+
+    `spoken_language` is the sentence from `worker.longform.language`, or ""
+    to say nothing. This engine writes its own audio per segment from these
+    prompts, so the language belongs on EVERY one of them — a video whose
+    second half switches language is worse than one that never stated it.
+    """
     if segments < 1:
         raise ValueError("segments must be >= 1")
 
@@ -427,7 +434,7 @@ def discipline_prompts(
                 + f". {camera} {beat}{departure}"
             )
             handoff = _HANDOFF if segments > 1 else " End cleanly with the subject fully visible."
-            prompts.append(opening + handoff)
+            prompts.append(_with_language(opening + handoff, spoken_language))
             continue
 
         continuation = (
@@ -441,8 +448,12 @@ def discipline_prompts(
             )
         else:
             continuation += _HANDOFF
-        prompts.append(continuation)
+        prompts.append(_with_language(continuation, spoken_language))
     return prompts
+
+
+def _with_language(prompt: str, sentence: str) -> str:
+    return f"{prompt.rstrip()} {sentence}" if sentence else prompt
 
 
 def plan_from_prompt(prompt: str, *, reference_labels: tuple[str, ...] = ()) -> H3ScenePlan:
