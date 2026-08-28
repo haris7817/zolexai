@@ -1456,7 +1456,7 @@ async def test_generated_audio_is_told_what_language_to_speak(
 
     for argv in invocations(log):
         prompt = argv[argv.index("--prompt") + 1]
-        assert "The scene's own ambience is the whole soundtrack." in prompt
+        assert "The soundtrack is the sounds the scene itself makes." in prompt
 
 
 @needs_ffmpeg

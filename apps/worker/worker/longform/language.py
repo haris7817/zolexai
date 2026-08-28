@@ -137,7 +137,18 @@ def soundscape_clause(
     if str(parameters.get("sound", True)).strip().lower() in ("false", "no", "off", "0"):
         return ""
     if not implies_speech(prompt):
-        return "The scene's own ambience is the whole soundtrack."
+        # "The sounds the scene itself makes" and not "the scene's ambience",
+        # which is what this said first. Ambience MEANS room tone, and room
+        # tone is quiet by definition — the Director research measured its
+        # described-silence tail at -45 dBFS, inaudible on a phone. Asking a
+        # gun being raised for "ambience" gets a near-silent video, which the
+        # client reported the same evening as "video don't have the sound".
+        #
+        # This keeps the property that matters — the soundtrack has an owner,
+        # so the model stops reading the caption aloud to fill it — while
+        # pointing that owner at events rather than at the room: footsteps,
+        # traffic, a door, whatever the scene is actually doing.
+        return "The soundtrack is the sounds the scene itself makes."
     language = _resolve(parameters, execution, plan_language)
     if not language:
         return "Any talking is spoken aloud by the people on screen, in natural conversational voices."
