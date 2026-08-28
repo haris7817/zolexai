@@ -28,6 +28,7 @@ export function ResultActions({
   const { capabilities } = workflow;
   const output = primaryOutput(job);
   const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   /**
    * Downloads are a short-lived signed URL fetched on demand, not a link baked
@@ -38,9 +39,17 @@ export function ResultActions({
   const handleDownload = async () => {
     if (!output) return;
     setDownloading(true);
+    setDownloadError(null);
     try {
       const url = await fetchDownloadUrl(output.asset_id);
       window.location.assign(url);
+    } catch {
+      // A failed signing request used to be swallowed here: the button said
+      // "Preparing…", went back to "Download", and nothing happened — which is
+      // indistinguishable from a browser that blocked the navigation, and is
+      // what a customer reports as "I can't download anything" (28 Aug 2026).
+      // Whatever the cause, saying so beats a button that does nothing twice.
+      setDownloadError("That download could not be prepared. Please try again.");
     } finally {
       setDownloading(false);
     }
@@ -98,6 +107,15 @@ export function ResultActions({
           <ActionIcon name="copy" />
           Variation
         </Button>
+      ) : null}
+
+      {downloadError ? (
+        <p
+          role="alert"
+          className="text-zx-error w-full text-center text-[11.5px] font-semibold"
+        >
+          {downloadError}
+        </p>
       ) : null}
     </div>
   );
