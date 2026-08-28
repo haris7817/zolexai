@@ -83,6 +83,38 @@ _SHOTS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
+#: The same roles, reframed so the PERFORMER stays legible. Used for a track
+#: that is sung, where the shots above have a measured failure: intro, bridge
+#: and outro all reach for distance, and a music video whose opening section is
+#: "a wide establishing shot" of a rooftop puts the singer forty pixels tall.
+#:
+#: That costs twice. The viewer cannot see a face — on a workflow whose whole
+#: promise is a mouth moving with the vocal — and section 1's final frame is
+#: the IDENTITY ANCHOR every later section inherits, so an anchor with no
+#: legible face hands the next eight sections nothing to hold. Measured in the
+#: 27 Aug client-e2e pair: the same pipeline with a prompt that named its
+#: singer held one woman at one microphone for a minute, while a thin prompt
+#: drifted from a man in a purple suit to a woman in a pink one across a
+#: sequence of rooftop wides.
+#:
+#: Every move still ends somewhere, and each one ends ON the performer.
+_SUBJECT_HELD: dict[str, tuple[tuple[str, str], ...]] = {
+    "intro": (
+        ("a wide shot", "the camera pushes in until the performer fills the frame"),
+        ("a medium shot at eye level", "the camera holds while the performer moves within it"),
+        ("a low-angle shot", "the camera tilts upward until the performer stands over it"),
+    ),
+    "bridge": (
+        ("a side-on medium shot", "the camera tracks sideways and stops on the performer"),
+        ("an over-the-shoulder shot", "the camera drifts behind the performer and settles"),
+        ("a medium shot at eye level", "the camera circles around the performer and comes to rest facing them"),
+    ),
+    "outro": (
+        ("a medium shot", "the camera pulls back until the performer stands full in the frame"),
+        ("a close-up", "the camera settles on the performer's face and holds"),
+    ),
+}
+
 #: A section counts as sung when this much of it carries vocal.
 _SUNG_FRACTION = 0.35
 
@@ -166,12 +198,18 @@ def plan_shots(
     *,
     sung_fractions: list[float] | None = None,
     loudness: list[float] | None = None,
+    hold_subject: bool | None = None,
 ) -> list[ShotDirection]:
     """A shot per section: `sections` is [(start_seconds, duration), …].
 
     `sung_fractions` and `loudness` are parallel lists when the analysis is
     available. Without them the plan falls back to position alone — an
     opening, a middle, an ending — which still varies the picture.
+
+    `hold_subject` keeps the performer legible in the sections that would
+    otherwise reach for distance (see `_SUBJECT_HELD`). None derives it: a
+    track with a vocal anywhere in it holds its subject, an instrumental one
+    is free to go wide. Pass it explicitly to override that reading.
     """
     total = len(sections)
     if total == 0:
@@ -181,6 +219,12 @@ def plan_shots(
     levels = loudness or [1.0] * total
     ordered = sorted(levels)
     median = ordered[len(ordered) // 2] if ordered else 0.0
+    if hold_subject is None:
+        # Only ever True on evidence. Without vocal analysis `fractions` is all
+        # 1.0, which is the old behaviour's assumption too — but the roles it
+        # produces are then all verse/chorus, which never reach the distant
+        # framings anyway, so the derived value costs nothing there.
+        hold_subject = any(fraction >= _SUNG_FRACTION for fraction in fractions)
 
     shots: list[ShotDirection] = []
     used_framings: list[str] = []
@@ -193,6 +237,8 @@ def plan_shots(
             median,
         )
         options = _SHOTS[role]
+        if hold_subject and role in _SUBJECT_HELD:
+            options = _SUBJECT_HELD[role]
         # Rotate through the role's options AND refuse the previous framing,
         # because two identical framings across a cut is the monotony this
         # module exists to remove.

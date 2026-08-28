@@ -10,7 +10,23 @@ marketing_description: Pair audio with visual direction to produce full music vi
 
 prompt:
   required: true
-  placeholder: "Describe the visual direction…"
+  # The placeholder is doing real work here, not decoration. Two 60-second
+  # renders of the same track through the same pipeline on 27 Aug 2026 differ
+  # only in their prompt, and they are not close: the one naming its singer
+  # ("a woman with long curly dark hair in an orange satin shirt, at a vintage
+  # microphone") held one person, one wardrobe and one room for the full
+  # minute, while "a cinematic music video at sunset" drifted from a man in a
+  # purple suit on a rooftop to a woman in a pink one, filmed from far enough
+  # away that no face was ever legible.
+  #
+  # The worker now defends against the second case — it keeps the performer
+  # framed and restates who they are every section — but nothing downstream
+  # can recover a description the customer never gave. Asking for one at the
+  # point of typing is the cheapest fix available and the only one that
+  # addresses the cause.
+  placeholder: "Who is on screen, and where — e.g. a woman with long curly
+    dark hair in an orange satin shirt, singing at a vintage microphone in a
+    dim lounge"
   # See text-to-video.yaml — effectively unlimited, capped only because an
   # unbounded request body is a denial-of-service surface.
   max_length: 20000

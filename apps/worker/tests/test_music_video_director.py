@@ -149,3 +149,35 @@ def test_a_prompt_that_is_all_prohibitions_survives() -> None:
     """It is still the customer's prompt; an empty one would be worse."""
     text = "No text. No logos."
     assert strip_negations(text) == text
+
+
+def test_a_sung_track_never_frames_its_performer_at_a_distance() -> None:
+    """The 27 Aug thin-prompt failure, in one assertion.
+
+    A song that opens instrumentally drew `("a wide establishing shot", …)`
+    for section 1 deterministically, and bridges reached for a distant wide.
+    That is a music video whose singer is forty pixels tall — and section 1's
+    final frame is the identity anchor every later section inherits, so the
+    anchor carried no legible face either.
+    """
+    shots = plan_shots(
+        _windows(6), sung_fractions=[0.0, 0.9, 0.9, 0.05, 0.9, 0.0]
+    )
+    framings = [shot.framing for shot in shots]
+    assert not any("distant" in framing or "overhead" in framing for framing in framings)
+    # And every move still ends somewhere, on the performer.
+    assert all("performer" in shot.movement or "subject" in shot.movement
+               or "face" in shot.movement for shot in shots
+               if shot.role in ("intro", "bridge", "outro"))
+
+
+def test_an_instrumental_track_keeps_the_wide_vocabulary() -> None:
+    """No performer to hold, so distance is a legitimate choice again."""
+    shots = plan_shots(_windows(6), sung_fractions=[0.0] * 6)
+    assert any("distant" in shot.framing for shot in shots)
+
+
+def test_hold_subject_can_be_stated_rather_than_derived() -> None:
+    instrumental = [0.0] * 4
+    held = plan_shots(_windows(4), sung_fractions=instrumental, hold_subject=True)
+    assert not any("distant" in shot.framing for shot in held)
