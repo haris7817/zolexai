@@ -56,14 +56,20 @@ YAML
 }
 
 block_image_to_video() {
-  # No `runtime_by_quality`: Image to Video dropped its quality toggle on
-  # 28 Aug 2026 at the client's request, so no quality parameter is sent and
-  # the base runtime serves every job. `h3_max_seconds` went with it — it
-  # bounded a lattice nothing routes to any more.
+  # No `runtime_by_quality`: the quality toggle went on 28 Aug 2026 at the
+  # client's request, so no quality parameter is sent and the base runtime
+  # serves every job. That base is the engine Best used to reach — the other
+  # one's image path is distilled, with none of the guidance machinery that
+  # makes a render follow its prompt, and the client caught it the same hour.
+  #
+  # `h3_max_seconds: 30` is the offered ceiling; the YAML's duration ladder
+  # stops there to match. `h3_steps: 12` is the user-approved speed dial from
+  # 26 Aug — ~28% faster at the quality canvas, judged visually acceptable.
   cat <<'YAML'
-  runtime: ltx
+  runtime: h3_comfy
+  h3_max_seconds: 30
+  h3_steps: 12
   timeout_seconds: 5400
-  prompt_structuring_v2: true
 YAML
 }
 

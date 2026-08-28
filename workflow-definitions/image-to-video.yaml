@@ -25,22 +25,29 @@ inputs:
     max_size_mb: 25
 
 duration_mode: fixed
-# The same ladder Extend Video offers (client revision, 13 Aug 2026). Lengths
-# beyond one GPU pass are rendered as chained segments behind the scenes —
-# that is the backend's business, and the option list must not shrink because
-# of it. See apps/worker/worker/adapters/ltx.py, `_render_chain`.
-supported_durations: ["5s", "10s", "15s", "20s", "30s", "60s"]
+# 5-30s. The ladder lost 60s on 28 Aug 2026 when this workflow settled on one
+# engine: 60s exists in that engine's lattice but is proven only on its
+# video-reference path, and offering a length whose render is unmeasured is
+# how a customer waits an hour for a refusal. Lengths the lattice cannot hit
+# exactly (20s) render the next preset up and are trimmed to the promise.
+supported_durations: ["5s", "10s", "15s", "20s", "30s"]
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
-# NO quality toggle (client decision, 28 Aug 2026). Image to Video offered
-# Fast/Best; Best routed to the engine whose graph reads the customer's
-# picture as one still among several references, and the client asked for the
-# choice to go away rather than for the second engine to be explained. One
-# engine, one behaviour, the full duration ladder — Best's lattice was the
-# only reason 60s was withheld from anyone.
+# NO quality toggle (client decision, 28 Aug 2026), and the engine that stays
+# is the one Best used to reach.
 #
-# The deployment's `runtime_by_quality` for this workflow can go with it; an
-# absent quality falls back to plain `runtime` either way, so a stale mapping
-# is harmless rather than wrong.
+# The first cut of this removed the toggle and left the workflow on the other
+# engine, which was backwards. That engine's image path is the DISTILLED
+# entry point: no CFG, no spatio-temporal guidance, no negative prompt — none
+# of the machinery that makes a render follow its prompt. The client filed
+# the result within the hour: an image, a prompt reading "he points the gun
+# at the camera and looks gangsta", and a video where "the image is just
+# moving". 360 frames in 48 seconds, which is the giveaway — adherence costs
+# time and none was spent.
+#
+# They asked for the CHOICE to go away, not for the engine that was making
+# the good videos. So Image to Video is the engine whose I2V graph makes the
+# customer's picture the literal first frame and animates the prompt from
+# there, at every length, with nothing to select.
 supported_quality_levels: []
 
 settings:
