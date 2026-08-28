@@ -1346,3 +1346,86 @@ async def test_the_full_run_produces_a_verified_result(
     progress = [value for _, value, _ in reported]
     assert progress == sorted(progress)
     assert progress[-1] < 100
+
+
+@needs_ffmpeg
+async def test_image_to_video_restates_who_is_on_screen_in_every_later_section(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The uploaded still conditions pixels; the prompt never mentioned them.
+
+    Across a chain the text prior is unopposed, and what it produces is a
+    generic — younger — person. Reported 28 Aug 2026 as a reference image
+    whose AGE the result did not follow, which is exactly what a prompt with
+    no age in it does. Music video's answer applies unchanged here: caption
+    the picture once, and tell every later section who the person is.
+    """
+    from worker.media import extract_final_frame
+
+    clip = await make_clip(workspace / "seed.mp4", 1.0)
+    still = await extract_final_frame(clip, workspace / "still.png")
+
+    seen: list[Path] = []
+
+    async def fake_describer(image_path) -> str:
+        seen.append(Path(image_path))
+        return "a 61-year-old man with short grey hair and a white beard, in a navy coat"
+
+    monkeypatch.setattr("worker.adapters.ltx.reference_person_facts", fake_describer)
+    log = render_stub(
+        tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0, audio=True)
+    )
+
+    job = make_i2v_job(
+        workspace,
+        still,
+        parameters={"duration": "2s", "aspect_ratio": "16:9", "quality": "High"},
+        execution={"runtime": "ltx", "max_segment_seconds": 1},
+    )
+    await collect(job)
+
+    prompts = [argv[argv.index("--prompt") + 1] for argv in invocations(log)]
+    assert len(prompts) > 1, "this test needs a chained render to say anything"
+    assert seen == [still], "described once per video, and it is the UPLOAD it describes"
+    assert "61-year-old" not in prompts[0], (
+        "section 1 opens on the still itself — its pixels are the description"
+    )
+    for prompt in prompts[1:]:
+        assert "61-year-old man with short grey hair" in prompt
+
+
+@needs_ffmpeg
+async def test_image_to_video_identity_description_is_never_a_dependency(
+    workspace: Path, fake_models: Path, stub_repo: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"" is a real answer: no checkpoint, a text-only one, a timeout, garbage.
+
+    The prompt then reads exactly as it did before this existed, which is why
+    the behaviour needs no flag to be safe.
+    """
+    from worker.media import extract_final_frame
+
+    clip = await make_clip(workspace / "seed.mp4", 1.0)
+    still = await extract_final_frame(clip, workspace / "still.png")
+
+    async def silent(image_path) -> str:
+        return ""
+
+    monkeypatch.setattr("worker.adapters.ltx.reference_person_facts", silent)
+    log = render_stub(
+        tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0, audio=True)
+    )
+
+    job = make_i2v_job(
+        workspace,
+        still,
+        parameters={"duration": "2s", "aspect_ratio": "16:9", "quality": "High"},
+        execution={"runtime": "ltx", "max_segment_seconds": 1},
+    )
+    await collect(job)
+
+    for argv in invocations(log):
+        prompt = argv[argv.index("--prompt") + 1]
+        assert "The same person stays on screen" not in prompt

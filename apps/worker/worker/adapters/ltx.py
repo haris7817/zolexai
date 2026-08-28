@@ -1143,9 +1143,12 @@ class LtxAdapter:
                 ) from failure
 
         prompt_plan: list[str] | None = None
+        # None = not asked yet; "" = asked and the describer had no answer, so
+        # never ask again. One checkpoint load per video, not per section.
+        identity_facts: str | None = None
 
-        def prompt_for_step(step: ChainStep) -> str:
-            nonlocal prompt_plan
+        async def prompt_for_step(step: ChainStep) -> str:
+            nonlocal prompt_plan, identity_facts
             if prompt_plan is None:
                 if director_plan is not None:
                     prompt_plan = compile_section_prompts(
@@ -1163,7 +1166,38 @@ class LtxAdapter:
                         total_seconds=seconds,
                         v2=bool(job.execution.get("prompt_structuring_v2")),
                     )
-            return prompt_plan[step.index]
+            text = prompt_plan[step.index]
+
+            # WHO is in the picture, restated in words for every section after
+            # the first — the same fix music video needed, for the same
+            # reason. The uploaded still conditions pixels; the prompt text
+            # never mentions the person at all, so across chained sections the
+            # text prior quietly re-casts them. Reported by the client on
+            # 28 Aug 2026 as an uploaded reference whose AGE the result did not
+            # follow, which is precisely what a prompt with no age in it does.
+            #
+            # Every failure path here returns "" and the prompt reads exactly
+            # as it did before this existed: no checkpoint, a text-only
+            # checkpoint, a timeout, garbage output.
+            if (
+                still is not None
+                and step.index > 0
+                and job.execution.get("i2v_describe_identity", True)
+            ):
+                if identity_facts is None:
+                    identity_facts = await cancellable(
+                        job, reference_person_facts(still)
+                    )
+                    logger.info(
+                        "i2v_identity_facts",
+                        extra={"job_id": job.job_id, "facts": identity_facts},
+                    )
+                if identity_facts:
+                    text = (
+                        f"{text.rstrip().rstrip('.')}. The same person stays on "
+                        f"screen throughout: {identity_facts.rstrip('.')}."
+                    )
+            return text
 
         def conditioning(step: ChainStep) -> list[ConditioningFrame]:
             if step.is_first:
