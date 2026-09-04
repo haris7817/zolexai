@@ -88,7 +88,9 @@ class WorkflowRegistry:
         return self._public[workflow_id]
 
     def list_public(self) -> list[WorkflowPublic]:
-        return [self._public[wid] for wid in self._order]
+        return [
+            self._public[wid] for wid in self._order if not self._definitions[wid].hidden
+        ]
 
     def __contains__(self, workflow_id: object) -> bool:
         return workflow_id in self._definitions
@@ -122,6 +124,14 @@ class WorkflowRegistry:
         it claims, because nothing reaches the queue without passing here.
         """
         definition = self.get(workflow_id)
+        if definition.hidden:
+            # Offered to nobody: the same answer an unknown tool gets, so a
+            # client that guesses the id learns nothing it was not shown.
+            raise NotFound(
+                "That creation tool is not available.",
+                code=ErrorCode.UNSUPPORTED_WORKFLOW,
+                details={"workflow_id": workflow_id},
+            )
         problems: list[dict[str, Any]] = []
 
         cleaned_prompt = prompt.strip()
@@ -329,6 +339,7 @@ DISPLAY_ORDER: tuple[str, ...] = (
     "text-to-video",
     "image-to-video",
     "video-to-video",
+    "character-replacement",
     "extend-video",
     "music",
     "music-video",

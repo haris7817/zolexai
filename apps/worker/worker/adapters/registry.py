@@ -13,6 +13,7 @@ expensive to discover than a failed job.
 from __future__ import annotations
 
 from worker.adapters.base import AdapterError, GenerationAdapter
+from worker.adapters.character_replacement import CharacterReplacementAdapter
 from worker.adapters.h3_comfy import H3ComfyAdapter
 from worker.adapters.harness import HarnessAdapter
 from worker.adapters.ltx import LtxAdapter
@@ -48,6 +49,11 @@ _ADAPTERS: dict[str, GenerationAdapter] = {
     # CLI runtime `ltx` above stays the rollback for every workflow this
     # one takes over. See adapters/ltx_comfy.py.
     "ltx_comfy": LtxComfyAdapter(),
+    # Character Replacement (Sep 2026): the client's third graph, one workflow,
+    # its own adapter — deliberately apart from Video to Video, which stays on
+    # the CLI runtime untouched. Shares only the ComfyUI service object with
+    # ltx_comfy. See adapters/character_replacement.py.
+    "character_replacement": CharacterReplacementAdapter(),
 }
 
 

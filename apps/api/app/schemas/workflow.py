@@ -124,7 +124,7 @@ class UiSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    icon: Literal["sparkles", "image", "repeat", "extend", "music", "clapper"]
+    icon: Literal["sparkles", "image", "repeat", "extend", "music", "clapper", "swap"]
     thumb: str
     """CSS gradient used as a placeholder surface for cards and thumbnails."""
 
@@ -202,6 +202,17 @@ class WorkflowDefinition(BaseModel):
     settings: SettingsSpec = Field(default_factory=SettingsSpec)
     capabilities: CapabilitiesSpec = Field(default_factory=CapabilitiesSpec)
     ui: UiSpec
+
+    hidden: bool = False
+    """Ships in the catalogue files but is not offered.
+
+    A hidden workflow is loaded and validated like any other (so the API,
+    the worker and the web app all know it), is omitted from the public
+    list, and refuses generation requests as if it did not exist. It stays
+    readable by id so history entries keep their name. The deployment
+    overlay flips it — Character Replacement ships hidden until the GPU
+    validation clears it (Sep 2026).
+    """
 
     execution: ExecutionSpec = Field(default_factory=ExecutionSpec)
 

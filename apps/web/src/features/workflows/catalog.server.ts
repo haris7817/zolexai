@@ -72,6 +72,9 @@ interface RawWorkflow {
   settings?: Record<string, boolean>;
   capabilities?: Record<string, boolean>;
   ui: { icon: string; thumb: string };
+  // Shipped but not offered (Character Replacement until the GPU validation
+  // clears it): loaded for its name, omitted from every list.
+  hidden?: boolean;
   // `execution` is intentionally absent from this interface as well as from the
   // projection: it must not be reachable from typed code on this side.
 }
@@ -81,6 +84,7 @@ const DISPLAY_ORDER = [
   "text-to-video",
   "image-to-video",
   "video-to-video",
+  "character-replacement",
   "extend-video",
   "music",
   "music-video",
@@ -160,18 +164,19 @@ export async function loadWorkflowCatalog(): Promise<Workflow[]> {
       if (raw.id !== file.replace(/\.yaml$/, "")) {
         throw new Error(`${file}: workflow id '${raw.id}' does not match the filename`);
       }
-      return toPublicWorkflow(raw);
+      return raw.hidden ? null : toPublicWorkflow(raw);
     }),
   );
 
-  parsed.sort((a, b) => {
+  const visible = parsed.filter((workflow): workflow is Workflow => workflow !== null);
+  visible.sort((a, b) => {
     const ai = DISPLAY_ORDER.indexOf(a.id);
     const bi = DISPLAY_ORDER.indexOf(b.id);
     return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
   });
 
-  cached = parsed;
-  return parsed;
+  cached = visible;
+  return visible;
 }
 
 export async function loadWorkflow(id: string): Promise<Workflow | undefined> {

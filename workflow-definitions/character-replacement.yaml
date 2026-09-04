@@ -1,0 +1,97 @@
+id: character-replacement
+version: "1"
+name: Character Replacement
+category: video
+output_type: video
+
+description: Put a new character into an existing performance
+short_description: New character, same motion
+marketing_description: Swap the person in a video for the character in a photo — same moves, same timing.
+
+# The seventh workflow (client change request, final milestone, 5 Sep 2026).
+# A separate module from Video to Video: that tool restyles footage; this one
+# regenerates the performance with the character from a photo. Product
+# behaviour matches the client's delivered sample exactly — the photo
+# provides the new character AND the setting, the video provides motion,
+# camera and timing. No background preservation in this milestone.
+
+prompt:
+  # Optional: the pack's own lead sentence drives the graph; a description of
+  # the new character (as in the client's sample) helps hold their identity.
+  required: false
+  placeholder: "Optional: describe the new character — e.g. a man with short black curls, a trimmed beard and a charcoal suit"
+  max_length: 20000
+
+inputs:
+  - role: source_video
+    kind: video
+    required: true
+    label: SOURCE VIDEO
+    drop_hint: the video to work from
+    help: Up to 20 seconds are used. The result follows this video's motion, camera and timing.
+    accept: ["video/mp4", "video/quicktime", "video/webm"]
+    max_size_mb: 512
+  - role: reference_image
+    kind: image
+    required: true
+    label: NEW CHARACTER
+    drop_hint: a picture of the new character
+    help: The person and the setting in this picture become the video.
+    accept: ["image/jpeg", "image/png", "image/webp"]
+    max_size_mb: 25
+
+# The result follows the source video, so there is no length to choose and
+# the API rejects a supplied duration.
+duration_mode: source
+supported_durations: []
+# The canvas follows the source's orientation; nothing to choose.
+supported_aspect_ratios: []
+supported_quality_levels: []
+
+settings:
+  quality: false
+  sound: false
+  motion_strength: false
+  prompt_adherence: false
+  seed: true
+  prompt_modes: false
+
+capabilities:
+  download: true
+  extend: false
+  reuse_settings: true
+  variation: true
+
+ui:
+  icon: swap
+  thumb: "linear-gradient(140deg, #2E3A12, #12190A)"
+
+# Hidden from the catalogue and refused at creation until the GPU validation
+# clears it. The file ships so the API, the worker and the web app all know
+# the tool; the deployment overlay flips this line (deploy/vps-local.sh).
+hidden: true
+
+execution:
+  # PRIVATE — stripped from every public API response.
+  #
+  # The committed value is the mock; the deployment overlay writes
+  # `character_replacement` — the client's LTX 2.5 Character Replacement
+  # graph through the worker's separate adapter.
+  runtime: mock
+
+  timeout_seconds: 5400
+
+  # ── Optional, per deployment ──────────────────────────────────────────
+  #
+  # max_seconds: 20         — the longest window of the source one pass
+  #                           follows (the pack's note lists 5/10/20).
+  # negative_prompt: "…"    — overrides the house negative prompt (default:
+  #                           derived from the client's own graph).
+
+  # M1 runs the mock runtime, which emits a placeholder image rather than
+  # rendered media. `output_type` above stays the product truth; these two lines
+  # describe what the current runtime actually writes, and the API signs the
+  # worker's upload for exactly this type. Remove both when M2 wires up a real
+  # provider.
+  output_content_type: image/png
+  output_kind: image
