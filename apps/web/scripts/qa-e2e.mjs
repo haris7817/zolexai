@@ -167,9 +167,11 @@ try {
   const extendDurations = await page
     .locator('[role="group"][aria-label="Duration"] button')
     .allInnerTexts();
+  // The final-milestone ladder (client decision, 5 Sep 2026): four steps,
+  // each one continuation pass; longer videos are made by extending again.
   check(
-    "Extend offers 5/10/15/30/60 (CR-008)",
-    JSON.stringify(extendDurations) === JSON.stringify(["5s", "10s", "15s", "30s", "60s"]),
+    "Extend offers 5/10/15/30",
+    JSON.stringify(extendDurations) === JSON.stringify(["5s", "10s", "15s", "30s"]),
     extendDurations.join("/"),
   );
 
