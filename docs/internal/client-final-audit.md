@@ -574,10 +574,13 @@ Every phase must be reversible by configuration, then by git.
    new engine behind it.
 3. **Canvas for First/Last Frame:** picture decides the aspect (current) or
    the selected aspect ratio decides and the still is resized (the pack).
-4. **Character Replacement input:** the pack's sample proves a plain
-   reference photo works (§7.6). Recommendation: reference photo required,
-   edited first frame as an optional advanced input. Open sub-question:
-   must the source background survive? The sample replaces it.
+4. **Character Replacement input — DECIDED 5 Sep 2026.** Client: "use
+   the same as in provided." The module behaves exactly like the pack's
+   sample: a plain reference photo is the input; the photo's person AND
+   environment replace the source's; motion, camera, framing and timing
+   come from the source video. No first-frame compositing step is built
+   for this milestone; candidates (1)–(3) in §7.6 are a later option only
+   if a customer asks for the original background back.
 5. **Release branch:** `dual-engine-benchmark-prep` is what production
    pulls; confirm it, or merge to `main` first.
 6. **LoRA policy:** ship community LoRAs only with a verified licence, or
