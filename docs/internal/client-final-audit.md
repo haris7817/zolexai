@@ -567,6 +567,17 @@ Every phase must be reversible by configuration, then by git.
 
 ## 10. Decisions needed from the client before the phases start
 
+**Standing decision, 5 Sep 2026 — "for all the modules that are in the
+zip file we use same as it is zip."** The three graphs are used as shipped:
+same models, same LoRAs and strengths, same sampler and sigma schedules,
+same canvas logic. The worker edits only what a job must supply (prompt,
+negative, seconds, aspect selection, seed, input files, output path), the
+same sanctioned-edit discipline the H3 compiler follows. This closes Q3
+(the graph's `ResolutionSelector` decides the canvas; the still is resized
+to it) and Q6 (the LoRAs ship as wired; licence findings are reported, not
+acted on unilaterally — see R1). Any deviation is a measured experiment
+behind an execution key, never a default.
+
 1. **Duration ladder.** Brief says 5/10/15/30 for T2V and I2V. Today both
    offer 20 s and 60 s. Confirm both are dropped (60 s becomes Extend).
 2. **Extend Video** keeps its 5 s…5 m ladder and stays a separate tool, or
