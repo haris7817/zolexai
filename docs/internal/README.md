@@ -11,6 +11,7 @@ response. These notes are where the other half lives.
 
 | File | Subject |
 |---|---|
+| [`client-final-audit.md`](./client-final-audit.md) | 🟢 **Start here for the final client milestone.** Phase 0 audit (5 Sep 2026): what production runs today, the H3 footprint to flag, the client's LTX 2.5 ComfyUI pack decoded, the per-phase plan, risks and rollback. |
 | [`ltx-2.5-licensing-review.md`](./ltx-2.5-licensing-review.md) | Licence and commercial-use review for the candidate video model |
 | [`production-runbook.md`](./production-runbook.md) | Production server layout, deploy/rollback procedure, go-live checks (M1 stack) |
 | [`gpu-worker-runbook.md`](./gpu-worker-runbook.md) | The GPU node, its restricted tunnel to the production API, GPU routing and rollback (M2). Covers the video and music runtimes and process supervision. |
