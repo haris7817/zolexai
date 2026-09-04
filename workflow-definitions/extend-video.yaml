@@ -21,31 +21,23 @@ inputs:
     required: true
     label: SOURCE VIDEO
     drop_hint: a video
-    # Far looser than the 5-minute rule on Music Video and Video to Video, and
-    # deliberately so: those render the whole source, an extension renders only
-    # the continuation. The source is kept as-is and continued from its final
-    # frame, so its length prices as encoding, not generation. Worker-side
-    # ceiling is LTX_MAX_EXTEND_SOURCE_SECONDS; keep the two in step.
     help: Up to 30 minutes. Your video is kept as-is and continued from its final frame.
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
 
-# The five outcomes of CR-008, plus the long end (client ask #1, 17 Aug 2026:
-# "make video extension unlimited"). Unlimited-the-noun is the pair of facts
-# that every result can itself be extended and that the source ceiling above is
-# far past anything a chain of extensions produces in practice; this list is
-# just how far ONE step can go. Longer entries are produced by chained
-# generation behind the scenes — that is the backend's business, and the option
-# list must not shrink because of it.
 duration_mode: fixed
-supported_durations: ["5s", "10s", "15s", "30s", "60s", "2m", "5m"]
+# The client's extension ladder (final milestone, 5 Sep 2026): each step is
+# ONE continuation pass conditioned on the source's final frame, and any
+# result can itself be extended again. That is how long videos are made —
+# chained continuation, never a single generation: 30 s + 30 s + 30 s. The
+# old long end (60s/2m/5m) left with the engine change; a customer who
+# wants two more minutes presses Extend four times.
+supported_durations: ["5s", "10s", "15s", "30s"]
 supported_aspect_ratios: ["16:9", "9:16"]
 supported_quality_levels: []
 
 settings:
   quality: false
-  # The motion of an extension is inherited from the source clip, so exposing a
-  # motion-strength control here would be a slider that changes nothing.
   motion_strength: false
   prompt_adherence: false
   seed: false
@@ -54,8 +46,6 @@ capabilities:
   download: true
   extend: true
   reuse_settings: true
-  # A "variation" of an extension is just another extension of the same source —
-  # the Extend action already covers it.
   variation: false
 
 ui:
@@ -64,31 +54,24 @@ ui:
 
 execution:
   # PRIVATE — stripped from every public API response.
+  #
+  # The committed value is the mock; the deployment overlay writes the real
+  # runtime: `ltx` (the CLI pipelines, production until the GPU validates the
+  # pack) or `ltx_comfy` (the client's First/Last Frame graph driven by the
+  # extension engine, apps/worker/worker/longform/continuation.py).
   runtime: mock
 
-  # The language of any speech the model generates — see text-to-video.yaml
-  # for the full note. A customer's `dialogue_language` and a Director plan's
-  # own language both win over this.
+  # The language of any speech the model generates — see text-to-video.yaml.
   spoken_language: english
 
-  # Deterministic prompt structuring — see text-to-video.yaml for the full
-  # note and apps/worker/worker/longform/enhance.py for the rules.
+  # Deterministic prompt structuring — see text-to-video.yaml.
   prompt_structuring: true
 
-  # ── Revised continuity block + Director camera continuity (OFF) ──
-  #
-  # prompt_structuring_v2: true
-  # director_camera_continuity: true
-  #
-  # Same switches as text-to-video.yaml (see the full notes there). The
-  # continuity one applies to standard extensions; the camera one to
-  # Director-lineage continuations. Both change only prompt/caption text and
-  # are byte-identical to shipped behaviour while off.
+  # One continuation pass may be up to 30 s; the whole ladder is one pass.
+  max_segment_seconds: 30
 
-  # A five-minute continuation is the same order of work as Music Video's
-  # longest job (same chained passes, same assembly), and a long source adds
-  # re-encoding time on top. The default 30-minute budget would kill exactly
-  # the jobs the 2m/5m options above exist to allow.
+  # The source is re-encoded once and a continuation rendered; 90 minutes
+  # covers a long source plus a 30 s pass with margin.
   timeout_seconds: 7200
 
   # M1 runs the mock runtime, which emits a placeholder image rather than

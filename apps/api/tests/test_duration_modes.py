@@ -26,17 +26,16 @@ from app.services.workflow_registry import WorkflowRegistryError, load_registry
 # ── The catalogue serves the modes the client asked for ──────────────────
 
 
-async def test_extension_offers_the_requested_ladder_up_to_five_minutes(
+async def test_extension_offers_the_final_four_steps(
     client: AsyncClient,
 ) -> None:
-    """CR-008's five values, plus the long end added for client ask #1
-    (17 Aug 2026, "make video extension unlimited"): a single step now goes to
-    five minutes, and any result can itself be extended again."""
+    """Client decision, 5 Sep 2026: an extension step is one continuation
+    pass of 5/10/15/30 s, and any result can itself be extended again — that
+    chain is how long videos are made, never a single generation. The 60s/2m/5m
+    long end (17 Aug) left with the engine change."""
     workflow = (await client.get("/api/v1/workflows/extend-video")).json()
     assert workflow["duration_mode"] == "fixed"
-    assert workflow["supported_durations"] == [
-        "5s", "10s", "15s", "30s", "60s", "2m", "5m",
-    ]
+    assert workflow["supported_durations"] == ["5s", "10s", "15s", "30s"]
 
 
 async def test_first_last_frame_video_offers_the_final_four_lengths(
@@ -90,18 +89,18 @@ async def test_sixty_seconds_left_the_first_last_frame_ladder(client: AsyncClien
     assert fields["duration"]["allowed"] == ["5s", "10s", "15s", "30s"]
 
 
-async def test_a_five_minute_extension_duration_passes_validation(
+async def test_a_thirty_second_extension_duration_passes_validation(
     client: AsyncClient,
 ) -> None:
-    """Same proof shape as the 60s test above, for the extension ladder's new
-    long end: the nonexistent source is complained about, the duration is not,
-    so "5m" cleared validation."""
+    """Same proof shape as the 30s test above, for the extension ladder's
+    top step: the nonexistent source is complained about, the duration is
+    not, so "30s" cleared validation."""
     response = await client.post(
         "/api/v1/generations",
         json={
             "workflow_id": "extend-video",
             "prompt": "the chase continues through the old town",
-            "parameters": {"duration": "5m", "aspect_ratio": "16:9"},
+            "parameters": {"duration": "30s", "aspect_ratio": "16:9"},
             "inputs": {"source_video": "00000000-0000-0000-0000-000000000000"},
         },
     )

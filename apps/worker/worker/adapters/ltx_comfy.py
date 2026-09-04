@@ -62,8 +62,17 @@ from worker.comfy.ltx_prompts import negative_for
 from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.longform import GENERATE_FROM, GENERATE_TO, StageReporter, structure_prompt
+from worker.longform.chain import ChainStep
+from worker.longform.continuation import continue_video
 from worker.longform.language import soundscape_clause
-from worker.media import FfmpegError, MediaInfo, OutputExpectation, ffmpeg, verify_output
+from worker.media import (
+    FfmpegError,
+    MediaInfo,
+    OutputExpectation,
+    ffmpeg,
+    probe_media,
+    verify_output,
+)
 from worker.providers.ltx_comfy import LtxComfyService
 
 logger = get_logger(__name__)
@@ -92,7 +101,7 @@ class LtxComfyAdapter:
     #: Grows per phase: Text to Video (Phase 1), First/Last Frame (Phase 2),
     #: Extend Video (Phase 4). Video to Video is never here — it stays on
     #: the CLI runtime untouched.
-    _SUPPORTED = frozenset({"text-to-video", "image-to-video"})
+    _SUPPORTED = frozenset({"text-to-video", "image-to-video", "extend-video"})
 
     def __init__(self, service: LtxComfyService | None = None) -> None:
         self._service = service
@@ -121,6 +130,8 @@ class LtxComfyAdapter:
         await reporter.preparing("Setting up your video…")
         # Another engine's ComfyUI may hold the card; this one's stays warm.
         await evict_comfy_vram(exclude=settings.ltx_comfy_base_url)
+        if job.workflow_id == "extend-video":
+            return await self._run_extension(job, reporter)
         return await self._run_generation(job, reporter)
 
     # ── text-to-video / image-to-video ───────────────────────────────────
@@ -161,6 +172,100 @@ class LtxComfyAdapter:
         output = job.workspace / "output.mp4"
         info = await self.render_pass(job, spec, output, reporter)
         return await self.deliver(job, output, info, reporter)
+
+    # ── extend-video ─────────────────────────────────────────────────────
+
+    async def _run_extension(self, job: AdapterJob, reporter: StageReporter) -> AdapterResult:
+        """The customer's clip plus 5/10/15/30 s of chained continuation.
+
+        The extension engine (`worker/longform/continuation.py`) owns the
+        chain: it takes the source's final frame, drives `render_pass` once
+        per section with the previous part's last picture as the first-frame
+        still, drops the overlap frame at every seam, and stitches the
+        source in front. Each section is one submission of the client's
+        First/Last Frame graph with the first frame only.
+        """
+        source = job.input_for("source_video")
+        if source is None:
+            raise AdapterError(
+                "Please add the video to continue.",
+                internal_detail="extend-video without source_video",
+                retriable=False,
+            )
+        staged = source.require_path()
+        seconds = self._requested_seconds(job)
+        per_pass = self.per_pass_seconds(job)
+        try:
+            info = await probe_media(staged)
+        except FfmpegError as exc:
+            raise AdapterError(
+                "That video could not be read. Please try another.",
+                internal_detail=f"source probe failed: {exc}",
+                retriable=False,
+            ) from exc
+        aspect_label = await self._aspect_label_for_source(info)
+        positive = self.positive_prompt(job)
+        negative = negative_for(job.workflow_id, job.execution)
+        seed = self.seed_base(job)
+
+        async def render_pass(step: ChainStep, frame: Path | None) -> MediaInfo:
+            if frame is None:
+                raise AdapterError(
+                    "This generation could not be completed. Please try again.",
+                    internal_detail=f"continuation pass {step.index} has no conditioning frame",
+                    retriable=False,
+                )
+            self._require_lattice(step.seconds)
+            first = await self.upload_still(job, frame, f"continue{step.index:02d}")
+            spec = PassSpec(
+                seconds=step.seconds,
+                positive=positive,
+                negative=negative,
+                aspect_label=aspect_label,
+                seed_base=seed + step.index,
+                first_image=first,
+                last_image=None,
+                band=step.band,
+                section=step.section_progress,
+            )
+            return await self.render_pass(job, spec, step.output, reporter)
+
+        output, _metadata = await continue_video(
+            job,
+            source=staged,
+            seconds=seconds,
+            per_pass_seconds=per_pass,
+            fps=float(settings.ltx_comfy_frame_rate),
+            render_pass=render_pass,
+            reporter=reporter,
+        )
+        result_info = await probe_media(output)
+        return await self.deliver(job, output, result_info, reporter)
+
+    async def _aspect_label_for_source(self, info: MediaInfo) -> str:
+        """The product ratio closest to the source's own frame.
+
+        The graph renders on its own canvas; the engine then fits every part
+        to the source's dimensions, so the closest ratio is what keeps that
+        fit a slight crop rather than a heavy one.
+        """
+        if info.width and info.height:
+            actual = info.width / info.height
+            ratio = min(
+                ("16:9", "9:16", "1:1"),
+                key=lambda r: abs(actual - (lambda a, b: a / b)(*map(int, r.split(":")))),
+            )
+        else:
+            ratio = "16:9"
+        options = await self.service().aspect_options()
+        try:
+            return aspect_label_for(ratio, options)
+        except GraphError as exc:
+            raise AdapterError(
+                "This tool is temporarily unavailable.",
+                internal_detail=str(exc),
+                retriable=False,
+            ) from exc
 
     # ── One graph submission ─────────────────────────────────────────────
 
