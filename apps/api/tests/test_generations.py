@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from httpx import AsyncClient
 
 
@@ -75,12 +76,12 @@ async def test_rejects_unsupported_duration_and_lists_the_valid_ones(
     assert fields["duration"]["allowed"] == ["5s", "10s", "15s", "20s", "30s", "60s"]
 
 
-async def test_accepts_director_mode_on_text_to_video(
+async def test_rejects_director_mode_on_text_to_video(
     client: AsyncClient, text_to_video_request: dict
 ) -> None:
-    """Text to Video declares `settings.prompt_modes`, so the director mode and
-    its language are stored with the job exactly as sent — the worker reads
-    them from there."""
+    """Text to Video no longer declares `settings.prompt_modes` (client
+    decision, 5 Sep 2026): the Director planner stays in the repository,
+    unrouted, and a request naming it is rejected on the field."""
     request = {
         **text_to_video_request,
         "parameters": {
@@ -90,18 +91,15 @@ async def test_accepts_director_mode_on_text_to_video(
         },
     }
     response = await client.post("/api/v1/generations", json=request)
-    assert response.status_code == 202
-
-    job = (await client.get(f"/api/v1/generations/{response.json()['job_id']}")).json()
-    assert job["parameters"]["prompt_mode"] == "director"
-    assert job["parameters"]["dialogue_language"] == "spanish"
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert "prompt_mode" in fields
 
 
-async def test_accepts_director_mode_on_image_to_video(client: AsyncClient) -> None:
-    """Image to Video declares `settings.prompt_modes` too (source-anchored
-    Director). With the mode and language supplied, the ONLY failing field is
-    the fabricated asset — which is the registry saying yes to everything it
-    judges."""
+async def test_rejects_director_mode_on_image_to_video(client: AsyncClient) -> None:
+    """Image to Video does not declare `settings.prompt_modes` (client
+    decision, 28 Aug 2026 — "animate my photo" has nothing to decide), so the
+    mode and the language are both reported, alongside the fabricated asset."""
     response = await client.post(
         "/api/v1/generations",
         json={
@@ -118,7 +116,8 @@ async def test_accepts_director_mode_on_image_to_video(client: AsyncClient) -> N
     )
     assert response.status_code == 422
     fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
-    assert fields == {"inputs.source_image"}
+    # Parameter problems are reported before inputs are looked up.
+    assert fields == {"prompt_mode", "dialogue_language"}
 
 
 async def test_rejects_prompt_mode_on_a_workflow_without_the_control(
@@ -161,6 +160,7 @@ async def test_rejects_a_dialogue_language_outside_director_mode(
     assert "dialogue_language" in fields
 
 
+@pytest.mark.skip(reason="no workflow declares prompt modes since 5 Sep 2026; kept for rollback")
 async def test_rejects_an_unknown_dialogue_language_and_lists_the_valid_ones(
     client: AsyncClient, text_to_video_request: dict
 ) -> None:

@@ -17,9 +17,18 @@ NOTHING added — no lineage key, no injected input, byte-identical behaviour.
 
 from __future__ import annotations
 
+import pytest
 from httpx import AsyncClient
 
 from tests.test_worker_protocol import claim, register
+
+#: Director mode left Image to Video on 28 Aug 2026 and Text to Video on
+#: 5 Sep 2026 (client decisions), so no public request can create the
+#: Director ancestor this chain starts from. The lineage machinery stays in
+#: the API and the worker for rollback; the proof waits with it.
+pytestmark = pytest.mark.skip(
+    reason="Director mode is unrouted since 5 Sep 2026; lineage code kept for rollback"
+)
 
 
 async def _complete(

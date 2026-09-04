@@ -33,6 +33,10 @@ from worker.providers import (
     structural_winners,
 )
 
+#: H3 is hidden by default (client decision, 5 Sep 2026); this module proves the
+#: kept code still works when it is switched back on.
+pytestmark = pytest.mark.usefixtures("h3_enabled")
+
 
 def t2v_job(workspace: Path, **overrides):
     defaults = dict(

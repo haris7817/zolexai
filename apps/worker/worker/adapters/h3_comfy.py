@@ -122,6 +122,13 @@ class H3ComfyAdapter:
         self._client = client
 
     def supports(self, workflow_id: str) -> bool:
+        if not settings.enable_h3:
+            # Client decision, 5 Sep 2026: H3 is hidden and not used in
+            # production. Off, this engine declines every workflow, so the
+            # resolver's fallback serves any stale routing on the base
+            # runtime instead of here. Nothing below this line is deleted —
+            # ENABLE_H3=true restores the 28 Aug behaviour exactly.
+            return False
         if workflow_id == "video-to-video" and not settings.h3_comfy_video_to_video:
             # Off by default — see `h3_comfy_video_to_video`. The R2V graph
             # re-imagines the scene from two stills instead of following the
@@ -320,7 +327,8 @@ class H3ComfyAdapter:
                 "This tool is temporarily unavailable.",
                 internal_detail=(
                     f"h3_comfy does not serve '{job.workflow_id}' "
-                    f"(h3_comfy_video_to_video={settings.h3_comfy_video_to_video}); "
+                    f"(enable_h3={settings.enable_h3}, "
+                    f"h3_comfy_video_to_video={settings.h3_comfy_video_to_video}); "
                     "check this deployment's execution.runtime / runtime_by_quality"
                 ),
                 retriable=False,

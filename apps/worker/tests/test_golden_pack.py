@@ -34,6 +34,10 @@ from worker.providers.golden import (
     verify_assets,
 )
 
+#: H3 is hidden by default (client decision, 5 Sep 2026); this module proves the
+#: kept code still works when it is switched back on.
+pytestmark = pytest.mark.usefixtures("h3_enabled")
+
 # ── The frozen cases ─────────────────────────────────────────────────────
 
 

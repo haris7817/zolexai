@@ -17,6 +17,7 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 def _repo_root(start: Path | None = None) -> Path:
     """Locates the repository root, in a way that survives the container.
 
@@ -124,6 +125,17 @@ class Settings(BaseSettings):
     """
 
     workflow_definitions_dir: Path = Field(default=REPO_ROOT / "workflow-definitions")
+
+    enable_h3: bool = False
+    """Whether any workflow may route to the H3 engine (env `ENABLE_H3`).
+
+    Client decision, 5 Sep 2026: H3 is hidden and not used in production.
+    Off, the registry refuses to boot on a definition whose `execution.runtime`
+    or `runtime_by_quality` names `h3_comfy` — the deployment overlay that
+    used to route Text to Video "Best" there would be caught in the minute it
+    is deployed rather than by a customer. Nothing is deleted; `true` is the
+    rollback.
+    """
 
     @field_validator("cors_origins")
     @classmethod

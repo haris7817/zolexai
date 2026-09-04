@@ -74,7 +74,7 @@ def test_routing_comes_from_the_workflow_definition() -> None:
     """Which adapter runs is declared in version-controlled YAML, not in code —
     so moving a workflow to a real provider in M2 is a config change."""
     assert resolve_adapter(make_job()).name == "mock"
-    assert available_runtimes() == ["h3_comfy", "harness", "ltx", "mock", "music"]
+    assert available_runtimes() == ["h3_comfy", "harness", "ltx", "ltx_comfy", "mock", "music"]
 
 
 def test_an_unknown_runtime_fails_loudly_and_is_not_retried() -> None:

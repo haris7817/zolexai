@@ -19,6 +19,10 @@ from worker.adapters.ltx import LtxAdapter
 from worker.adapters.registry import available_runtimes, get_adapter
 from worker.providers.h3 import H3Provider
 
+#: H3 is hidden by default (client decision, 5 Sep 2026); this module proves the
+#: kept code still works when it is switched back on.
+pytestmark = pytest.mark.usefixtures("h3_enabled")
+
 
 def test_h3_comfy_runtime_is_registered_but_nothing_ships_routed_to_it() -> None:
     assert "h3_comfy" in available_runtimes()

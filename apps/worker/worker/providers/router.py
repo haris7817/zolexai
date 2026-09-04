@@ -15,6 +15,7 @@ make an A/B compare LTX against LTX and call it a tie.
 from __future__ import annotations
 
 from worker.adapters.base import AdapterError, AdapterJob
+from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.providers.base import VideoProvider
 from worker.providers.h3 import H3Provider
@@ -42,6 +43,15 @@ _AUTO_ROUTES: dict[str, str] = {
 
 
 def get_provider(name: str) -> VideoProvider:
+    if name == "h3" and not settings.enable_h3:
+        # The benchmark override must not be a back door: with H3 hidden
+        # (client decision, 5 Sep 2026) a QA request naming it is refused
+        # with the reason, never served by LTX under H3's name.
+        raise AdapterError(
+            "This tool is temporarily unavailable.",
+            internal_detail="provider 'h3' requested but ENABLE_H3 is off on this node",
+            retriable=False,
+        )
     provider = _PROVIDERS.get(name)
     if provider is None:
         raise AdapterError(

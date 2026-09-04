@@ -29,40 +29,31 @@ prompt:
 inputs: []
 
 duration_mode: fixed
-# The same ladder Image to Video and Extend Video offer. 60s was missing here
-# only by oversight — the backend produces it exactly the way those two do, as
-# chained safe-duration passes (see apps/worker/worker/longform/chain.py), and
-# a customer has no reason to find the longest option on two video tools but
-# not the third.
-supported_durations: ["5s", "10s", "15s", "20s", "30s", "60s"]
-supported_aspect_ratios: ["16:9", "9:16", "1:1", "4:5"]
-# The Fast/Best engine toggle (client-approved 27 Aug 2026). Fast is the
-# speed engine and offers the full ladder; Best is the quality engine, whose
-# lattice sells 5-30s — 60s exists there but is not offered. Which engine
-# each level actually runs is the deployment's execution.runtime_by_quality,
-# never named here: engines are private.
-supported_quality_levels: ["fast", "best"]
-supported_durations_by_quality:
-  best: ["5s", "10s", "15s", "20s", "30s"]
+# The client's ladder (final milestone, 5 Sep 2026): four lengths, each one
+# generation pass. 20s and 60s left the ladder the same day — longer videos
+# are made by continuing a finished one with Extend Video, never by a single
+# pass, and the product says so rather than pretending otherwise.
+supported_durations: ["5s", "10s", "15s", "30s"]
+# 4:5 left with the engine change: the canvas selector the new workflow uses
+# offers 1:1, 9:16 and 16:9 among the product's ratios and has no 4:5.
+supported_aspect_ratios: ["16:9", "9:16", "1:1"]
+# No quality toggle (client decision, 5 Sep 2026): the Best and Standard
+# options are gone, and with them the only route to the engine they selected.
+# One workflow, one engine, nothing to choose.
+supported_quality_levels: []
 
 settings:
-  quality: true
-  # A sound on/off choice, on every quality level (client round two,
-  # 27 Aug): both engines deliver an audio track, and a customer may want
-  # a silent file from either.
+  quality: false
+  # A sound on/off choice: the workflow delivers an audio track, and a
+  # customer may want a silent file.
   sound: true
-  # The current distilled runtime exposes no real motion or guidance
-  # controls. Keep fake sliders out of the product until the guided path lands.
   motion_strength: false
   prompt_adherence: false
   seed: true
-  # Standard / Idea (Director) prompt-mode toggle. Standard is the default and
-  # is byte-identical to the pre-feature behaviour; Director treats the text
-  # as an IDEA and has the worker plan characters, dialogue, delivery and
-  # timing before generating (see apps/worker/worker/director/). Declared here
-  # and on image-to-video (where the plan is source-anchored); no other
-  # workflow accepts a prompt mode.
-  prompt_modes: true
+  # No Standard / Idea (Director) toggle (client decision, 5 Sep 2026). The
+  # Director planner stays in the repository, unrouted; nothing here can
+  # reach it, and the API rejects `prompt_mode` on this workflow.
+  prompt_modes: false
 
 capabilities:
   download: true
@@ -76,95 +67,40 @@ ui:
 
 execution:
   # PRIVATE — stripped from every public API response.
+  #
+  # The committed value is the mock; the deployment overlay
+  # (deploy/vps-local.sh) writes the real runtime. Two exist for this
+  # workflow: `ltx` (the CLI pipelines, production until the GPU validates
+  # the pack) and `ltx_comfy` (the client's own LTX 2.5 graph, the target).
+  # Switching between them is one line here and no code change.
   runtime: mock
 
   # ── The language of generated sound ──────────────────────────────────────
   #
-  # This runtime writes its own audio from the same prompt that draws the
-  # picture: there is no separate audio prompt and no language flag. So an
-  # unstated language is not a neutral default — it is the model choosing one,
-  # and on 28 Aug 2026 a customer put it plainly: "everything I hit sound in
-  # images comes with a language that is not english".
-  #
-  # Director mode never showed this, because its plan puts real quoted
-  # dialogue in the prompt and the language rides in the words. The standard
-  # path — the default, and what most customers use — said nothing about sound
-  # at all.
-  #
-  # A customer's own `dialogue_language` still wins, and so does a Director
-  # plan's language; this is only what applies when neither has an opinion.
-  # One of: english, spanish, french, german, russian — the set the runtime's
-  # vendor documents as validated for generated speech.
+  # Both runtimes write their own audio from the same prompt that draws the
+  # picture: there is no separate audio prompt and no language flag. An
+  # unstated language is the model choosing one (client, 28 Aug 2026:
+  # "everything I hit sound in images comes with a language that is not
+  # english"). A customer's own `dialogue_language` still wins; this is what
+  # applies when nothing else has an opinion. One of: english, spanish,
+  # french, german, russian.
   spoken_language: english
 
-  # ── Single-pass ceiling: 30 seconds (measured, 20 Aug 2026) ──
-  #
-  # The GPU sustains a 60s pass, but the MODEL does not sustain 60s of story:
-  # a single-pass 60s render had the departed man flicker back at 43-48s and
-  # stand fully returned for the final twelve seconds while the soundtrack
-  # said he was gone, and single-pass 60s dialogue never measured cleaner
-  # than one repeated line in 22. Thirty-second passes are the measured-clean
-  # regime (0 repeats), so 60s renders as two of them through the long-form
-  # chain — the machinery that gives each section only its own events and
-  # carries state across the seam. 5/15/30s remain byte-identical single
-  # passes; only 60s changes shape.
+  # Single-pass ceiling: 30 seconds — the client's ladder and the pack's own
+  # slider maximum. Every offered length is one pass.
   max_segment_seconds: 30
 
-  # Deterministic prompt structuring (worker-side). The user's text reaches the
-  # model verbatim as the first block; the worker appends derived continuity
-  # rules (counts, colours, persistence) — the measured fix for identity and
-  # colour drift on the unguided distilled runtime. Rules, not a language
-  # model: it cannot paraphrase away a detail. See
-  # apps/worker/worker/longform/enhance.py.
+  # Deterministic prompt structuring (worker-side). The user's text reaches
+  # the model verbatim as the first block; the worker appends derived
+  # continuity rules. See apps/worker/worker/longform/enhance.py.
   prompt_structuring: true
 
-  # ── Revised continuity block + section planner (OFF — GPU A/B first) ──
+  # ── Optional, per deployment ──────────────────────────────────────────
   #
-  # prompt_structuring_v2: true
-  #
-  # Fixes three audited defects in the appended block and the section planner
-  # (21 Aug 2026 diagnosis): the worker no longer appends "the camera keeps
-  # moving" over a user-asserted static camera; presence/count assertions are
-  # withheld when the user's own text says somebody leaves (presence claims
-  # about departed people are the measured rendered-ghost failure, 20 Aug);
-  # worker-generated continuity bullets classify as persistent instead of as
-  # one section's dialogue; and section 1 is not told to continue from a
-  # predecessor frame it does not have. Off, every prompt is byte-identical
-  # to what has always shipped — enable after the G1/G2 renders in
-  # docs/internal/research-ltx25-zolexai-audit.md.
-
-  # ── Director camera controls (OFF — planner-output changes, A/B first) ──
-  #
-  # director_camera_continuity: true
-  #
-  # Carries the shot each Director section ends on into the next one, so a
-  # section opening on the same camera says the shot CONTINUES instead of
-  # re-announcing it as a fresh framing event at every seam.
-  #
-  # director_camera_from_idea: true
-  #
-  # Adds the brief rule that binds the planner to a camera the USER asked for
-  # (shot size, angle, movement) — without it the closed shot vocabulary has
-  # no angle and the dialogue-framing preference can override an explicit
-  # request.
-
-  # ── Guided quality tier (OFF — enabling is a product/pricing decision) ──
-  #
-  # generation_engine: guided
-  #
-  # Swaps the distilled entry point for the guided two-stage pipeline (dev
-  # transformer + distilled LoRA, unquantized, CPU offload). This is the tier
-  # with CFG, spatio-temporal guidance and a negative prompt — the adherence
-  # levers the distilled runtime structurally lacks — and the tier the
-  # client's own reference engine measures "follows the prompt" against.
-  # Measured 17 Aug 2026 (RTX PRO 6000, 1024x576, 121 frames): 146s vs the
-  # distilled tier's 34s for the same clip — ~4.3x the render time — with
-  # video AND audio verified in the output. Passes are capped at one measured
-  # landing (121 frames / 5s); 241 frames is a reproduced decoder FAIL on
-  # this pipeline, so raising the cap requires a new measurement, not an
-  # opinion:
-  #
-  # guided_pass_seconds: 5.0
+  # negative_prompt: "…"   — overrides the house negative prompt on the
+  #                          ltx_comfy runtime (default: derived from the
+  #                          client's own graph; see comfy/ltx_prompts.py).
+  # prompt_structuring_v2: true — the revised continuity block (CLI runtime).
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

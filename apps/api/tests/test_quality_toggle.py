@@ -1,10 +1,11 @@
-"""The Fast/Best toggle — client-approved 27 Aug 2026, pinned.
+"""The Fast/Best toggle — where it remains, and where it left.
 
-Two engines behind one control: Fast is the speed engine with the full
-duration ladder; Best is the quality engine, which sells 5-30s (its lattice
-has a 60s the product does not offer) and generates native audio, hence the
-sound on/off choice that only exists there. Engines are never named in
-anything public — the runtime mapping is the deployment's execution block.
+Video to Video keeps the two levels (client-approved 27 Aug 2026): Fast
+restyles from a prompt, Best replaces the person from a reference photo —
+different work, so the customer chooses. Text to Video lost the toggle on
+5 Sep 2026 (client decision, final milestone): one workflow, one engine,
+nothing to select — and with it the only route to the engine "Best" named.
+Engines are never named in anything public.
 """
 
 from __future__ import annotations
@@ -32,43 +33,46 @@ def _validate(**overrides):
     return REGISTRY.validate_request(**request)
 
 
-async def test_the_catalogue_serves_the_toggle(client: AsyncClient) -> None:
+async def test_text_to_video_has_no_toggle_and_the_final_ladder(client: AsyncClient) -> None:
     workflow = (await client.get("/api/v1/workflows/text-to-video")).json()
-    assert workflow["supported_quality_levels"] == ["fast", "best"]
-    assert workflow["supported_durations_by_quality"] == {
-        "best": ["5s", "10s", "15s", "20s", "30s"]
-    }
-    assert workflow["settings"]["quality"] is True
+    assert workflow["supported_quality_levels"] == []
+    assert workflow["supported_durations_by_quality"] == {}
+    assert workflow["settings"]["quality"] is False
+    assert workflow["settings"]["prompt_modes"] is False
     assert workflow["settings"]["sound"] is True
+    assert workflow["supported_durations"] == ["5s", "10s", "15s", "30s"]
+    assert workflow["supported_aspect_ratios"] == ["16:9", "9:16", "1:1"]
     # Engines stay private: no runtime name anywhere in the public shape.
     import json
 
     assert "ltx" not in json.dumps(workflow).lower()
     assert "h3" not in json.dumps(workflow).lower()
+    assert "comfy" not in json.dumps(workflow).lower()
 
 
-def test_absent_quality_is_the_default_and_offers_the_full_ladder() -> None:
-    # The absence-is-default contract: a client from before the toggle
-    # existed keeps its behaviour, 60s included.
-    _validate(duration="60s", quality=None)
-
-
-def test_best_does_not_sell_sixty_seconds() -> None:
+def test_text_to_video_refuses_a_quality_level_now() -> None:
     import pytest
 
     from app.services.workflow_registry import ValidationFailed
 
-    with pytest.raises(ValidationFailed) as raised:
-        _validate(duration="60s", quality="best")
-    [problem] = [
-        p for p in raised.value.details["fields"] if p["field"] == "duration"
-    ]
-    assert "60s" not in problem["allowed"]
-    assert "30s" in problem["allowed"]
+    for level in ("best", "fast", "standard"):
+        with pytest.raises(ValidationFailed) as raised:
+            _validate(duration="5s", quality=level)
+        assert any(p["field"] == "quality" for p in raised.value.details["fields"])
 
 
-def test_fast_offers_the_full_ladder() -> None:
-    _validate(duration="60s", quality="fast")
+def test_text_to_video_sells_exactly_the_four_lengths() -> None:
+    import pytest
+
+    from app.services.workflow_registry import ValidationFailed
+
+    for length in ("5s", "10s", "15s", "30s"):
+        _validate(duration=length)
+    for gone in ("20s", "60s"):
+        with pytest.raises(ValidationFailed) as raised:
+            _validate(duration=gone)
+        [problem] = [p for p in raised.value.details["fields"] if p["field"] == "duration"]
+        assert problem["allowed"] == ["5s", "10s", "15s", "30s"]
 
 
 def test_sound_needs_the_workflow_to_declare_it() -> None:
@@ -77,7 +81,7 @@ def test_sound_needs_the_workflow_to_declare_it() -> None:
     from app.services.workflow_registry import ValidationFailed
 
     # text-to-video declares it: accepted.
-    _validate(quality="best", sound=False)
+    _validate(sound=False)
     # music does not: rejected.
     with pytest.raises(ValidationFailed) as raised:
         REGISTRY.validate_request(
@@ -110,11 +114,11 @@ async def test_video_to_video_offers_the_toggle_too(client: AsyncClient) -> None
     assert workflow["duration_mode"] == "source"
     assert workflow["supported_durations"] == []
     assert workflow["supported_durations_by_quality"] == {}
-    # The copy has to say which level needs the photo, because one does and
-    # the other does not.
+    # The copy says which level uses the photo (28 Aug wording: "On Best, the
+    # person in your video is replaced…").
     roles = {item["role"]: item for item in workflow["inputs"]}
     help_text = roles["reference_image"]["help"].lower()
-    assert "fast" in help_text and "best" in help_text
+    assert "best" in help_text
     # Engines stay private here as everywhere else.
     import json
 

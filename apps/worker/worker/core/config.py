@@ -670,6 +670,84 @@ class WorkerSettings(BaseSettings):
     With it off, `supports()` declines the workflow and the resolver's
     safety net serves the job on the base runtime rather than failing it."""
 
+    # ── H3 availability (client decision, 5 Sep 2026: hidden, not used) ──
+
+    enable_h3: bool = False
+    """Whether this node may serve the H3 engine at all (env `ENABLE_H3`).
+
+    Off (the default): the `h3_comfy` adapter declines every workflow, refuses
+    to run, is not advertised in the node's runtime list at registration, and
+    the benchmark router refuses `provider=h3`. The API side refuses to boot
+    on YAML that routes to it. Nothing is deleted — `ENABLE_H3=true` restores
+    the 28 Aug 2026 behaviour exactly, which is the rollback."""
+
+    # ── LTX 2.5 through the client's ComfyUI graphs (Sep 2026) ───────────
+    #
+    # A SECOND ComfyUI instance. The client's graphs use core nodes stamped
+    # 0.34.0 and KJNodes/LTXVideo commits newer than the H3 freeze (v0.33.3),
+    # so they cannot share that instance without an H3 compatibility pass
+    # nobody has run. Own venv, own port, own supervisord program — see
+    # docs/internal/ltx-comfy-runtime.md.
+
+    ltx_comfy_base_url: str = "http://127.0.0.1:8189"
+    """Where the LTX ComfyUI listens. Loopback on the GPU node."""
+
+    ltx_comfy_workflows_dir: Path = REPO_ROOT / "benchmarks" / "client-pack" / "ltx25"
+    """The frozen client graphs. The files are the contract; the compiler
+    edits only what a job must supply."""
+
+    ltx_comfy_models_dir: Path | None = None
+    """Root of the ComfyUI `models/` tree, for the deep health check (file
+    presence and size). None skips the filesystem half; the combo-option
+    check against `/object_info` still runs."""
+
+    ltx_comfy_request_timeout: float = 60.0
+    """Per control-plane call. Uploads and downloads use their own budget."""
+
+    ltx_comfy_transfer_timeout: float = 900.0
+    """Ceiling for one input upload or output download over HTTP — a 512 MB
+    source clip on loopback is seconds; the number is a guard, not a pace."""
+
+    ltx_comfy_poll_seconds: float = 3.0
+
+    ltx_comfy_generation_timeout: float = 3600.0
+    """Whole-submission ceiling. UNMEASURED on this pack — the ZIP shipped no
+    timings. Revisit after the GPU benchmark (`scripts/ltx_comfy_bench.py`)."""
+
+    ltx_comfy_expected_wall_per_output_second: float = 8.0
+    """Progress pacing only — never a completion claim. WAITING FOR GPU
+    VALIDATION: the pack's samples carry no wall-clock, so this is a
+    placeholder until the benchmark writes the measured rate here."""
+
+    ltx_comfy_frame_rate: int = 24
+    """What the graphs' FPS constants say. Every product duration lands on
+    the model's 8k+1 lattice at this rate (121/241/361/721 frames)."""
+
+    ltx_comfy_max_segment_seconds: float = 30.0
+    """One graph submission's ceiling — the pack's own slider maximum and the
+    client's sample length. Longer results are chained continuations through
+    the extension engine, never one pass."""
+
+    ltx_comfy_free_after_job: bool = False
+    """Unload the LTX ComfyUI's models after every job. Off: the lazy policy —
+    models stay warm between LTX jobs and are evicted only when another
+    engine needs the card (`evict_comfy_vram`)."""
+
+    ltx_comfy_input_dir: Path | None = None
+    """ComfyUI's `input/` directory when the worker shares a filesystem with
+    it. Optional: inputs travel over HTTP either way; this only enables
+    cleanup of a job's uploads afterwards."""
+
+    character_replacement_max_seconds: int = 20
+    """The longest source window one character-replacement pass renders. The
+    pack's own note lists 5/10/20 s as the lengths to try; the client's
+    sample was 8 s. Longer sources are cut to this window (the delivered
+    length is stated to the customer) until the chained variant is measured."""
+
+    character_replacement_canvas: tuple[int, int] = (736, 1280)
+    """The pack's pinned canvas (portrait). Oriented to match the source
+    clip; the pixel budget is never changed."""
+
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
 
@@ -682,10 +760,18 @@ class WorkerSettings(BaseSettings):
 
     @property
     def runtime_list(self) -> list[str]:
-        """Runtimes this node serves, always including its primary one."""
+        """Runtimes this node serves, always including its primary one.
+
+        `h3_comfy` is dropped unless `ENABLE_H3` is on, whatever the env
+        declares: the API intersects this list with each workflow's runtime
+        at claim time, so a node that does not advertise the engine can never
+        be handed one of its jobs.
+        """
         declared = [item.strip() for item in self.runtimes.split(",") if item.strip()]
         if self.runtime and self.runtime not in declared:
             declared.insert(0, self.runtime)
+        if not self.enable_h3:
+            declared = [item for item in declared if item != "h3_comfy"]
         return declared
 
     @property

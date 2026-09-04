@@ -16,6 +16,7 @@ from worker.adapters.base import AdapterError, GenerationAdapter
 from worker.adapters.h3_comfy import H3ComfyAdapter
 from worker.adapters.harness import HarnessAdapter
 from worker.adapters.ltx import LtxAdapter
+from worker.adapters.ltx_comfy import LtxComfyAdapter
 from worker.adapters.mock import MockAdapter
 from worker.adapters.music import MusicAdapter
 
@@ -41,6 +42,12 @@ _ADAPTERS: dict[str, GenerationAdapter] = {
     # mechanism. Connects to a local ComfyUI like music connects to ACE-Step.
     # See adapters/h3_comfy.py and docs/internal/h3-client-runtime-freeze.md.
     "h3_comfy": H3ComfyAdapter(),
+    # LTX 2.5 through the client's own ComfyUI graphs (Sep 2026): Text to
+    # Video, First/Last Frame Video and Extend Video. Registered but not
+    # routed in the committed YAML — the deployment overlay picks it. The
+    # CLI runtime `ltx` above stays the rollback for every workflow this
+    # one takes over. See adapters/ltx_comfy.py.
+    "ltx_comfy": LtxComfyAdapter(),
 }
 
 

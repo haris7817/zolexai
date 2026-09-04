@@ -20,6 +20,10 @@ from worker.comfy import ComfyClient, ComfyError, GraphEdits, load_graph, to_api
 from worker.comfy.graph import duration_index_for
 from worker.core.config import settings
 
+#: H3 is hidden by default (client decision, 5 Sep 2026); this module proves the
+#: kept code still works when it is switched back on.
+pytestmark = pytest.mark.usefixtures("h3_enabled")
+
 R2V_GRAPH = settings.h3_comfy_workflows_dir / "minimax_h3_r2v_extender.json"
 I2V_GRAPH = settings.h3_comfy_workflows_dir / "minimax_h3_i2v_extender.json"
 T2V_GRAPH = settings.h3_comfy_workflows_dir / "minimax_h3_t2v_extender.json"

@@ -14,6 +14,10 @@ Two modules:
   * `client` — submit / wait / collect / interrupt / health against the
     ComfyUI HTTP API, with the same cancellation contract the other adapters
     honour.
+  * `ltx_graphs` — the client's LTX 2.5 graphs (Sep 2026): subgraph
+    flattening, Set/Get resolution, the sanctioned per-job edits, and the
+    `/object_info` verification. A second ComfyUI instance serves them.
+  * `ltx_prompts` — the house negative prompts derived from the pack.
 """
 
 from worker.comfy.client import ComfyClient, ComfyError, evict_comfy_vram

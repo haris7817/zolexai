@@ -278,3 +278,16 @@ async def make_track(path: Path, seconds: float, *, beats_per_minute: int = 0) -
         ]
     )
     return path
+
+
+@pytest.fixture
+def h3_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turns the hidden H3 engine back on for the tests that exercise it.
+
+    Client decision, 5 Sep 2026: H3 is hidden and not used in production, so
+    `settings.enable_h3` defaults to False and the adapter, the registration
+    list and the benchmark router all refuse it. The H3 test modules opt in
+    with `pytestmark = pytest.mark.usefixtures("h3_enabled")` — the code is
+    kept, and so is its proof.
+    """
+    monkeypatch.setattr(settings, "enable_h3", True)

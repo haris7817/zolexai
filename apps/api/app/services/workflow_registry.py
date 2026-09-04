@@ -376,6 +376,34 @@ def _reject_mock_output_on_a_real_runtime(path: Path, definition: WorkflowDefini
     )
 
 
+def _reject_h3_routing_when_disabled(path: Path, definition: WorkflowDefinition) -> None:
+    """No definition may route to `h3_comfy` while `ENABLE_H3` is off.
+
+    The routing lives in deployment-local YAML that no test in this
+    repository can see (`deploy/vps-local.sh` writes it), and Text to Video
+    "Best" really did route there in production on 28 Aug 2026. With the
+    engine hidden (client decision, 5 Sep 2026) the worker would refuse such
+    a job and its resolver would fall back to the base runtime — a limp, not
+    a configuration. Failing at boot makes the stale line a deploy-time
+    finding instead.
+    """
+    if settings.enable_h3:
+        return
+    execution = definition.execution
+    named: list[str] = [str(execution.runtime)]
+    extra = execution.model_extra or {}
+    by_quality = extra.get("runtime_by_quality")
+    if isinstance(by_quality, dict):
+        named.extend(str(value) for value in by_quality.values())
+    if any(runtime == "h3_comfy" for runtime in named):
+        raise WorkflowRegistryError(
+            f"{path.name}: routes to 'h3_comfy' but ENABLE_H3 is off. The H3 engine is "
+            "hidden (client decision, 5 Sep 2026); remove the routing line from this "
+            "deployment's YAML, or set ENABLE_H3=true on the API and the worker to "
+            "restore it."
+        )
+
+
 def load_registry(directory: Path | None = None) -> WorkflowRegistry:
     """Parses and validates every definition. Raises on the first problem."""
     root = directory or settings.workflow_definitions_dir
@@ -414,6 +442,7 @@ def load_registry(directory: Path | None = None) -> WorkflowRegistry:
             raise WorkflowRegistryError(f"duplicate workflow id '{definition.id}'")
 
         _reject_mock_output_on_a_real_runtime(path, definition)
+        _reject_h3_routing_when_disabled(path, definition)
 
         definitions[definition.id] = definition
 

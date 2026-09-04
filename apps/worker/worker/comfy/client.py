@@ -18,6 +18,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -83,6 +84,100 @@ class ComfyClient:
             resp = await client.get("/object_info")
             resp.raise_for_status()
             return set(resp.json().keys())
+
+    async def object_info(self) -> dict[str, Any]:
+        """The full node catalogue: input names, combo options, model files.
+
+        A megabyte or two. Fetched by health checks and by the LTX compiler
+        to resolve combo labels against what the server actually offers —
+        never per poll.
+        """
+        async with self._client() as client:
+            resp = await client.get("/object_info")
+            resp.raise_for_status()
+            return resp.json()
+
+    # ── Files, over HTTP ─────────────────────────────────────────────────
+
+    async def upload_input(
+        self,
+        path: Path,
+        *,
+        name: str,
+        subfolder: str = "",
+        timeout: float | None = None,
+    ) -> str:
+        """Puts a file into ComfyUI's `input/` directory through `/upload/image`.
+
+        The endpoint stores any file type (video included — VideoHelperSuite's
+        own upload widget uses it), so the worker needs no shared filesystem
+        with the service. Returns the stored name, which is what a LoadImage
+        or VHS_LoadVideoFFmpeg widget must be set to.
+        """
+        try:
+            # Read off the event loop: a source clip can be hundreds of MB.
+            payload = await asyncio.to_thread(Path(path).read_bytes)
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=timeout or max(self._request_timeout, 600.0),
+                transport=self._transport,
+            ) as client:
+                resp = await client.post(
+                    "/upload/image",
+                    files={"image": (name, payload, "application/octet-stream")},
+                    data={"overwrite": "true", "type": "input", "subfolder": subfolder},
+                )
+        except httpx.HTTPError as exc:
+            raise ComfyError(
+                "The video service is not responding.",
+                internal_detail=f"POST /upload/image failed: {exc}",
+            ) from exc
+        if resp.status_code >= 400:
+            raise ComfyError(
+                "One of the selected files could not be read.",
+                internal_detail=f"POST /upload/image {resp.status_code}: {resp.text[:500]}",
+                retriable=False,
+            )
+        body = resp.json() if resp.content else {}
+        stored = str(body.get("name") or name)
+        stored_subfolder = str(body.get("subfolder") or "")
+        return f"{stored_subfolder}/{stored}" if stored_subfolder else stored
+
+    async def download_output(
+        self,
+        *,
+        filename: str,
+        subfolder: str,
+        output_type: str,
+        dest: Path,
+        timeout: float | None = None,
+    ) -> Path:
+        """Streams one finished file out of ComfyUI through `/view`."""
+        params = {"filename": filename, "subfolder": subfolder, "type": output_type}
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=timeout or max(self._request_timeout, 600.0),
+                transport=self._transport,
+            ) as client:
+                async with client.stream("GET", "/view", params=params) as resp:
+                    if resp.status_code >= 400:
+                        raise ComfyError(
+                            "The finished video could not be found.",
+                            internal_detail=(
+                                f"GET /view {params} → {resp.status_code}"
+                            ),
+                        )
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    with dest.open("wb") as handle:
+                        async for chunk in resp.aiter_bytes():
+                            handle.write(chunk)
+        except httpx.HTTPError as exc:
+            raise ComfyError(
+                "The video service is not responding.",
+                internal_detail=f"GET /view failed: {exc}",
+            ) from exc
+        return dest
 
     # ── Submit / wait / collect ──────────────────────────────────────────
 
@@ -250,21 +345,37 @@ class ComfyClient:
             raise
 
 
-async def evict_comfy_vram(client: ComfyClient | None = None) -> None:
-    """Frees ComfyUI's VRAM before another engine takes the card.
+async def evict_comfy_vram(
+    client: ComfyClient | None = None, *, exclude: str | None = None
+) -> None:
+    """Frees every OTHER ComfyUI instance's VRAM before an engine takes the card.
 
-    The lazy half of the co-tenancy policy (25 Aug 2026): H3 keeps its ~52 GB
-    warm between H3 jobs — saving the measured 40-60 s model reload every job
-    used to pay — and the engine that actually needs the memory, LTX or
-    music, calls this on its way in. Best-effort and cheap: a node with no
-    ComfyUI, or one already empty, answers in milliseconds, and any failure
-    is the health check's problem rather than this job's.
+    The lazy half of the co-tenancy policy (25 Aug 2026): a ComfyUI keeps its
+    models warm between its own jobs — saving the measured 40-60 s reload
+    every job used to pay — and the engine that actually needs the memory
+    calls this on its way in. Best-effort and cheap: a node with no ComfyUI,
+    or one already empty, answers in milliseconds, and any failure is the
+    health check's problem rather than this job's.
+
+    Two instances exist since the LTX 2.5 pack (Sep 2026): the H3 one
+    (only when `ENABLE_H3` is on — off, it should not even be running) and
+    the LTX one. `exclude` is the caller's own base URL, so the LTX ComfyUI
+    adapter does not evict the models it is about to use.
     """
-    if client is None:
-        from worker.core.config import settings
+    from worker.core.config import settings
 
-        client = ComfyClient(
-            settings.h3_comfy_base_url,
-            request_timeout=min(settings.h3_comfy_request_timeout, 10.0),
-        )
-    await client.free_memory()
+    if client is not None:
+        await client.free_memory()
+        return
+
+    targets: list[tuple[str, float]] = []
+    if settings.enable_h3:
+        targets.append((settings.h3_comfy_base_url, settings.h3_comfy_request_timeout))
+    targets.append((settings.ltx_comfy_base_url, settings.ltx_comfy_request_timeout))
+    seen: set[str] = set()
+    for base_url, timeout in targets:
+        normalized = base_url.rstrip("/")
+        if normalized in seen or (exclude and normalized == exclude.rstrip("/")):
+            continue
+        seen.add(normalized)
+        await ComfyClient(normalized, request_timeout=min(timeout, 10.0)).free_memory()
