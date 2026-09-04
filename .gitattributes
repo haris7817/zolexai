@@ -21,3 +21,7 @@ Dockerfile      text eol=lf
 *.mp3   binary
 *.wav   binary
 *.safetensors binary
+
+# The client's frozen ComfyUI graphs are hashed against the delivered ZIP; a
+# line-ending conversion would silently change the bytes on one platform.
+benchmarks/client-pack/**/*.json -text
