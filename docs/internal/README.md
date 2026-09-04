@@ -11,6 +11,10 @@ response. These notes are where the other half lives.
 
 | File | Subject |
 |---|---|
+| [`client-readiness-report.md`](./client-readiness-report.md) | 🟡 **The final-milestone handover.** Implemented modules, workflows and models used, dependencies, what was verified without a GPU, limitations, rollback. Ends CLIENT TEST READY: WAITING FOR GPU VALIDATION. |
+| [`gpu-validation-checklist.md`](./gpu-validation-checklist.md) | 🟡 **Run when the GPU returns.** The nine-section validation of the LTX 2.5 client workflows: models, nodes, each graph, the extension seam, measurements, the ZIP-sample comparison. |
+| [`ltx-comfy-runtime.md`](./ltx-comfy-runtime.md) | The second ComfyUI instance for the client's LTX 2.5 graphs: service, node-pack pins, weights and sources, install order, co-tenancy, rollback. |
+| [`ltx-comfy-optimization-checklist.md`](./ltx-comfy-optimization-checklist.md) | Phase 5: the speed levers ranked by how far they deviate from the pack, and the before/after protocol each must pass. GPU-gated. |
 | [`ltx-client-workflow-audit.md`](./ltx-client-workflow-audit.md) | 🟢 **Phase 0 of the LTX 2.5 integration (5 Sep 2026).** The client ZIP decoded node by node: models, LoRAs, node-pack pins, inputs/outputs, the migration design, risks, and the GPU validation checklist. |
 | [`client-final-audit.md`](./client-final-audit.md) | 🟢 **Start here for the final client milestone.** Phase 0 audit (5 Sep 2026): what production runs today, the H3 footprint to flag, the client's LTX 2.5 ComfyUI pack decoded, the per-phase plan, risks and rollback. |
 | [`ltx-2.5-licensing-review.md`](./ltx-2.5-licensing-review.md) | Licence and commercial-use review for the candidate video model |
