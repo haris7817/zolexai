@@ -62,7 +62,15 @@ const bodyText = await response.text();
 const served = new Map(JSON.parse(bodyText).workflows.map((w) => [w.id, w]));
 
 // ── Same set of workflows ────────────────────────────────────────────────
-for (const id of onDisk.keys()) {
+// A definition marked `hidden: true` ships in the catalogue files but is
+// not offered (Character Replacement until its GPU validation, Sep 2026):
+// it must NOT be served, and it is not compared field by field.
+for (const [id, disk] of onDisk) {
+  if (disk.hidden === true) {
+    if (served.has(id)) fail(`${id}: hidden on disk but served by the API`);
+    onDisk.delete(id);
+    continue;
+  }
   if (!served.has(id)) fail(`${id}: defined on disk but not served by the API`);
 }
 for (const id of served.keys()) {
