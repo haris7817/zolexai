@@ -424,8 +424,20 @@ toggle on V2V is **not** in the client's removal list; it stays.
   collect. Long sources chain in windows the graph tolerates (5/10/20 s per
   its note), each window's edited first frame being the previous output's
   last frame — the identity then propagates without re-editing.
-* First-frame editing, the missing piece: three candidates, to be measured
-  in that order. (1) The existing person-matte composite
+* **What the client's own sample shows (frame inspection, 5 Sep).** The
+  "first frame" fed to the graph was NOT a pixel edit of the source frame.
+  It was a standalone photo of a different man in a different place (a
+  yacht interior), framed as a close-up. Frame 0 of the output is that
+  photo verbatim; by frame 4 the video has snapped to the source's
+  composition with the new man performing the source's motion, and it
+  holds for the full 8 s. Two consequences: (a) a plain reference photo
+  works as the input, so the module can ship with "reference photo only"
+  and a one-frame trim at the start; (b) the photo's **background replaced
+  the source's** (yellow wall → yacht), so "preserve background" is not
+  what this graph does with a raw photo. Preserving the background needs
+  the photo composited onto the source frame first — candidate (1) below.
+* First-frame editing, when the background must survive: three candidates,
+  to be measured in that order. (1) The existing person-matte composite
   (`media/masks.py`, BiRefNet) placing the reference photo into frame 0 —
   cheapest, already on the node, and the 20 Aug audit found its
   bottom-alignment bug (fixed locally, uncommitted); it only works when the
@@ -562,8 +574,10 @@ Every phase must be reversible by configuration, then by git.
    new engine behind it.
 3. **Canvas for First/Last Frame:** picture decides the aspect (current) or
    the selected aspect ratio decides and the still is resized (the pack).
-4. **Character Replacement input:** reference photo only (we build the
-   first frame), or also accept an already-edited first frame.
+4. **Character Replacement input:** the pack's sample proves a plain
+   reference photo works (§7.6). Recommendation: reference photo required,
+   edited first frame as an optional advanced input. Open sub-question:
+   must the source background survive? The sample replaces it.
 5. **Release branch:** `dual-engine-benchmark-prep` is what production
    pulls; confirm it, or merge to `main` first.
 6. **LoRA policy:** ship community LoRAs only with a verified licence, or
