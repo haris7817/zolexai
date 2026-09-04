@@ -2418,3 +2418,35 @@ Through zolexai.com:
 5. **Music video, any track over 60s** — regression plus the fix: same look and
    the same wall time as before, and the picture no longer walks against the
    song.
+
+---
+
+## 46. Deploy: the LTX 2.5 client graphs — second ComfyUI, two new runtimes (Sep 2026, prepared, NOT deployed)
+
+**Nothing in this section has run on the node. GPU unavailable at the time
+of writing.** It records what the final-milestone integration expects the
+node to look like, so GPU day is provisioning and validation, not design.
+
+### 46.1 What changes on the node
+
+| Item | Value |
+|---|---|
+| New service | `zolexai-ltx-comfy` (supervisord) — ComfyUI ≥ 0.34.0 in `/workspace/ComfyUI-ltx`, port 8189, loopback. Config and launcher: `deploy/gpu/zolexai-ltx-comfy.{conf,sh}`. Pins and weights: `docs/internal/ltx-comfy-runtime.md`. |
+| Worker env | `RUNTIMES=ltx,ltx_comfy,character_replacement,music`, `LTX_COMFY_BASE_URL=http://127.0.0.1:8189`, `LTX_COMFY_MODELS_DIR=/workspace/ComfyUI-ltx/models`, `ENABLE_H3=false` |
+| H3 service | stopped (`supervisorctl stop` the H3 ComfyUI program if one exists). With `ENABLE_H3=false` the worker never advertises `h3_comfy` and the API refuses YAML that routes to it. |
+| Unchanged | the LTX CLI runtime (`ltx`), ACE-Step, the tunnel, Video to Video, Music Video, Music |
+
+### 46.2 Order
+
+1. Provision per `ltx-comfy-runtime.md` §4; `supervisorctl status zolexai-ltx-comfy` → RUNNING.
+2. `cd /workspace/zolexai/apps/worker && .venv/bin/python scripts/ltx_comfy_health.py --deep` → HEALTHY.
+3. Restart the worker with the new `RUNTIMES`; `worker_ready` must list both new runtimes.
+4. Execute `docs/internal/gpu-validation-checklist.md` end to end; write the numbers down.
+5. Only in the client-test environment: `bash deploy/vps-local.sh --profile client-test`, rebuild api and web (§14), `qa:parity` and `qa:e2e` green.
+
+### 46.3 Rollback
+
+`bash deploy/vps-local.sh --profile production` + rebuild api and web puts
+every workflow back on the CLI runtime and hides Character Replacement;
+`supervisorctl stop zolexai-ltx-comfy`; drop the two runtimes from
+`RUNTIMES`. Nothing else moved.
