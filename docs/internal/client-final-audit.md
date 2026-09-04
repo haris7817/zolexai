@@ -371,7 +371,10 @@ check in the worker mirroring `h3_comfy_health`. Output:
 * YAML: `supported_quality_levels: []`, `settings.quality: false`, remove
   `supported_durations_by_quality`; `supported_durations: ["5s","10s","15s","30s"]`
   (20 s and 60 s leave the ladder; 60 s becomes "generate 30 s, then
-  Extend"). Keep Director mode (client did not ask to remove it).
+  Extend"). `settings.prompt_modes: false` — Director mode leaves the
+  product (client decision 5 Sep); its code stays, unrouted. The API's
+  `dialogue_language` / `prompt_mode` validation already refuses those
+  parameters on a workflow that declares no prompt modes.
 * Worker: new `adapters/ltx_comfy.py` + `comfy/ltx_graphs.py` (graph 01 and
   02 compiled to API prompts with sanctioned edits: prompt, negative,
   seconds, canvas, seed, first/last image, output prefix). One graph
@@ -578,8 +581,13 @@ to it) and Q6 (the LoRAs ship as wired; licence findings are reported, not
 acted on unilaterally — see R1). Any deviation is a measured experiment
 behind an execution key, never a default.
 
-1. **Duration ladder.** Brief says 5/10/15/30 for T2V and I2V. Today both
-   offer 20 s and 60 s. Confirm both are dropped (60 s becomes Extend).
+1. **Duration ladder — DECIDED 5 Sep 2026.** 20 s and 60 s are dropped
+   from Text to Video and Image to Video; the ladder is 5/10/15/30 and
+   longer videos are made through Extend. **Best is removed** (no quality
+   toggle on either tool). **Director mode is removed from Text to Video**
+   (`settings.prompt_modes: false`; the Director code, the Cerebras/Gemma
+   planner and the Extend lineage plumbing stay in the repository, inert,
+   the same way H3 does). **H3 is hidden and not used in production.**
 2. **Extend Video** keeps its 5 s…5 m ladder and stays a separate tool, or
    becomes the "Extensions" button only. Assumed: unchanged tool, and the
    new engine behind it.
