@@ -39,31 +39,43 @@ async def test_extension_offers_the_requested_ladder_up_to_five_minutes(
     ]
 
 
-async def test_image_to_video_offers_the_same_five_durations(
+async def test_first_last_frame_video_offers_the_final_four_lengths(
     client: AsyncClient,
 ) -> None:
-    """Client revision, 13 Aug 2026: Image to Video showed only 5s and 10s.
-
-    The lengths beyond one GPU pass are produced by chained segments in the
-    worker, which is deliberately invisible here — the catalogue promises a
-    length, not a technique.
-    """
+    """Client decision, 5 Sep 2026: 5/10/15/30 s, each one generation pass;
+    longer videos continue a finished one with Extend Video. 20s and 60s left
+    the ladder with the engine change."""
     workflow = (await client.get("/api/v1/workflows/image-to-video")).json()
     assert workflow["duration_mode"] == "fixed"
-    # 20s joined the ladder in the Fast/Best round two (27 Aug 2026).
-    assert workflow["supported_durations"] == ["5s", "10s", "15s", "20s", "30s", "60s"]
+    assert workflow["supported_durations"] == ["5s", "10s", "15s", "30s"]
 
 
-async def test_a_sixty_second_image_to_video_duration_passes_validation(
+async def test_a_thirty_second_first_last_frame_duration_passes_validation(
     client: AsyncClient,
 ) -> None:
     """The half a chip cannot prove: the API must also accept the value.
 
     Submitted with a source image that does not exist, so the request is
     rejected — the point is WHAT it is rejected for. A complaint about the
-    input and silence about the duration is proof that 60s cleared duration
+    input and silence about the duration is proof that 30s cleared duration
     validation, without this test needing a real object in storage.
     """
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "workflow_id": "image-to-video",
+            "prompt": "gentle push in",
+            "parameters": {"duration": "30s", "aspect_ratio": "16:9"},
+            "inputs": {"source_image": "00000000-0000-0000-0000-000000000000"},
+        },
+    )
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert "duration" not in fields, "30s must be a valid First/Last Frame length"
+    assert fields == {"inputs.source_image"}
+
+
+async def test_sixty_seconds_left_the_first_last_frame_ladder(client: AsyncClient) -> None:
     response = await client.post(
         "/api/v1/generations",
         json={
@@ -74,9 +86,8 @@ async def test_a_sixty_second_image_to_video_duration_passes_validation(
         },
     )
     assert response.status_code == 422
-    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
-    assert "duration" not in fields, "60s must be a valid Image to Video length"
-    assert fields == {"inputs.source_image"}
+    fields = {f["field"]: f for f in response.json()["error"]["details"]["fields"]}
+    assert fields["duration"]["allowed"] == ["5s", "10s", "15s", "30s"]
 
 
 async def test_a_five_minute_extension_duration_passes_validation(

@@ -92,7 +92,7 @@ class LtxComfyAdapter:
     #: Grows per phase: Text to Video (Phase 1), First/Last Frame (Phase 2),
     #: Extend Video (Phase 4). Video to Video is never here — it stays on
     #: the CLI runtime untouched.
-    _SUPPORTED = frozenset({"text-to-video"})
+    _SUPPORTED = frozenset({"text-to-video", "image-to-video"})
 
     def __init__(self, service: LtxComfyService | None = None) -> None:
         self._service = service
