@@ -472,3 +472,36 @@ def test_compiled_prompts_are_json_serialisable() -> None:
 def test_pack_directory_is_where_the_worker_looks(tmp_path: Path) -> None:
     assert (PACK / "ltx25_text_to_video.json").is_file()
     assert PACK == settings.ltx_comfy_workflows_dir
+
+
+def test_combo_options_reads_the_v3_schema_shape() -> None:
+    """ComfyUI 0.34 core nodes report combos as ["COMBO", {"options": [...]}]
+    (seen live on the GPU node, 5 Sep 2026); the legacy shapes still parse."""
+    from worker.comfy.ltx_graphs import combo_options
+
+    info = {
+        "ResolutionSelector": {
+            "input": {
+                "required": {
+                    "aspect_ratio": [
+                        "COMBO",
+                        {
+                            "default": "1:1 (Square)",
+                            "options": ["1:1 (Square)", "16:9 (Widescreen)"],
+                        },
+                    ],
+                    "megapixels": ["FLOAT", {"default": 1.0}],
+                }
+            }
+        },
+        "Legacy": {"input": {"required": {"name": [["a", "b"]]}}},
+        "Dict": {"input": {"required": {"name": [{"options": ["x"]}]}}},
+    }
+    assert combo_options(info, "ResolutionSelector", "aspect_ratio") == [
+        "1:1 (Square)",
+        "16:9 (Widescreen)",
+    ]
+    assert combo_options(info, "ResolutionSelector", "megapixels") is None
+    assert combo_options(info, "Legacy", "name") == ["a", "b"]
+    assert combo_options(info, "Dict", "name") == ["x"]
+    assert combo_options(info, "Missing", "name") is None

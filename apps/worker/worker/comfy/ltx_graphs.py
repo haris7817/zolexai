@@ -753,6 +753,13 @@ def combo_options(
             return [str(o) for o in head]
         if isinstance(head, dict) and isinstance(head.get("options"), list):
             return [str(o) for o in head["options"]]
+        # ComfyUI v3-schema nodes (core 0.34: ResolutionSelector and friends)
+        # report `["COMBO", {"options": [...], ...}]` — verified live on the
+        # GPU node, 5 Sep 2026.
+        if head == "COMBO" and len(entry) > 1 and isinstance(entry[1], dict):
+            options = entry[1].get("options")
+            if isinstance(options, list):
+                return [str(o) for o in options]
     return None
 
 
