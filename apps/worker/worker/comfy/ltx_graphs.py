@@ -80,6 +80,14 @@ UI_ONLY_KEYS = frozenset(
     }
 )
 
+#: UI-only widget keys that exist on one node class only (a preview image
+#: widget the KJ preview override draws into; the server declares no such
+#: input — verified against ComfyUI 0.34.5 + KJNodes e8e88f7 on 5 Sep 2026).
+UI_ONLY_KEYS_BY_CLASS: dict[str, frozenset[str]] = {
+    "ModelPreviewOverrideKJ": frozenset({"preview"}),
+    "LTX2SamplingPreviewOverride": frozenset({"preview"}),
+}
+
 #: Node classes whose presence makes a prompt executable (ComfyUI OUTPUT_NODE
 #: classes used by the pack). Everything not reachable backwards from one of
 #: these is pruned: it would never execute, and an orphaned loader with a
@@ -326,10 +334,11 @@ class _Flattener:
                 if src is None:
                     continue
                 inputs[inp["name"]] = src
+            ui_only = UI_ONLY_KEYS | UI_ONLY_KEYS_BY_CLASS.get(node_type, frozenset())
             widgets = {
                 k: v
                 for k, v in (node.get("widgets_values_named") or {}).items()
-                if k not in UI_ONLY_KEYS
+                if k not in ui_only
             }
             self.flat.nodes[flat_id] = FlatNode(
                 id=flat_id,

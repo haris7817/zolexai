@@ -505,3 +505,10 @@ def test_combo_options_reads_the_v3_schema_shape() -> None:
     assert combo_options(info, "Legacy", "name") == ["a", "b"]
     assert combo_options(info, "Dict", "name") == ["x"]
     assert combo_options(info, "Missing", "name") is None
+
+
+def test_per_class_ui_only_widgets_are_dropped() -> None:
+    api = flatten(_graph("text_to_video")).to_api_prompt()
+    [preview] = [e for e in api.values() if e["class_type"] == "ModelPreviewOverrideKJ"]
+    assert "preview" not in preview["inputs"]
+    assert preview["inputs"]["preview_fps"] == 24
