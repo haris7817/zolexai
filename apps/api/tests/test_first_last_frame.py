@@ -22,7 +22,9 @@ REGISTRY = load_registry(Path(app_settings.workflow_definitions_dir))
 
 async def test_the_catalogue_names_it_and_offers_two_stills(client: AsyncClient) -> None:
     workflow = (await client.get("/api/v1/workflows/image-to-video")).json()
-    assert workflow["name"] == "First/Last Frame Video"
+    # Display name reverted to "Image to Video" on the client's request (6 Sep 2026);
+    # the first/last-frame behaviour and inputs are unchanged.
+    assert workflow["name"] == "Image to Video"
     roles = {item["role"]: item for item in workflow["inputs"]}
     assert list(roles) == ["source_image", "last_frame"]
     assert roles["source_image"]["required"] is True

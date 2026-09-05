@@ -114,7 +114,7 @@ function WorkspaceMockup() {
             <div className="bg-zx-primary/22 text-zx-primary-light rounded-lg px-[10px] py-2 text-[12px] font-bold">
               Text to Video
             </div>
-            {["First/Last Frame Video", "Music", "Music Video", "All Tools"].map(
+            {["Image to Video", "Music", "Music Video", "All Tools"].map(
               (label) => (
                 <div
                   key={label}

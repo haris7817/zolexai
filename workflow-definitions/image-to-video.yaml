@@ -1,6 +1,6 @@
 id: image-to-video
 version: "1"
-name: First/Last Frame Video
+name: Image to Video
 category: video
 output_type: video
 
