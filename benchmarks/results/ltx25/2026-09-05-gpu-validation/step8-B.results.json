@@ -1,0 +1,21 @@
+[
+  {
+    "cell": "t2v-5s-16x9-r0",
+    "workflow": "text-to-video",
+    "seconds": 5,
+    "aspect": "16:9",
+    "inputs": {},
+    "wall_seconds": 54.7,
+    "output": "/workspace/zolexai/benchmarks/results/ltx25/step8-B/t2v-5s-16x9-r0.mp4",
+    "output_seconds": 5.041667,
+    "width": 1280,
+    "height": 704,
+    "fps": 24.0,
+    "has_audio": true,
+    "vram_peak_mib": 26056,
+    "vram_mean_mib": 19244,
+    "ram_peak_mib": 134451,
+    "error": null,
+    "status": "MEASURED"
+  }
+]

@@ -1,13 +1,15 @@
 # Client readiness report — LTX 2.5 client workflows
 
-**5 September 2026. Integration complete; GPU validation not started (no
-GPU node available).** Every phase below was executed and committed
-separately on `dual-engine-benchmark-prep`; every claim about the model is
-marked WAITING FOR GPU VALIDATION, and nothing in this document says a
-video was generated, timed or judged.
+**5 September 2026. Integration complete; GPU validation PASSED the same
+evening on an RTX PRO 6000 Blackwell** (`ltx25-gpu-model-validation.md`,
+`ltx25-gpu-benchmark.md`). What remains before a customer can test is
+deployment, not validation: the client-test environment (the VPS API/web
+rebuilt with the `client-test` routing profile and this node's worker
+registered against it) has not been applied yet.
 
 ```text
-CLIENT TEST READY: WAITING FOR GPU VALIDATION
+LTX 2.5 GPU VALIDATION: PASS
+CLIENT TEST READY: NO — pending the client-test deployment (routing profile + worker registration)
 ```
 
 ---
@@ -80,18 +82,20 @@ in `docs/internal/ltx-comfy-runtime.md` §3). None is on the node yet.
 
 ## 5. Benchmarks
 
-```text
-Generation benchmark (runtime, VRAM, RAM, fps, output length):  WAITING FOR GPU
-Quality validation against the ZIP samples:                      WAITING FOR GPU
-Real workflow execution (all three graphs, the extension seam):  WAITING FOR GPU
-Speed optimisation before/after pairs:                           WAITING FOR GPU
-```
+Measured 5 Sep 2026 on the RTX PRO 6000 (full tables in `ltx25-gpu-benchmark.md`):
 
-The only numbers this milestone can state are the ZIP samples' own probes
-(30.04 s / 721 frames / 1280x704 for T2V; 30.04 s / 832x1088 for FLF;
-8.04 s / 193 frames / 736x1280 for the replacement) and the progress-pacing
-placeholder `ltx_comfy_expected_wall_per_output_second = 8`, which is a
-guess until `scripts/ltx_comfy_bench.py` replaces it.
+| | |
+|---|---|
+| Text to Video 5 / 10 / 15 / 30 s (client graph, 1280x704) | 48.8 / 76.3 / 106.3 / 215.2 s; VRAM peak 27–34 GB |
+| First/Last Frame 5 s (704x1280) | 63.8 s first-only, 66.9 s both stills; VRAM peak 30.7 GB; identity held |
+| Character Replacement on the ZIP inputs (736x1280, 8 s) | 163.9 s; VRAM peak 75.9 GB; same handoff behaviour as the delivered sample |
+| Extend +5 s | 65.3 s; promised 10.042 s, measured 10.063 s; clean seam |
+| Official Lightricks CLI, 5 s, NVFP4 | 41.5 s cold; VRAM peak 24.1 GB |
+| ZolexAI vs ComfyUI direct, same text and seed | bit-identical (PSNR ∞, SSIM 1.0, audio 1.0) |
+
+```text
+Speed optimisation before/after pairs:  not started (Phase 5 checklist; baseline now exists)
+```
 
 ## 6. What was verified without a GPU
 
@@ -118,10 +122,12 @@ thing not exercised.
 
 ## 7. Limitations and findings
 
-1. **Nothing has run on a GPU.** Runtime, VRAM, RAM, fps, quality, seam
-   behaviour and the character-replacement sample comparison are all open.
-   `docs/internal/gpu-validation-checklist.md` is the list; the readiness
-   line flips to YES only when it is done.
+1. **GPU validation is done; deployment is not.** The client-test
+   environment still needs `deploy/vps-local.sh --profile client-test` on the
+   VPS, an api+web rebuild, and this node's worker pointed at it
+   (`RUNTIMES=ltx,ltx_comfy,character_replacement`, `ENABLE_H3=false`). The
+   node is a non-persistent Vast.ai container: recycle or destroy wipes the
+   180 GB of weights (`deploy/gpu/provision/` rebuilds it in about an hour).
 2. **Character Replacement is shipped hidden.** The definition, adapter,
    runtime, icon and tests exist; `hidden: true` keeps it out of the
    catalogue until the GPU validation clears it (`--profile client-test`

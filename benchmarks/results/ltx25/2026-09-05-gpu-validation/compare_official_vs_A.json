@@ -1,0 +1,47 @@
+{
+  "official_cli": {
+    "path": "/workspace/results/step7/official_t2v_5s_nvfp4-prequant_seed42_20260905-164543.mp4",
+    "duration": 5.041667,
+    "width": 1280,
+    "height": 704,
+    "fps": 24.0,
+    "frames": 121,
+    "sample_rate": 48000,
+    "channels": 2
+  },
+  "comfy_direct": {
+    "path": "/workspace/results/step8/A_comfy_direct_t2v_5s_seed42.mp4",
+    "duration": 5.041667,
+    "width": 1280,
+    "height": 704,
+    "fps": 24.0,
+    "frames": 121,
+    "sample_rate": 48000,
+    "channels": 2
+  },
+  "same_container": true,
+  "video": {
+    "psnr_db": {
+      "frames": 121,
+      "mean": 16.165123966942147,
+      "min": 12.42,
+      "worst_frame": 5,
+      "all_identical": false
+    },
+    "ssim": {
+      "frames": 121,
+      "mean": 0.5829736694214877,
+      "min": 0.538695,
+      "worst_frame": 46,
+      "all_identical": false
+    }
+  },
+  "audio": {
+    "zero_lag_correlation": 0.0108,
+    "best_correlation": 0.1166,
+    "best_lag_ms": -250.0,
+    "seconds_compared": 5.01
+  },
+  "verdict": "DIFFERENT",
+  "psnr_threshold_db": 35.0
+}

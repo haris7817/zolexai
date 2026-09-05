@@ -1,0 +1,37 @@
+{
+  "job_id": "extend-5s-fixed",
+  "workflow_id": "extend-video",
+  "engine": "ltx_comfy",
+  "fps": 24.0,
+  "per_pass_seconds": 30.0,
+  "added_seconds": 5.0,
+  "source": {
+    "name": "B_zolexai_t2v_5s_seed42.mp4",
+    "seconds": 5.041667,
+    "width": 1280,
+    "height": 704,
+    "fps": 24.0,
+    "has_audio": true
+  },
+  "passes": [
+    {
+      "index": 0,
+      "start_seconds": 0.0,
+      "seconds": 5.0,
+      "conditioning_frame": "continuation-seed.png",
+      "frames_rendered": 121,
+      "frames_kept": 120,
+      "wall_seconds": 63.7,
+      "width": 1280,
+      "height": 704
+    }
+  ],
+  "seams": [
+    5.0417
+  ],
+  "overlap_frames_per_seam": 1,
+  "audio": "source + generated per pass, edge-faded at seams",
+  "promised_seconds": 10.041667,
+  "measured_seconds": 10.062663,
+  "status": "WAITING FOR GPU VALIDATION"
+}

@@ -1,0 +1,24 @@
+[
+  {
+    "cell": "flf-fl-5s-9x16-r0",
+    "workflow": "image-to-video",
+    "seconds": 5,
+    "aspect": "9:16",
+    "inputs": {
+      "source_image": "/workspace/zolexai/benchmarks/client-pack/ltx25/samples/first_last_frame_input.png",
+      "last_frame": "/workspace/zolexai/benchmarks/client-pack/ltx25/samples/first_last_frame_input.png"
+    },
+    "wall_seconds": 66.9,
+    "output": "/workspace/zolexai/benchmarks/results/ltx25/step9-flf-both/flf-fl-5s-9x16-r0.mp4",
+    "output_seconds": 5.041667,
+    "width": 704,
+    "height": 1280,
+    "fps": 24.0,
+    "has_audio": true,
+    "vram_peak_mib": 30700,
+    "vram_mean_mib": 21573,
+    "ram_peak_mib": 70205,
+    "error": null,
+    "status": "MEASURED"
+  }
+]

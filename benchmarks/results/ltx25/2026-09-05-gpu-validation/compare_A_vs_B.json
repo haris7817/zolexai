@@ -1,0 +1,47 @@
+{
+  "comfy_direct": {
+    "path": "/workspace/results/step8/A_comfy_direct_t2v_5s_seed42.mp4",
+    "duration": 5.041667,
+    "width": 1280,
+    "height": 704,
+    "fps": 24.0,
+    "frames": 121,
+    "sample_rate": 48000,
+    "channels": 2
+  },
+  "zolexai": {
+    "path": "/workspace/results/step8/B_zolexai_t2v_5s_seed42.mp4",
+    "duration": 5.041667,
+    "width": 1280,
+    "height": 704,
+    "fps": 24.0,
+    "frames": 121,
+    "sample_rate": 48000,
+    "channels": 2
+  },
+  "same_container": true,
+  "video": {
+    "psnr_db": {
+      "frames": 121,
+      "mean": 19.882809917355374,
+      "min": 16.48,
+      "worst_frame": 3,
+      "all_identical": false
+    },
+    "ssim": {
+      "frames": 121,
+      "mean": 0.5850188181818182,
+      "min": 0.539281,
+      "worst_frame": 14,
+      "all_identical": false
+    }
+  },
+  "audio": {
+    "zero_lag_correlation": 0.5201,
+    "best_correlation": 0.5201,
+    "best_lag_ms": 0.0,
+    "seconds_compared": 5.03
+  },
+  "verdict": "DIFFERENT",
+  "psnr_threshold_db": 35.0
+}

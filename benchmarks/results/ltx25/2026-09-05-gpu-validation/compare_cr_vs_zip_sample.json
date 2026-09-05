@@ -1,0 +1,47 @@
+{
+  "zip_sample": {
+    "path": "/workspace/results/zip_sample_character_replacement.mp4",
+    "duration": 8.041667,
+    "width": 736,
+    "height": 1280,
+    "fps": 24.0,
+    "frames": 193,
+    "sample_rate": 44100,
+    "channels": 2
+  },
+  "zolexai_cr": {
+    "path": "/workspace/zolexai/benchmarks/results/ltx25/step9-cr/cr-r0.mp4",
+    "duration": 8.041667,
+    "width": 736,
+    "height": 1280,
+    "fps": 24.0,
+    "frames": 193,
+    "sample_rate": 44100,
+    "channels": 2
+  },
+  "same_container": true,
+  "video": {
+    "psnr_db": {
+      "frames": 193,
+      "mean": 20.321036269430053,
+      "min": 13.69,
+      "worst_frame": 1,
+      "all_identical": false
+    },
+    "ssim": {
+      "frames": 193,
+      "mean": 0.802926652849741,
+      "min": 0.730534,
+      "worst_frame": 1,
+      "all_identical": false
+    }
+  },
+  "audio": {
+    "zero_lag_correlation": 1.0,
+    "best_correlation": 1.0,
+    "best_lag_ms": 0.0,
+    "seconds_compared": 8.03
+  },
+  "verdict": "DIFFERENT",
+  "psnr_threshold_db": 35.0
+}

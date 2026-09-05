@@ -1,5 +1,7 @@
 # GPU validation checklist — LTX 2.5 client workflows
 
+> **Executed 5 September 2026 on the RTX PRO 6000 (`163.182.37.67:20577`).** Sections 1–8 done and recorded in `ltx25-gpu-model-validation.md` and `ltx25-gpu-benchmark.md` (LTX 2.5 GPU VALIDATION: PASS). Section 9 — the client-test deployment (routing profile, api+web rebuild, parity and e2e against it) — is the remaining step before CLIENT TEST READY: YES.
+
 **Run this when the GPU node is available. Until every box is ticked with a
 recorded number, the readiness report says CLIENT TEST READY: WAITING FOR
 GPU VALIDATION.** Do not change the architecture during validation: the

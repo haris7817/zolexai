@@ -1,0 +1,47 @@
+{
+  "comfy_direct_sametext": {
+    "path": "/workspace/results/step8/A2_comfy_direct_sametext_seed42.mp4",
+    "duration": 5.041667,
+    "width": 1280,
+    "height": 704,
+    "fps": 24.0,
+    "frames": 121,
+    "sample_rate": 48000,
+    "channels": 2
+  },
+  "zolexai": {
+    "path": "/workspace/results/step8/B_zolexai_t2v_5s_seed42.mp4",
+    "duration": 5.041667,
+    "width": 1280,
+    "height": 704,
+    "fps": 24.0,
+    "frames": 121,
+    "sample_rate": 48000,
+    "channels": 2
+  },
+  "same_container": true,
+  "video": {
+    "psnr_db": {
+      "frames": 121,
+      "mean": Infinity,
+      "min": Infinity,
+      "worst_frame": 0,
+      "all_identical": true
+    },
+    "ssim": {
+      "frames": 121,
+      "mean": 1.0,
+      "min": 1.0,
+      "worst_frame": 0,
+      "all_identical": false
+    }
+  },
+  "audio": {
+    "zero_lag_correlation": 1.0,
+    "best_correlation": 1.0,
+    "best_lag_ms": 0.0,
+    "seconds_compared": 5.03
+  },
+  "verdict": "MATCH",
+  "psnr_threshold_db": 35.0
+}

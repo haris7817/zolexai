@@ -714,10 +714,11 @@ class WorkerSettings(BaseSettings):
     """Whole-submission ceiling. UNMEASURED on this pack — the ZIP shipped no
     timings. Revisit after the GPU benchmark (`scripts/ltx_comfy_bench.py`)."""
 
-    ltx_comfy_expected_wall_per_output_second: float = 8.0
-    """Progress pacing only — never a completion claim. WAITING FOR GPU
-    VALIDATION: the pack's samples carry no wall-clock, so this is a
-    placeholder until the benchmark writes the measured rate here."""
+    ltx_comfy_expected_wall_per_output_second: float = 7.5
+    """Progress pacing only — never a completion claim. Measured 5 Sep 2026
+    on the RTX PRO 6000 (client T2V graph, 1280x704): 48.8 s for 5 s, 76 s
+    for 10 s, 106 s for 15 s, 215 s for 30 s — about 20 s fixed plus 6.5 s
+    per output second. 7.5 keeps the bar honest across the ladder."""
 
     ltx_comfy_frame_rate: int = 24
     """What the graphs' FPS constants say. Every product duration lands on

@@ -1,0 +1,24 @@
+[
+  {
+    "cell": "cr-r0",
+    "workflow": "character-replacement",
+    "seconds": null,
+    "aspect": null,
+    "inputs": {
+      "source_video": "/workspace/zolexai/benchmarks/client-pack/ltx25/samples/character_replacement_source.mp4",
+      "reference_image": "/workspace/zolexai/benchmarks/client-pack/ltx25/samples/first_last_frame_input.png"
+    },
+    "wall_seconds": 163.9,
+    "output": "/workspace/zolexai/benchmarks/results/ltx25/step9-cr/cr-r0.mp4",
+    "output_seconds": 8.041667,
+    "width": 736,
+    "height": 1280,
+    "fps": 24.0,
+    "has_audio": true,
+    "vram_peak_mib": 75944,
+    "vram_mean_mib": 43887,
+    "ram_peak_mib": 102207,
+    "error": null,
+    "status": "MEASURED"
+  }
+]

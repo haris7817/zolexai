@@ -1,11 +1,13 @@
 # LTX 2.5 ComfyUI runtime — the second instance
 
-**Internal. Written 5 September 2026, before the GPU node was available.**
-Every pin below is what the client's graphs stamp, the ZIP's own notes say,
-or a public source states; nothing has been installed or run yet.
-STATUS: WAITING FOR GPU VALIDATION. When the node returns, provision in the
-order of §3, run `scripts/ltx_comfy_health.py --deep`, and replace the
-"stamped" pins here with the commits that actually served the validation.
+**Internal. Written 5 September 2026 before the GPU node was available;
+updated the same evening with what actually served.** STATUS: VALIDATED on
+the RTX PRO 6000 (`ltx25-gpu-model-validation.md`, `ltx25-gpu-benchmark.md`).
+Two pins deviate from the graphs' stamps, both forced by ComfyUI 0.34.5:
+ComfyUI-LTXVideo at master `15d09ab` (the stamped `229437c` no longer
+imports) and `kornia==0.8.1` (0.8.3 broke that pack's import). ComfyUI is
+v0.34.5, torch 2.14.0+cu130. Service, weights and layout are exactly as
+below; the provisioning scripts are in `deploy/gpu/provision/`.
 
 Why a second instance: the H3 runtime is frozen at ComfyUI **v0.33.3**
 (`h3-client-runtime-freeze.md`). The client's LTX graphs use nodes stamped
@@ -39,7 +41,7 @@ shared directory is required.
 | ComfyUI-GGUF (city96) | `6ea2651e7df66d7585f6ffee804b20e92fb38b8a` | UnetLoaderGGUF |
 | ComfyUI-KJNodes (kijai) | the newest of `e8e88f7c88e3f6205b122f5de87e69a09fbce5ac`, `5b38397a6430fdb16c7bd14a6bd64c2b0e69a5f0`, `71578cf49e48978cf1c6714494b669b1e571777b`, `676431504394217d8e0992e740370dbeec5e8dc1` (1.4.0 era) | LTX2AttentionTunerPatch, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, SimpleCalculatorKJ, VAELoaderKJ, ImageResizeKJv2, INTConstant, ModelPreviewOverrideKJ, LTX2SamplingPreviewOverride |
 | rgthree-comfy | `6b76ee6f2c5a007710b5a16f97c94330d6ecc871` | Power Lora Loader |
-| ComfyUI-LTXVideo (Lightricks) | `229437c6b65796d6a7a63ae34be2bd5ba31fa543` | LTXAddVideoICLoRAGuideAdvanced |
+| ComfyUI-LTXVideo (Lightricks) | **served: master `15d09abb5a187a8dcaea2fc31fe51ee96e6c9d0d` (2026-08-20)** — the stamped `229437c6…` fails to import on 0.34.5; needs `kornia==0.8.1` | LTXAddVideoICLoRAGuideAdvanced |
 | ComfyUI-VideoHelperSuite | `115de7a9d9e34410cffb9ecfd268e993b11a50fb` (1.7.9 era) | VHS_VideoCombine, VHS_LoadVideoFFmpeg, VHS_VideoInfo |
 | ComfyUI-Easy-Use | `005c57839c5bee88f1a0a41970ca965ab470a4c8` (1.3.4) | easy cleanGpuUsed, easy ifElse |
 | ComfyMath (evanspearman) | `c01177221c31b8e5fbc062778fc8254aeb541638` | CM_IntToFloat, CM_FloatToInt |

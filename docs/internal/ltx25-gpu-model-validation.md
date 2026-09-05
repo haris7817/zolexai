@@ -112,10 +112,14 @@ offered by the server". Per graph:
 ### 5.2 First/Last Frame Video (+ Audio) — `ltx25_first_last_frame.json`
 
 Same loaders, LoRAs and files as 5.1; adds `LoadImage` ×2 →
-`ResizeImageMaskNode` → `LTXVImgToVideoInplace` (strength 0.8) and
-`LTXVImgToVideoInplaceKJ` (indices 0 / −1). Compiles and validates on the
-server with both stills and with the first still only (last-frame node
-bypassed). Render: see §7 when run.
+`ResizeImageMaskNode` → `LTXVPreprocess` → `LTXVImgToVideoInplaceKJ`
+(two images, indices 0 / −1, strength 1, stage 1) and `LTXVImgToVideoInplace`
+(first image, strength 0.8, stage 2). Compiles, validates and **rendered**
+both ways: first + last still (5 s, 66.9 s, identity held) and first still
+only (5 s, 63.8 s). The first-only path is the KJ node run with ONE image
+(its own `num_images` counter set to 1); the first implementation bypassed
+the node and lost the identity after frame 0 on the GPU — fixed the same day
+(`24037b6`), re-rendered, identity held.
 
 ### 5.3 Character Replacement — `ltx25_character_replacement.json`
 
@@ -126,7 +130,7 @@ bypassed). Render: see §7 when run.
 | LoRA | `LTX/LTX-2.5/LTX25_Ripple_v11.safetensors` @1.35 (`bde54361…`, WepeNerd/LTX-Ripple, LTX-2.x derivative) — present |
 | Guide node | `LTXAddVideoICLoRAGuideAdvanced` from ComfyUI-LTXVideo `15d09ab` — present, inputs identical to the graph's |
 | Patches | `ModelSamplingSD3`, `LTX2AttentionTunerPatch`, `LTXVChunkFeedForward`, `ModelAttentionBackend` — all present |
-| Result | compiles and validates; render: see §7 when run |
+| Result | RENDERED on the ZIP inputs (the sample clip + the yacht still): 736x1280, 193 frames, 8.04 s, source audio; 163.9 s; the same four-frame handoff as the delivered sample (frame 0 = photo, from frame 4 the source's motion), identity held to the last frame |
 
 ### 5.4 What was NOT changed
 
@@ -156,4 +160,18 @@ Every file exists (deep health check, `weights_official.txt`,
 
 ## 7. Steps 8 and 9
 
-See `docs/internal/ltx25-gpu-benchmark.md`.
+Measured and recorded in `docs/internal/ltx25-gpu-benchmark.md`: ZolexAI's
+output is bit-identical to the client graph submitted directly with the same
+text and seed; the 5/10/15/30 s ladder, VRAM and RAM are tabulated there.
+
+## 8. Reproduce this node
+
+`deploy/gpu/provision/` holds the exact scripts that built it, in order:
+`ltx_env.sh` → `ltx_kernels.sh` (official stack, kernels), `comfy_env.sh`
+(ComfyUI + pinned packs; the `kornia==0.8.1` pin and the LTXVideo master
+checkout were applied by hand afterwards — bake them in before the next
+node), `downloads_public.sh`, `downloads_gated.sh` (needs `HF_HOME/token`),
+`link_official_into_comfy.sh`, `worker_env.sh`; then
+`deploy/gpu/zolexai-ltx-comfy.{conf,sh}` under supervisord. Validation
+runners: `step7_official_t2v.sh`, `step8_9.sh`, `step10_more.sh`,
+`step12_rerender.sh`.

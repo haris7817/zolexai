@@ -1,0 +1,25 @@
+{
+  "tag": "official_t2v_5s_nvfp4-prequant_seed42_20260905-164543",
+  "pipeline": "ltx_pipelines.distilled @400fd31",
+  "quantization": "nvfp4-prequant",
+  "seed": 42,
+  "prompt_words": 20,
+  "requested": {
+    "width": 1280,
+    "height": 704,
+    "num_frames": 121,
+    "fps": 24
+  },
+  "wall_seconds": 41.5,
+  "max_rss_mib": 26567,
+  "vram_peak_mib": 24093,
+  "vram_mean_mib": 13133,
+  "output": {
+    "width": 1280,
+    "height": 704,
+    "fps": 24.0,
+    "frames": 121,
+    "duration": 5.041667,
+    "audio_streams": 1
+  }
+}
