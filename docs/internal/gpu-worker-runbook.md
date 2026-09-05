@@ -2423,7 +2423,7 @@ Through zolexai.com:
 
 ## 46. Deploy: the LTX 2.5 client graphs — second ComfyUI, two new runtimes (Sep 2026)
 
-**Provisioned and validated on 5 Sep 2026** on a fresh Vast.ai RTX PRO 6000 (`ssh -p 20577 root@163.182.37.67`, key `~/.ssh/zolexai_vast`; NOT a persistent volume) with the scripts in `deploy/gpu/provision/`. Results: `ltx25-gpu-model-validation.md`, `ltx25-gpu-benchmark.md`. The worker on that node is not yet registered against the VPS API (no `.env`, no tunnel) — that is the client-test deployment step. It records what the final-milestone integration expects the
+**Provisioned and validated on 5 Sep 2026** on a fresh Vast.ai RTX PRO 6000 (`ssh -p 20577 root@163.182.37.67`, key `~/.ssh/zolexai_vast`; NOT a persistent volume) with the scripts in `deploy/gpu/provision/`. Results: `ltx25-gpu-model-validation.md`, `ltx25-gpu-benchmark.md`. Deployed the same night: the VPS runs `--profile client-test` (api+web rebuilt from `bb402e9`), the node's tunnel key (`SHA256:gzE8RmikMESJrpweEURn9nciKaH3gJTBgOW6Kl+S6ag`) is authorised on the VPS, the worker runs under supervisord (`deploy/gpu/provision/node_worker_setup.sh`) as `ltx-6000-2` with `RUNTIMES=ltx,ltx_comfy,character_replacement`, and the first public job rendered end to end. One trap from that deploy: `git stash push -u` on the VPS sweeps the untracked `infrastructure/compose/docker-compose.prod.yml` and `infrastructure/minio-cors.xml` into the stash — restore them from `stash@{N}^3` before building. It records what the final-milestone integration expects the
 node to look like, so GPU day is provisioning and validation, not design.
 
 ### 46.1 What changes on the node

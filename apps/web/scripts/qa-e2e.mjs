@@ -36,7 +36,14 @@ try {
   // ── 1. Workflow metadata comes from the API ────────────────────────────
   console.log("\n1. Workflow metadata from the API");
   const workflows = await (await fetch(`${API}/api/v1/workflows`)).json();
-  check("API serves six workflows", workflows.workflows.length === 6);
+  // Six core tools always; Character Replacement joins them when a deployment
+  // un-hides it (client-test profile, Sep 2026), so the count is 6 or 7.
+  const served = new Set(workflows.workflows.map((w) => w.id));
+  const core = ["text-to-video", "image-to-video", "video-to-video", "extend-video", "music", "music-video"];
+  check(
+    `API serves the core workflows (${served.size} served)`,
+    core.every((id) => served.has(id)) && (served.size === 6 || served.size === 7),
+  );
 
   await page.goto(`${BASE}/app/create/text-to-video`, { waitUntil: "domcontentloaded" });
   check(

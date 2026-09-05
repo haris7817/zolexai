@@ -1,15 +1,19 @@
 # Client readiness report — LTX 2.5 client workflows
 
-**5 September 2026. Integration complete; GPU validation PASSED the same
-evening on an RTX PRO 6000 Blackwell** (`ltx25-gpu-model-validation.md`,
-`ltx25-gpu-benchmark.md`). What remains before a customer can test is
-deployment, not validation: the client-test environment (the VPS API/web
-rebuilt with the `client-test` routing profile and this node's worker
-registered against it) has not been applied yet.
+**5 September 2026. Integration complete; GPU validation PASSED on an RTX
+PRO 6000 Blackwell** (`ltx25-gpu-model-validation.md`, `ltx25-gpu-benchmark.md`);
+**client-test deployment applied the same night.** The VPS runs the
+`client-test` routing profile (api and web rebuilt from `bb402e9`,
+`ENABLE_H3=false` inside the container), the public catalogue serves the
+seven final workflows and passes the parity check from outside, the GPU
+node's worker is registered as `ltx-6000-2` with `ltx, ltx_comfy,
+character_replacement` over the VPS tunnel, and the first customer job
+submitted through the public UI — a 15 s Text to Video — was claimed,
+rendered on the client's graph in 110 s at 1280x704, uploaded and completed.
 
 ```text
 LTX 2.5 GPU VALIDATION: PASS
-CLIENT TEST READY: NO — pending the client-test deployment (routing profile + worker registration)
+CLIENT TEST READY: YES
 ```
 
 ---
@@ -122,12 +126,16 @@ thing not exercised.
 
 ## 7. Limitations and findings
 
-1. **GPU validation is done; deployment is not.** The client-test
-   environment still needs `deploy/vps-local.sh --profile client-test` on the
-   VPS, an api+web rebuild, and this node's worker pointed at it
-   (`RUNTIMES=ltx,ltx_comfy,character_replacement`, `ENABLE_H3=false`). The
-   node is a non-persistent Vast.ai container: recycle or destroy wipes the
-   180 GB of weights (`deploy/gpu/provision/` rebuilds it in about an hour).
+1. **The GPU node is a non-persistent Vast.ai container** (`163.182.37.67:20577`):
+   recycle or destroy wipes the 180 GB of weights and the environment;
+   `deploy/gpu/provision/` rebuilds it in about an hour. It serves `ltx,
+   ltx_comfy, character_replacement` and has **no ACE-Step**, so Music jobs
+   queue until a node advertising `music` is online.
+1b. **Live browser harness** against `https://zolexai.com`: the catalogue and
+   validation checks pass; the submission step is disturbed whenever another
+   job is in flight, because the workspace auto-selects the newest job and
+   the harness expects a quiet workspace. The submission path was proven by
+   the real job above; the harness stays a local-stack tool.
 2. **Character Replacement is shipped hidden.** The definition, adapter,
    runtime, icon and tests exist; `hidden: true` keeps it out of the
    catalogue until the GPU validation clears it (`--profile client-test`
