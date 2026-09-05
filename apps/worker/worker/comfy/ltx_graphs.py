@@ -26,19 +26,20 @@ compiler never met:
     wires keyed by a `Constant` name — a `GetNode` inside a subgraph reads a
     root `SetNode`. They are resolved to the real source before anything
     else, then dropped.
-  * **A per-graph edit set** that includes structural bypass (the optional
-    last frame) and dual-orientation canvas for a graph that pins one.
+  * **A per-graph edit set** that includes the optional last frame (the
+    conditioning node's own image counter) and dual-orientation canvas for a
+    graph that pins one.
 
 ## What "sanctioned" means here
 
 Every edit is one the pack's author exposed as a user input: the prompt boxes,
 the "Clip Length" slider, the aspect-ratio selector, the seed, the two image
 loaders, the video loader, the width/height/length constants, the output
-prefix. The one structural edit — bypassing the last-frame conditioning node
-when no last frame was supplied — is ComfyUI's own bypass semantics applied
-to one node, which is what a user would click to run the graph with a first
-frame only. Nothing here touches a sampler, a schedule, a LoRA strength or a
-model file.
+prefix. The one structural edit — the two-image conditioning node run with
+one image when no last frame was supplied — is the node's own image counter
+set to 1, which is what a user would do to run the graph with a first frame
+only. Nothing here touches a sampler, a schedule, a LoRA strength or a model
+file.
 
 ## Verification without a GPU
 
@@ -649,15 +650,29 @@ def set_int_constant(flat: FlatGraph, title_fragment: str, value: int) -> None:
 def drop_last_frame(flat: FlatGraph) -> None:
     """Runs graph 02 with the first frame only.
 
-    The last frame is consumed by the subgraph's `LTXVImgToVideoInplaceKJ`
-    node (both stills, indices 0 and −1, on the stage-1 latent). Bypassing it
-    is the ComfyUI gesture for "no last frame": the empty latent passes
-    straight through to the audio/video concat, and the stage-2 first-frame
-    conditioning (`LTXVImgToVideoInplace`, strength 0.8) keeps the first
-    frame pinned. The second loader and its resize node become unreachable
-    and are pruned, so no placeholder filename is ever validated.
+    The stills are consumed by the subgraph's `LTXVImgToVideoInplaceKJ` node
+    (a two-image conditioning on the stage-1 latent: index 0 and index −1,
+    both at strength 1). "No last frame" is that node with ONE image — its
+    `num_images` count set to 1 and the second image group removed — which is
+    exactly what a ComfyUI user does with the node's own image counter. The
+    stage-2 first-frame conditioning (`LTXVImgToVideoInplace`, strength 0.8)
+    stays as shipped. The second loader, its resize and its preprocess become
+    unreachable and are pruned, so no placeholder filename is ever validated.
+
+    Measured on the GPU, 5 Sep 2026: bypassing the node instead (the first
+    implementation) left stage 1 with no image conditioning at all — frame 0
+    matched the still and every later frame showed a different person in a
+    different place. With the one-image node the identity holds.
     """
-    flat.bypass(flat.one_of_type("LTXVImgToVideoInplaceKJ").id)
+    kj = flat.one_of_type("LTXVImgToVideoInplaceKJ")
+    for key in [k for k in kj.inputs if k.startswith("num_images.") and k.endswith("_2")]:
+        del kj.inputs[key]
+    for key in [k for k in kj.widgets if k.startswith("num_images.") and k.endswith("_2")]:
+        del kj.widgets[key]
+    if "num_images" in kj.widgets:
+        # The graph stores the counter as a string; keep the type it was
+        # validated with.
+        kj.widgets["num_images"] = type(kj.widgets["num_images"])(1)
 
 
 # ── Per-graph compilers ─────────────────────────────────────────────────────

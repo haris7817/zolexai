@@ -240,7 +240,9 @@ async def test_extend_video_runs_the_first_frame_graph_once_per_section(tmp_path
     ]
     prompt = fake.submitted["prompt"]
     types = {e["class_type"] for e in prompt.values()}
-    assert "LTXVImgToVideoInplace" in types and "LTXVImgToVideoInplaceKJ" not in types
+    assert "LTXVImgToVideoInplace" in types
+    [kj] = [e for e in prompt.values() if e["class_type"] == "LTXVImgToVideoInplaceKJ"]
+    assert kj["inputs"]["num_images"] == "1"  # one image: the previous part's last frame
     [loader] = [e for e in prompt.values() if e["class_type"] == "LoadImage"]
     assert loader["inputs"]["image"] == "zolex_job-ext-1_continue01.png"
     [selector] = [e for e in prompt.values() if e["class_type"] == "ResolutionSelector"]

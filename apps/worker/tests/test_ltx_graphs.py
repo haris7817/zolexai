@@ -275,34 +275,27 @@ def test_first_last_frame_with_both_stills_runs_the_graph_unmodified() -> None:
     assert inplace["inputs"]["strength"] == 0.8
 
 
-def test_first_frame_only_bypasses_the_last_frame_node_and_prunes_its_loader() -> None:
-    """ComfyUI's bypass applied to one node: the empty latent passes straight
-    to the concat, the second loader chain disappears, and the stage-2
-    first-frame conditioning stays exactly as shipped."""
+def test_first_frame_only_keeps_the_conditioning_node_with_one_image() -> None:
+    """The KJ two-image node becomes a one-image node (its own counter set to
+    1, the second image group gone); the second loader chain disappears; the
+    stage-2 first-frame conditioning stays exactly as shipped. Bypassing the
+    node instead lost the identity after frame 0 on the GPU (5 Sep 2026)."""
     graph = _graph("first_last_frame")
     api = compile_first_last_frame(graph, _t2v_edits(first_image="first.png", last_image=None))
     types = class_types_of(api)
-    assert "LTXVImgToVideoInplaceKJ" not in types
+    assert "LTXVImgToVideoInplaceKJ" in types
     assert "LTXVImgToVideoInplace" in types
     assert [e["inputs"]["image"] for e in api.values() if e["class_type"] == "LoadImage"] == [
         "first.png"
     ]
-    assert len(api) == 50  # 54 minus the KJ node, the second loader, its resize and its preprocess
-    # The concat that used to read the KJ node now reads what the KJ node read.
-    [latent] = [nid for nid, e in api.items() if e["class_type"] == "EmptyLTXVLatentVideo"]
-    concat_sources = [
-        api[e["inputs"]["video_latent"][0]]["class_type"]
-        for e in api.values()
-        if e["class_type"] == "LTXVConcatAVLatent"
-    ]
-    assert "easy cleanGpuUsed" in concat_sources
-    [cleaner] = [
-        e
-        for e in api.values()
-        if e["class_type"] == "easy cleanGpuUsed"
-        and e["inputs"].get("anything", [None])[0] == latent
-    ]
-    assert cleaner
+    [kj] = [e for e in api.values() if e["class_type"] == "LTXVImgToVideoInplaceKJ"]
+    assert kj["inputs"]["num_images"] == "1"
+    assert kj["inputs"]["num_images.index_1"] == 0 and kj["inputs"]["num_images.strength_1"] == 1
+    assert not any(k.endswith("_2") for k in kj["inputs"])
+    assert isinstance(kj["inputs"]["num_images.image_1"], list)
+    assert len(api) == 51  # 54 minus the second loader, its resize and its preprocess
+    [inplace] = [e for e in api.values() if e["class_type"] == "LTXVImgToVideoInplace"]
+    assert inplace["inputs"]["strength"] == 0.8
 
 
 def test_first_last_frame_requires_a_first_image() -> None:

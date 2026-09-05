@@ -1,6 +1,7 @@
 """Compare two generated videos frame by frame — the Step 8 "must match" check.
 
-    python scripts/compare_outputs.py A.mp4 B.mp4 [--label-a comfy --label-b zolexai] [--json out.json]
+    python scripts/compare_outputs.py A.mp4 B.mp4 [--label-a comfy --label-b zolexai]
+        [--json out.json]
 
 Reports, for the pair:
 

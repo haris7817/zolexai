@@ -43,7 +43,9 @@ def test_the_runtime_serves_first_last_frame_video() -> None:
 
 
 @needs_ffmpeg
-async def test_first_frame_only_runs_the_graph_with_the_last_frame_bypassed(tmp_path: Path) -> None:
+async def test_first_frame_only_runs_the_graph_with_a_one_image_conditioning_node(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()
     first = await _still(tmp_path / "first.png")
@@ -60,8 +62,9 @@ async def test_first_frame_only_runs_the_graph_with_the_last_frame_bypassed(tmp_
     assert [name for name, _ in fake.uploads] == ["zolex_job-ltx-1_first.png"]
     prompt = fake.submitted["prompt"]
     types = {e["class_type"] for e in prompt.values()}
-    assert "LTXVImgToVideoInplace" in types  # the first-frame conditioning
-    assert "LTXVImgToVideoInplaceKJ" not in types  # the last-frame node, bypassed
+    assert "LTXVImgToVideoInplace" in types  # the stage-2 first-frame conditioning
+    [kj] = [e for e in prompt.values() if e["class_type"] == "LTXVImgToVideoInplaceKJ"]
+    assert kj["inputs"]["num_images"] == "1"  # one image, no last-frame group
     loaders = [e["inputs"]["image"] for e in prompt.values() if e["class_type"] == "LoadImage"]
     assert loaders == ["zolex_job-ltx-1_first.png"]
     texts = {

@@ -1,6 +1,7 @@
 """Submit a frozen client graph to ComfyUI exactly as its frontend would — no adapter.
 
-    python scripts/ltx_comfy_direct.py t2v --prompt "..." --seed 42 --seconds 5 --aspect 16:9 --out /tmp/direct.mp4
+    python scripts/ltx_comfy_direct.py t2v --prompt "..." --seed 42 --seconds 5 \
+        --aspect 16:9 --out /tmp/direct.mp4
     python scripts/ltx_comfy_direct.py flf --first a.png [--last b.png] ...
     python scripts/ltx_comfy_direct.py cr --video src.mp4 --image ref.png --seconds 8 ...
 
