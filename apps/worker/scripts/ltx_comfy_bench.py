@@ -197,6 +197,9 @@ async def main() -> int:
     parser.add_argument("--image", type=Path)
     parser.add_argument("--comfy-pid", type=int, default=None, help="ComfyUI pid for RAM sampling")
     parser.add_argument("--repeat", type=int, default=1)
+    parser.add_argument(
+        "--seed", type=int, default=None, help="fixed seed for every cell (Step 8 comparison)"
+    )
     parser.add_argument("--stamp", default=time.strftime("%Y%m%d-%H%M%S"))
     args = parser.parse_args()
 
@@ -219,6 +222,7 @@ async def main() -> int:
                         [],
                         duration=f"{seconds}s",
                         aspect_ratio=aspect,
+                        **({"seed": args.seed} if args.seed is not None else {}),
                     )
                     records.append(
                         await run_cell(
@@ -247,6 +251,7 @@ async def main() -> int:
                         inputs,
                         duration=f"{seconds}s",
                         aspect_ratio=aspect,
+                        **({"seed": args.seed} if args.seed is not None else {}),
                     )
                     records.append(
                         await run_cell(
@@ -272,7 +277,13 @@ async def main() -> int:
             ]
             cell = f"cr-r{repeat}"
             print(f"== {cell}")
-            job = _job("character-replacement", workspace_root / cell, args.prompt, inputs)
+            job = _job(
+                "character-replacement",
+                workspace_root / cell,
+                args.prompt,
+                inputs,
+                **({"seed": args.seed} if args.seed is not None else {}),
+            )
             records.append(
                 await run_cell(
                     RunRecord(
