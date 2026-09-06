@@ -215,12 +215,21 @@ try {
       waitUntil: "domcontentloaded",
     });
     // The filled state shows the asset's name and a Remove control; the empty
-    // state shows a drop prompt instead.
+    // state shows a drop prompt instead. The control appears once the asset
+    // lookup resolves (one API round trip after hydration), so wait for it
+    // rather than sampling the instant the DOM is parsed — sampling early is
+    // what produced two false failures here on 5 Sep 2026.
     const filled = page.getByRole("button", { name: `Remove ${sourceAsset.name}` });
+    await filled.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
     check(
       "the handed-over source is shown as already provided",
       await filled.isVisible().catch(() => false),
     );
+    // Extend requires a prompt (check 2 above proves an empty prompt disables
+    // Generate on every tool), so type one: what this proves is that the
+    // seeded source alone satisfies the required input — no manual upload.
+    await page.locator("#zx-prompt").fill("the shot continues along the pier");
+    await page.waitForTimeout(400);
     check(
       "Generate is enabled without a manual upload",
       await page
