@@ -98,10 +98,36 @@ def negative_for(workflow_id: str, execution: dict) -> str:
     return DEFAULT_NEGATIVE.get(workflow_id, FIRST_LAST_FRAME_NEGATIVE)
 
 
-def character_replacement_prompt(description: str) -> str:
+#: The hands clause for CHAINED character replacement (7 Sep 2026). Measured
+#: on the client's clip: the face holds the photo's skin tone but the hands
+#: darken inside every window and each seed carries it on — the photo shows
+#: the hands small and at another pose, the video guide re-synthesises them
+#: every frame, and nothing in the text spoke about them. This is the one
+#: signal that speaks DURING a window. Relational on purpose (no colour is
+#: named, so it cannot pull any character's skin the wrong way) and worded
+#: "whenever they are in view" so it never asks for hands the source does not
+#: show. Sits between the pack's lead sentence and the customer's own words.
+CHARACTER_REPLACEMENT_SKIN = (
+    "The character established in the first frame is one person from head to "
+    "hands: the hands, wrists and any other bare skin have exactly the same "
+    "skin tone as the face and are lit the same way as the face whenever they "
+    "are in view - gesturing, coming close to the camera, crossing in front of "
+    "the face, leaving and re-entering the frame. That skin tone, on the face "
+    "and on the hands alike, stays exactly the same from the first frame to "
+    "the last frame."
+)
+
+
+def character_replacement_prompt(description: str, *, skin: str | None = None) -> str:
     """The pack's lead sentence, then the customer's description of the new
-    character (which the sample prompt shows is what carries identity)."""
+    character (which the sample prompt shows is what carries identity).
+
+    With `skin` (the hands clause, chained jobs only) it goes between the two;
+    without it the text is byte for byte what it always was."""
     description = description.strip()
-    if not description:
-        return CHARACTER_REPLACEMENT_LEAD
-    return f"{CHARACTER_REPLACEMENT_LEAD} {description}"
+    parts = [CHARACTER_REPLACEMENT_LEAD]
+    if skin and skin.strip():
+        parts.append(skin.strip())
+    if description:
+        parts.append(description)
+    return " ".join(parts)

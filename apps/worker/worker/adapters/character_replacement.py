@@ -82,7 +82,11 @@ from worker.comfy.ltx_graphs import (
     compile_character_replacement,
     oriented_canvas,
 )
-from worker.comfy.ltx_prompts import character_replacement_prompt, negative_for
+from worker.comfy.ltx_prompts import (
+    CHARACTER_REPLACEMENT_SKIN,
+    character_replacement_prompt,
+    negative_for,
+)
 from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.longform import GENERATE_FROM, GENERATE_TO, StageReporter
@@ -227,6 +231,8 @@ class ChainMetadata:
     anchor: dict[str, float] | None = None
     """The first window's own rendering just after its handoff — what every
     later seed is matched to."""
+    skin_clause: bool = False
+    """Whether the hands clause was in every window's prompt."""
 
     def write(self, path: Path) -> Path:
         path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
@@ -410,13 +416,15 @@ class CharacterReplacementAdapter:
         anchoring = mode == "previous_frame" and self.anchors_reference(job)
         anchor: ColourAnchor | None = None
         pending_correction: dict[str, float] | None = None
+        skin_clause = CHARACTER_REPLACEMENT_SKIN if self.chain_skin_clause(job) else None
+        metadata.skin_clause = skin_clause is not None
 
         for window in windows:
             job.raise_if_cancelled()
             clip = await self._cut_window(job, staged, info, window)
             video_name = await self._upload_clip(clip)
             edits = ReplacementEdits(
-                positive=character_replacement_prompt(job.prompt),
+                positive=character_replacement_prompt(job.prompt, skin=skin_clause),
                 negative=negative_for(WORKFLOW_ID, job.execution),
                 video=video_name,
                 image=image_name,
@@ -669,6 +677,13 @@ class CharacterReplacementAdapter:
                 },
             )
         return plan_windows(total, per_window)
+
+    @staticmethod
+    def chain_skin_clause(job: AdapterJob) -> bool:
+        raw = job.execution.get("chain_skin_clause")
+        if raw is None:
+            return bool(settings.character_replacement_chain_skin_clause)
+        return str(raw).strip().lower() not in ("false", "no", "off", "0")
 
     @staticmethod
     def anchors_reference(job: AdapterJob) -> bool:

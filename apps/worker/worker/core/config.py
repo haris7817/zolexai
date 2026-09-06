@@ -786,6 +786,13 @@ class WorkerSettings(BaseSettings):
     each window starts where window 1 started. Sources within one window
     are untouched; `photo` mode needs no anchor."""
 
+    character_replacement_chain_skin_clause: bool = False
+    """Adds the hands clause (`CHARACTER_REPLACEMENT_SKIN`) to the prompt of
+    every window of a CHAINED character replacement, between the pack's lead
+    sentence and the customer's text. Never touches a source within one
+    window. Off until the A/B on the client's clip says it helps
+    (`execution.chain_skin_clause` overrides per deployment)."""
+
     character_replacement_expected_wall_per_output_second: float = 30.0
     """Progress pacing only. Measured 6 Sep 2026 on the RTX PRO 6000: an 8 s
     window took 164 s (20.5 s per second), a 10 s window 323 s (32)."""
