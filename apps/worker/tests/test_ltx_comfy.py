@@ -46,6 +46,10 @@ class FakeLtxComfy:
         self.submitted: dict | None = None
         self.submissions: list[dict] = []
         """Every submission in order; `submitted` is the last of them."""
+        self.output_queue: list[Path] = []
+        """Files served by `/view` in order, one per collection; when it runs
+        out, `output_file` is served — so a chained job can be given a
+        different render per window."""
         self.polls = 0
         self.interrupts = 0
         self.queue_deletes: list[list[str]] = []
@@ -138,6 +142,10 @@ class FakeLtxComfy:
                 },
             )
         if path == "/view":
+            if self.output_queue:
+                served = self.output_queue.pop(0)
+                self.views.append(dict(request.url.params))
+                return httpx.Response(200, content=served.read_bytes())
             self.views.append(dict(request.url.params))
             return httpx.Response(200, content=self.output_file.read_bytes())
         if path == "/interrupt":

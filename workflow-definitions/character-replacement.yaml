@@ -28,7 +28,7 @@ inputs:
     required: true
     label: SOURCE VIDEO
     drop_hint: the video to work from
-    help: Up to 10 seconds are used. The result follows this video's motion, camera and timing.
+    help: The whole video is used, up to 2 minutes. Allow about 5 minutes of processing for every 10 seconds. The result follows this video's motion, camera and timing.
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
   - role: reference_image
@@ -41,7 +41,13 @@ inputs:
     max_size_mb: 25
 
 # The result follows the source video, so there is no length to choose and
-# the API rejects a supplied duration.
+# the API rejects a supplied duration. Since 6 Sep 2026 the WHOLE source is
+# followed (client request: as Video to Video does): the worker runs the
+# unchanged graph once per window of at most 10 s and joins the windows,
+# each one seeded with the last frame the previous one produced. Total
+# ceiling 2 minutes (worker setting `character_replacement_max_total_seconds`,
+# or `max_total_seconds` below): every 10 s costs about 5.5 minutes on the
+# node, which serves one job at a time.
 duration_mode: source
 supported_durations: []
 # The canvas follows the source's orientation; nothing to choose.
@@ -79,13 +85,20 @@ execution:
   # graph through the worker's separate adapter.
   runtime: mock
 
-  timeout_seconds: 5400
+  # 2 minutes of source = 12 windows × ~5.5 min plus cutting and joining;
+  # the budget covers the ceiling with margin (was 5400 for one window).
+  timeout_seconds: 10800
 
   # ── Optional, per deployment ──────────────────────────────────────────
   #
-  # max_seconds: 10         — the longest window of the source one pass
+  # max_seconds: 10         — the longest window ONE run of the graph
   #                           follows (measured ceiling on the RTX PRO 6000;
-  #                           20 s exceeded the node's RAM limit).
+  #                           20 s exceeded the node's RAM limit). Longer
+  #                           sources are chained in windows of this size.
+  # max_total_seconds: 120  — the longest source followed in total.
+  # chain_reference: previous_frame | photo — what windows after the first
+  #                           use as their reference picture (default: the
+  #                           last frame the previous window produced).
   # negative_prompt: "…"    — overrides the house negative prompt (default:
   #                           derived from the client's own graph).
 

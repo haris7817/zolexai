@@ -753,6 +753,30 @@ class WorkerSettings(BaseSettings):
     """The pack's pinned canvas (portrait). Oriented to match the source
     clip; the pixel budget is never changed."""
 
+    character_replacement_max_total_seconds: int = 120
+    """The longest source the tool follows in TOTAL, as a chain of windows
+    (client request, 6 Sep 2026: "the length of the source video, like
+    Video to Video"). Each window is one run of the unchanged client graph
+    at most `character_replacement_max_seconds` long; the next window's
+    reference picture is the last frame the previous window produced, so
+    the character carries across the seam. Every 10 s of source costs about
+    5.5 minutes on the RTX PRO 6000 (measured 6 Sep: 323 s per 10 s window),
+    and the node serves one job at a time — that is why this is 2 minutes
+    and not Video to Video's 5. Raise it here or per deployment
+    (`execution.max_total_seconds`) once the wait is acceptable."""
+
+    character_replacement_chain_reference: Literal["previous_frame", "photo"] = "previous_frame"
+    """What the second and later windows use as their reference picture.
+    `previous_frame` (default) is the last frame the previous window
+    produced — continuity across the seam, the character's pose carries on.
+    `photo` is the customer's picture again for every window — no identity
+    drift over a long chain, but every window starts on the photo's pose.
+    Both are the graph's own one-image input; nothing else differs."""
+
+    character_replacement_expected_wall_per_output_second: float = 30.0
+    """Progress pacing only. Measured 6 Sep 2026 on the RTX PRO 6000: an 8 s
+    window took 164 s (20.5 s per second), a 10 s window 323 s (32)."""
+
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"
 

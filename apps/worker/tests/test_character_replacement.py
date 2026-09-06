@@ -179,9 +179,13 @@ async def test_a_silent_source_is_given_a_silent_track_before_upload(tmp_path: P
 
 
 @needs_ffmpeg
-async def test_a_long_source_is_windowed_to_the_ceiling(
+async def test_a_long_source_is_chained_in_windows_of_the_ceiling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Until 6 Sep 2026 a long source was CUT to the ceiling; the client
+    asked for the whole video (as Video to Video does), so it is now chained:
+    one run of the unchanged graph per window, joined behind one another.
+    The chain itself is pinned in test_character_replacement_chain.py."""
     monkeypatch.setattr(settings, "character_replacement_max_seconds", 6)
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -200,13 +204,16 @@ async def test_a_long_source_is_windowed_to_the_ceiling(
         ),
         on_progress,
     )
-    constants = {
-        e["_meta"]["title"]: e["inputs"]["value"]
-        for e in fake.submitted["prompt"].values()
-        if e["class_type"] == "INTConstant"
-    }
-    assert constants["Set Length (seconds)"] == 6
-    assert result.duration_seconds and result.duration_seconds < 7
+    lengths = [
+        next(
+            e["inputs"]["value"]
+            for e in s["prompt"].values()
+            if e["class_type"] == "INTConstant" and e["_meta"]["title"] == "Set Length (seconds)"
+        )
+        for s in fake.submissions
+    ]
+    assert lengths == [6, 6]
+    assert result.duration_seconds and abs(result.duration_seconds - 12.0) < 0.3
 
 
 def test_the_execution_block_can_lower_the_ceiling(tmp_path: Path) -> None:
