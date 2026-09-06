@@ -114,10 +114,28 @@ loaded; the box has 503 GB.
   continuation the prompt's camera glide has visibly moved the framing —
   expected, prompt-driven, not drift.
 
+### Character Replacement ceiling (6 Sep 2026)
+
+A customer job with a 20 s window (the cap at the time) drove the ComfyUI
+process past the container's 241 GiB RAM limit; the kernel killed it
+mid-render (`memory.events` oom_kill 1). Re-measured with the same 20.6 s
+dance clip and a full-body photo:
+
+| Window | Runtime | VRAM peak | ComfyUI RSS | Container memory peak |
+|---|---|---|---|---|
+| 8 s (ZIP sample inputs) | 163.9 s | 75,944 MiB | 102,207 MiB | — |
+| **10 s** | **323.5 s** | **85,322 MiB** | **84,972 MiB** | **110 GiB** |
+| 20 s | killed | — | — | > 241 GiB (OOM) |
+
+15 s would not fit the 97 GB card either. `character_replacement_max_seconds`
+is now **10** (commit `e02cc85`); the worker fails fast when ComfyUI dies
+under it (`1554bc4`); a job without a seed runs the graph's own fixed seeds
+(`93dccf2`).
+
 ## Settings changed from the measurements
 
 `ltx_comfy_expected_wall_per_output_second` 8 → **7.5** (progress pacing:
-48.8 s for 5 s, 215 s for 30 s).
+48.8 s for 5 s, 215 s for 30 s). `character_replacement_max_seconds` 20 → **10**.
 
 ## Verdict
 
