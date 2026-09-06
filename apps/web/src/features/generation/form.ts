@@ -291,6 +291,28 @@ export function withSourceAsset(
 }
 
 /**
+ * A hand-off that REPLACES the source: the result's own Extend button pressed
+ * on the Extend tool itself (`?source=A` → `?source=B`), which is how a video
+ * is extended again and again.
+ *
+ * Seeds the required input exactly like `withSourceAsset`, and clears every
+ * OTHER media input. The prompt, the duration and the rest of the settings
+ * travel on — a chained extension usually keeps them — but a first or last
+ * frame chosen for the previous extension does not: every extension starts
+ * from the new video unless the customer adds pictures again, and carrying
+ * the old last frame forward would quietly end the next extension on the
+ * same picture (client brief, 6 Sep 2026).
+ */
+export function handOverSource(
+  workflow: Workflow,
+  values: GenerationFormValues,
+  assetId: string,
+): GenerationFormValues {
+  const cleared = Object.fromEntries(workflow.inputs.map((input) => [input.role, null]));
+  return withSourceAsset(workflow, { ...values, inputs: cleared }, assetId);
+}
+
+/**
  * Carries settings across a workflow switch.
  *
  * The approved behaviour: keep duration / aspect / quality when the incoming

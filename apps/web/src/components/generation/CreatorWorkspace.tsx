@@ -20,6 +20,7 @@ import {
 import { useGenerationStream } from "@/features/generation/useGenerationStream";
 import {
   buildGenerationSchema,
+  handOverSource,
   preserveValues,
   toCreateInput,
   valuesFromJob,
@@ -120,7 +121,20 @@ export function CreatorWorkspace({
   // Hook Form reads `defaultValues` once, so without this reset the newly
   // generated result never replaces the first clip as the source. That made
   // original -> extend work, but extend -> extend silently reuse the original.
+  //
+  // The hand-off also has to be VISIBLE (client report, 6 Sep 2026: "after
+  // extending once, Extend does not allow another extension"). The route
+  // did hand the new source over — measured under the production build —
+  // but nothing on screen said so: the canvas kept the result whose Extend
+  // was just pressed, with its own Extend button still there, and on tablet
+  // and phone the settings drawer holding the only changed control was
+  // closed. So the canvas returns to its empty state (the previous result
+  // stays one click away in the strip) and, where the panel is a drawer,
+  // it opens on the freshly seeded form. `handOverSource` also clears any
+  // first/last frame chosen for the previous extension — each extension
+  // starts from the new video unless pictures are added again.
   const lastSourceAssetId = useRef(initialSourceAssetId);
+  const reattached = useRef<string | null>(null);
   useEffect(() => {
     if (
       !initialSourceAssetId ||
@@ -129,11 +143,14 @@ export function CreatorWorkspace({
       return;
     }
     lastSourceAssetId.current = initialSourceAssetId;
-    form.reset(
-      withSourceAsset(workflow, form.getValues(), initialSourceAssetId),
-    );
+    form.reset(handOverSource(workflow, form.getValues(), initialSourceAssetId));
     setSubmitError(null);
-  }, [initialSourceAssetId, workflow, form]);
+    setSelectedJobId(null);
+    // The empty canvas is deliberate; the reattach effect below must not
+    // put the result whose Extend was just pressed straight back.
+    reattached.current = workflow.id;
+    if (isCompact) setPanelOpen(true);
+  }, [initialSourceAssetId, workflow, form, isCompact]);
 
   const closePanel = useCallback(() => setPanelOpen(false), []);
   const overlayOpen = isCompact && panelOpen;
@@ -157,8 +174,10 @@ export function CreatorWorkspace({
    * to Video result must never appear on the Image to Video screen. The old
    * code searched every recent job regardless of workflow, so it could
    * reattach to another tool's run.
+   *
+   * (`reattached` is declared beside the hand-off effect above, which also
+   * writes it.)
    */
-  const reattached = useRef<string | null>(null);
   useEffect(() => {
     if (reattached.current === workflow.id || selectedJobId !== null) return;
     if (recentJobs.length === 0) return;
