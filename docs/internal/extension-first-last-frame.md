@@ -284,8 +284,16 @@ the old hand-off (`withSourceAsset`) is still what a fresh visit uses.
 Everything above was proven without a model. Pending on the RTX PRO 6000
 (steps in `gpu-validation-checklist.md` style, ≈ 15 minutes):
 
-1. Extend a 5 s Image to Video result by 5 s with **no stills** — compare
-   the seam with the 5 Sep benchmark (`extend +5 s = 65.3 s`, clean seam).
+1. ~~Extend a finished result by 5 s with **no stills**~~ — **DONE on the
+   live deployment, 6 Sep 14:38 UTC:** Text to Video `c43bba93` (15 s, 9:16)
+   → Extend `6d21b6f8` (+5 s, no pictures): pass 65.5 s, job 70 s end to
+   end, output 704×1280 · 20.063 s (promised 20.042), worker log
+   `extension_framing first_frame=false last_frame=false`, one pass, seam
+   at 15.042 s; chain record `{generation: 1, parent_job_id: c43bba93,
+   source_seconds: 15.042}`. A second step on that output (`2bca0283`) was
+   accepted with `generation: 2` and queued behind the client's own 30 s
+   Image to Video, then cancelled by a person while still queued — not a
+   failure. The seam itself was not inspected frame by frame.
 2. Extend with a **first frame** that is an edited copy of the source's
    final frame — expect the edit visible from the first continuation frame
    and the seam otherwise continuous.
@@ -312,4 +320,5 @@ Record wall clock and VRAM for each in `ltx25-gpu-benchmark.md`.
 | Untouched-module guards (`test_untouched_workflows`, `test_untouched_runtimes`, `test_character_replacement`) | pass — V2V, Music, Music Video, Character Replacement YAML and the CLI/H3 adapters are hash-identical |
 | `git diff --stat pre-extension-first-last-frame HEAD -- <protected paths>` | empty: no change under `benchmarks/client-pack/`, `worker/comfy/`, `worker/providers/`, the other six YAMLs, `adapters/ltx.py`, `adapters/h3_comfy.py`, `adapters/character_replacement.py`, `deploy/`, `apps/web/src/app/` |
 | Worker full suite (`-p no:randomly`, 24 min) | **1067 passed, 10 failed, 1 skipped**; the 10 failures are exactly the pre-existing set recorded in the readiness report §7.7 (3 Director "never touches the planner", 5 H3 video-to-video, 2 music-video) — none involves the extension code |
+| Live deployment, Text to Video → Extend (6 Sep 14:38 UTC) | `c43bba93` (15 s) → `6d21b6f8` +5 s, no pictures: completed in 70 s, 20.063 s output, generation 1; the Extend button on a finished Text to Video result hands the file to the Extend tool with both pictures optional (Playwright, read-only) |
 | `qa:e2e` harness (built web + local API + mock worker) | **27 / 27 checks pass.** Two harness defects fixed on the way: §8b sampled the source box before the asset lookup resolved (the "two remaining failures" of 5 Sep, wrongly attributed to the route), and expected Generate enabled with an EMPTY prompt on a tool whose prompt is required. §8c's "press the result's Extend" step is skipped by the harness when no Extend result is among the 8 most recent jobs (the mock T2V jobs it just created push it out); that click is proven by the direct Playwright run above on desktop and phone |
