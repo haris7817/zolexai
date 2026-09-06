@@ -773,6 +773,19 @@ class WorkerSettings(BaseSettings):
     drift over a long chain, but every window starts on the photo's pose.
     Both are the graph's own one-image input; nothing else differs."""
 
+    character_replacement_anchor_reference: bool = True
+    """Colour-anchor every chained seed frame before it becomes the next
+    window's reference picture (6 Sep 2026 fix for "he went darker through
+    the video"). Each window is seeded from a RENDERED frame, and the graph
+    renders that frame's look a little darker and flatter than it was given
+    (measured on the client's clip: 90th-percentile luminance 178 → 164 →
+    157 → 146 → 145 across four windows, chroma unchanged). Left alone the
+    loss compounds. Anchoring matches the seed's luminance level and spread,
+    and its chroma means, to the first window's own rendering just after
+    its handoff — the look the customer approved — with bounded gains, so
+    each window starts where window 1 started. Sources within one window
+    are untouched; `photo` mode needs no anchor."""
+
     character_replacement_expected_wall_per_output_second: float = 30.0
     """Progress pacing only. Measured 6 Sep 2026 on the RTX PRO 6000: an 8 s
     window took 164 s (20.5 s per second), a 10 s window 323 s (32)."""

@@ -94,6 +94,7 @@ from worker.media import (
     concat_segments,
     extract_final_frame,
     ffmpeg,
+    ffmpeg_stdout,
     probe_media,
     verify_output,
 )
@@ -110,6 +111,22 @@ _MIN_SOURCE_SECONDS = 1.0
 #: Frames a chained window repeats at its start — its reference picture,
 #: rendered again at index 0 by the graph. Dropped at the seam.
 SEAM_OVERLAP_FRAMES = 1
+
+#: The first window's frames the colour anchor is read from: after the
+#: graph's four-frame handoff from the photo, one second of its own
+#: rendering of the customer's picture in the source's framing.
+ANCHOR_FRAMES = (4, 27)
+
+#: Bounds on the seed correction. A seed that is a little darker and flatter
+#: than the anchor (the measured drift: a few units of mean luminance and
+#: 10-30 units of highlight per window) is brought back fully; a seed that
+#: differs more than this is a real change of framing or content, and only
+#: this much of the difference is taken back.
+ANCHOR_GAIN_RANGE = (0.80, 1.30)
+ANCHOR_LUMA_OFFSET_LIMIT = 40.0
+ANCHOR_CHROMA_OFFSET_LIMIT = 16.0
+#: Below this luminance spread a frame has no usable contrast to scale.
+ANCHOR_MIN_SPREAD = 8.0
 
 
 @dataclass(frozen=True)
@@ -158,6 +175,26 @@ def delivered_frames(windows: list[Window]) -> int:
 
 
 @dataclass(frozen=True)
+class ColourAnchor:
+    """Luminance level, luminance spread and chroma means of some frames.
+
+    Limited-range YUV as `signalstats` reports it: `y_low`/`y_high` are its
+    10th and 90th percentiles, so the spread is the picture's contrast
+    without its extremes.
+    """
+
+    y_mean: float
+    y_low: float
+    y_high: float
+    u_mean: float
+    v_mean: float
+
+    @property
+    def spread(self) -> float:
+        return self.y_high - self.y_low
+
+
+@dataclass(frozen=True)
 class WindowRecord:
     index: int
     seconds: int
@@ -165,6 +202,10 @@ class WindowRecord:
     start_frame: int
     reference: str
     wall_seconds: float
+    seed_correction: dict[str, float] | None = None
+    """How the seed this window was given was brought back to the anchor
+    (gain and offsets, and the seed's luminance before and after); None for
+    window 0, for `photo` mode, and with anchoring off."""
 
 
 @dataclass
@@ -183,6 +224,9 @@ class ChainMetadata:
     promised_seconds: float = 0.0
     measured_seconds: float | None = None
     status: str = "WAITING FOR GPU VALIDATION (seam behaviour)"
+    anchor: dict[str, float] | None = None
+    """The first window's own rendering just after its handoff — what every
+    later seed is matched to."""
 
     def write(self, path: Path) -> Path:
         path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
@@ -363,6 +407,9 @@ class CharacterReplacementAdapter:
         seed = self.seed_base(job)
         parts: list[Path] = []
         total = len(windows)
+        anchoring = mode == "previous_frame" and self.anchors_reference(job)
+        anchor: ColourAnchor | None = None
+        pending_correction: dict[str, float] | None = None
 
         for window in windows:
             job.raise_if_cancelled()
@@ -406,12 +453,21 @@ class CharacterReplacementAdapter:
                     start_frame=window.start_frame,
                     reference=image_name,
                     wall_seconds=round(wall, 1),
+                    seed_correction=pending_correction,
                 )
             )
+            pending_correction = None
+            if window.index == 0 and anchoring:
+                anchor = await self._measure_colour(job, output, ANCHOR_FRAMES)
+                metadata.anchor = asdict(anchor)
             if window.index + 1 < total:
                 metadata.seams.append(round((window.start_frame + window.frames - 1) / fps, 4))
                 if mode == "previous_frame":
                     frame = await self._final_frame(job, output, window.index + 1)
+                    if anchor is not None:
+                        frame, pending_correction = await self._anchor_seed(
+                            job, frame, anchor, window.index + 1
+                        )
                     image_name = await self._upload_still(
                         job, frame, f"reference{window.index + 1:02d}"
                     )
@@ -615,6 +671,13 @@ class CharacterReplacementAdapter:
         return plan_windows(total, per_window)
 
     @staticmethod
+    def anchors_reference(job: AdapterJob) -> bool:
+        raw = job.execution.get("anchor_reference")
+        if raw is None:
+            return bool(settings.character_replacement_anchor_reference)
+        return str(raw).strip().lower() not in ("false", "no", "off", "0")
+
+    @staticmethod
     def reference_mode(job: AdapterJob) -> str:
         raw = str(
             job.execution.get("chain_reference") or settings.character_replacement_chain_reference
@@ -786,6 +849,128 @@ class CharacterReplacementAdapter:
             raise AdapterError(
                 exc.user_message, internal_detail=exc.internal_detail, retriable=exc.retriable
             ) from exc
+
+    # ── Colour anchoring of chained seeds ────────────────────────────────
+
+    async def _measure_colour(
+        self, job: AdapterJob, path: Path, frames: tuple[int, int] | None
+    ) -> ColourAnchor:
+        """`signalstats` over `frames` (inclusive, None = the whole file), averaged."""
+        select = f"select='between(n,{frames[0]},{frames[1]})'," if frames else ""
+        args = [
+            "-i",
+            str(path),
+            "-vf",
+            f"{select}signalstats,metadata=print:file=-",
+            "-f",
+            "null",
+            "-",
+        ]
+        try:
+            report = (await ffmpeg_stdout(args)).decode("utf-8", "replace")
+        except FfmpegError as exc:
+            raise AdapterError(
+                "This generation could not be completed. Please try again.",
+                internal_detail=f"colour measurement failed on {path.name}: {exc}",
+            ) from exc
+        sums: dict[str, list[float]] = {"YAVG": [], "YLOW": [], "YHIGH": [], "UAVG": [], "VAVG": []}
+        for line in report.splitlines():
+            for key in sums:
+                marker = f"lavfi.signalstats.{key}="
+                if marker in line:
+                    try:
+                        sums[key].append(float(line.split(marker, 1)[1].strip()))
+                    except ValueError:
+                        pass
+        if not sums["YAVG"]:
+            raise AdapterError(
+                "This generation could not be completed. Please try again.",
+                internal_detail=f"no colour statistics came back for {path.name}",
+            )
+        mean = {key: sum(values) / len(values) for key, values in sums.items() if values}
+        return ColourAnchor(
+            y_mean=mean["YAVG"],
+            y_low=mean.get("YLOW", mean["YAVG"]),
+            y_high=mean.get("YHIGH", mean["YAVG"]),
+            u_mean=mean.get("UAVG", 128.0),
+            v_mean=mean.get("VAVG", 128.0),
+        )
+
+    async def _anchor_seed(
+        self, job: AdapterJob, frame: Path, anchor: ColourAnchor, index: int
+    ) -> tuple[Path, dict[str, float]]:
+        """Brings a seed frame's look back to the anchor before it is reused.
+
+        Luminance: a gain that restores the anchor's spread (10th-90th
+        percentile) and an offset that restores its level; chroma: offsets
+        to the anchor's means. All bounded (`ANCHOR_*`). A seed already at
+        the anchor passes through untouched.
+        """
+        seed = await self._measure_colour(job, frame, None)
+        gain = 1.0
+        if seed.spread >= ANCHOR_MIN_SPREAD and anchor.spread >= ANCHOR_MIN_SPREAD:
+            gain = anchor.spread / seed.spread
+        gain = min(ANCHOR_GAIN_RANGE[1], max(ANCHOR_GAIN_RANGE[0], gain))
+        y_offset = anchor.y_mean - gain * seed.y_mean
+        y_offset = min(ANCHOR_LUMA_OFFSET_LIMIT, max(-ANCHOR_LUMA_OFFSET_LIMIT, y_offset))
+        u_offset = min(
+            ANCHOR_CHROMA_OFFSET_LIMIT,
+            max(-ANCHOR_CHROMA_OFFSET_LIMIT, anchor.u_mean - seed.u_mean),
+        )
+        v_offset = min(
+            ANCHOR_CHROMA_OFFSET_LIMIT,
+            max(-ANCHOR_CHROMA_OFFSET_LIMIT, anchor.v_mean - seed.v_mean),
+        )
+        correction = {
+            "gain": round(gain, 4),
+            "y_offset": round(y_offset, 2),
+            "u_offset": round(u_offset, 2),
+            "v_offset": round(v_offset, 2),
+            "seed_y_mean": round(seed.y_mean, 2),
+            "seed_y_high": round(seed.y_high, 2),
+            "anchor_y_mean": round(anchor.y_mean, 2),
+            "anchor_y_high": round(anchor.y_high, 2),
+        }
+        negligible = (
+            abs(gain - 1.0) < 0.01
+            and abs(y_offset) < 1.0
+            and abs(u_offset) < 1.0
+            and abs(v_offset) < 1.0
+        )
+        logger.info(
+            "character_replacement_anchor",
+            extra={"job_id": job.job_id, "window": index, "applied": not negligible, **correction},
+        )
+        if negligible:
+            return frame, correction
+        dest = frame.with_name(f"{frame.stem}-anchored.png")
+        lut = (
+            f"lutyuv=y='clip(val*{gain:.5f}+{y_offset:.3f},0,255)'"
+            f":u='clip(val+{u_offset:.3f},0,255)'"
+            f":v='clip(val+{v_offset:.3f},0,255)'"
+        )
+        try:
+            await cancellable(
+                job,
+                ffmpeg(
+                    [
+                        "-i",
+                        str(frame),
+                        "-vf",
+                        f"format=yuv444p,{lut},format=rgb24",
+                        "-frames:v",
+                        "1",
+                        str(dest),
+                        "-y",
+                    ]
+                ),
+            )
+        except FfmpegError as exc:
+            raise AdapterError(
+                "This generation could not be completed. Please try again.",
+                internal_detail=f"seed anchoring failed for window {index}: {exc}",
+            ) from exc
+        return dest, correction
 
     async def _final_frame(self, job: AdapterJob, part: Path, index: int) -> Path:
         try:
