@@ -739,11 +739,15 @@ class WorkerSettings(BaseSettings):
     it. Optional: inputs travel over HTTP either way; this only enables
     cleanup of a job's uploads afterwards."""
 
-    character_replacement_max_seconds: int = 20
-    """The longest source window one character-replacement pass renders. The
-    pack's own note lists 5/10/20 s as the lengths to try; the client's
-    sample was 8 s. Longer sources are cut to this window (the delivered
-    length is stated to the customer) until the chained variant is measured."""
+    character_replacement_max_seconds: int = 10
+    """The longest source window one character-replacement pass renders.
+
+    Measured on the RTX PRO 6000 (6 Sep 2026): a 10 s window peaks at 85 GB
+    of VRAM, 85 GB of process RAM and 110 GiB of container memory; a 20 s
+    window grew past the container's 241 GiB RAM limit and the kernel killed
+    ComfyUI mid-render. The pack's note lists 5/10/20 s; on this card 10 is
+    the ceiling. Longer sources are cut to this window and the delivered
+    length is logged."""
 
     character_replacement_canvas: tuple[int, int] = (736, 1280)
     """The pack's pinned canvas (portrait). Oriented to match the source

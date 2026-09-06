@@ -28,7 +28,7 @@ inputs:
     required: true
     label: SOURCE VIDEO
     drop_hint: the video to work from
-    help: Up to 20 seconds are used. The result follows this video's motion, camera and timing.
+    help: Up to 10 seconds are used. The result follows this video's motion, camera and timing.
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
   - role: reference_image
@@ -83,8 +83,9 @@ execution:
 
   # ── Optional, per deployment ──────────────────────────────────────────
   #
-  # max_seconds: 20         — the longest window of the source one pass
-  #                           follows (the pack's note lists 5/10/20).
+  # max_seconds: 10         — the longest window of the source one pass
+  #                           follows (measured ceiling on the RTX PRO 6000;
+  #                           20 s exceeded the node's RAM limit).
   # negative_prompt: "…"    — overrides the house negative prompt (default:
   #                           derived from the client's own graph).
 

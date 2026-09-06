@@ -214,16 +214,16 @@ def test_the_execution_block_can_lower_the_ceiling(tmp_path: Path) -> None:
 
     info = MediaInfo(duration_seconds=15.0, width=576, height=1024, has_video=True, has_audio=True)
     job = _job(tmp_path, [])
-    assert CharacterReplacementAdapter.window_seconds(info, job) == 15
+    assert CharacterReplacementAdapter.window_seconds(info, job) == 10  # the measured ceiling
     lowered = AdapterJob(
         job_id="j",
         workflow_id="character-replacement",
         workflow_version="1",
         prompt="",
         parameters={},
-        execution={"runtime": "character_replacement", "max_seconds": 10},
+        execution={"runtime": "character_replacement", "max_seconds": 6},
     )
-    assert CharacterReplacementAdapter.window_seconds(info, lowered) == 10
+    assert CharacterReplacementAdapter.window_seconds(info, lowered) == 6
 
 
 # ── Refusals ────────────────────────────────────────────────────────────────
