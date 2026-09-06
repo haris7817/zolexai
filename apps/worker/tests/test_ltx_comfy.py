@@ -44,6 +44,8 @@ class FakeLtxComfy:
         self.polls_before_done = polls_before_done
         self.uploads: list[tuple[str, int]] = []
         self.submitted: dict | None = None
+        self.submissions: list[dict] = []
+        """Every submission in order; `submitted` is the last of them."""
         self.polls = 0
         self.interrupts = 0
         self.queue_deletes: list[list[str]] = []
@@ -75,6 +77,7 @@ class FakeLtxComfy:
             return httpx.Response(200, json={"name": name, "subfolder": "", "type": "input"})
         if path == "/prompt":
             self.submitted = json.loads(request.content)
+            self.submissions.append(self.submitted)
             if self.reject_submit is not None:
                 return httpx.Response(400, json=self.reject_submit)
             self.running = [] if self.vanish else ["p-1"]

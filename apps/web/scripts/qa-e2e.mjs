@@ -229,6 +229,46 @@ try {
         .isEnabled()
         .catch(() => false),
     );
+
+    // ── 8c. First/last frame on an extension, and extending again ───────
+    //
+    // Client brief, 6 Sep 2026. The Extend tool offers the two optional
+    // stills from its definition, and pressing a result's own Extend button
+    // on the Extend tool (a same-route hand-off: only `?source=` changes)
+    // must visibly set up the next extension — the canvas returns to its
+    // empty state and the source control shows the new file.
+    console.log("
+8c. Extend offers first/last frame and can be pressed again");
+    const extendText = await page.locator("body").innerText();
+    check("Extend offers an optional FIRST FRAME", /FIRST FRAME\s*optional/i.test(extendText));
+    check("Extend offers an optional LAST FRAME", /LAST FRAME\s*optional/i.test(extendText));
+    const resultExtend = page
+      .getByRole("link", { name: /extend/i })
+      .filter({ hasNotText: /Extend Video/ });
+    if ((await resultExtend.count()) === 0) {
+      console.log("   (no finished Extend result in the canvas to press Extend on — skipped)");
+    } else {
+      const before = await page
+        .locator('button[aria-label^="Remove "]')
+        .evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
+      const href = await resultExtend.first().getAttribute("href");
+      await resultExtend.first().click();
+      await page.waitForURL((url) => url.search.includes("source="), { timeout: 10_000 });
+      await page.waitForTimeout(2500);
+      const after = await page
+        .locator('button[aria-label^="Remove "]')
+        .evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
+      const handedOver = new URL(href, BASE).searchParams.get("source");
+      check(
+        "pressing the result's Extend replaces the source with that result",
+        handedOver !== sourceAsset.id ? JSON.stringify(after) !== JSON.stringify(before) : true,
+        `${before.join(",")} -> ${after.join(",")}`,
+      );
+      check(
+        "the canvas returns to its empty state for the next extension",
+        await page.locator("text=Your generated video will appear here").isVisible().catch(() => false),
+      );
+    }
   }
 
   // ── 9. No client-visible internals ─────────────────────────────────────
