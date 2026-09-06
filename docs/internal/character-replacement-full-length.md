@@ -1,8 +1,8 @@
 # Character Replacement over the whole source — a chain of windows
 
-**Status: implemented and tested without a GPU (6 Sep 2026). The seam — what
-the model does when a window is seeded with the previous window's last
-frame — is GPU validation pending (§7).**
+**Status: implemented, tested, deployed to the GPU node and validated on the
+live deployment with the client's own 32.7 s clip (6 Sep 2026, §7): four
+windows, three seams, none visible as a cut, delivered length exact.**
 
 Client request (6 Sep 2026): "character replacement works really well at
 10 s; we want it for the length of the source video, like Video to Video,
@@ -131,22 +131,51 @@ source; a failing window; and the short-source path unchanged.
 `test_character_replacement.py`'s old "cut to the ceiling" test now pins
 the chain. All 20 pass. The fake ComfyUI gained a per-window output queue.
 
-## 7. GPU validation pending
+## 7. GPU validation (6 Sep 2026, live deployment, job `597b8113`)
 
-On the deployment, through the live queue (the node runs one job at a
-time; do not run this beside a customer's job):
+The client's own latest character-replacement source — `49709.mp4`, 32.73 s,
+576×1024, 30 fps — with the client's own reference picture and prompt, run
+through the live queue while it was otherwise idle.
 
-1. A 20 s source with a full-body photo → two windows. Inspect the seam at
-   10.0 s frame by frame: identity, pose continuity, setting. Expect the
-   graph's four-frame handoff to be invisible because the reference IS the
-   continuation frame.
-2. The same source with `chain_reference: photo` → compare identity at the
-   end of window 2 against (1).
-3. A 60 s source → six windows: identity at the end against the photo, the
-   wall clock per window (expect ~323 s each, models resident), VRAM and
-   container RAM across windows (expect the single-window peaks, not
-   growth).
-4. Record all of it in `ltx25-gpu-benchmark.md`.
+| | |
+|---|---|
+| Plan | 32 whole seconds → 4 windows of 8 s, 193 frames each, seams at 8.0 / 16.0 / 24.0 s, reference mode `previous_frame` |
+| Per window | 157.7 / 153.3 / 153.7 / 153.7 s wall (models resident after the first) |
+| Whole job | 638 s end to end, including four cuts, four uploads, three last-frame extractions, the join and the soundtrack |
+| Output | 736×1280 · 24 fps · **769 frames = 32.0417 s** (promised 32.042) · one audio track (the source's) |
+| GPU / RAM during windows | 43 GB VRAM at the sampler, node RAM 89 GB used, no growth across windows |
+
+**Seams, measured.** Frame-to-frame PSNR over the whole clip has a median
+of 21.3 dB and a minimum of 16.0 dB (frame 287, inside a window — ordinary
+fast motion). At the three seam frames the frame-to-frame PSNR is 19.3,
+23.8 and 19.7 dB: inside the clip's own motion band, nowhere near a cut.
+
+**Seams, looked at** (7-frame strips around each seam, kept with the
+session's files): pose, framing, jewellery and tattoos continue across all
+three seams; the graph's four-frame handoff is not visible as a jump. Two
+observations for the record:
+
+1. The client's reference picture carries a burned-in caption; window 0
+   reproduces it as illegible text for its whole 8 s (as the single-window
+   product does today), and window 1 lets it fade out over its first
+   frames after the seam. That is content the customer put in the picture,
+   not a seam artefact — but it is the one visible change at seam 1.
+2. Identity drifts mildly over 32 s: the face and the jersey emblem in
+   windows 3–4 sit a little further from the photo than window 1 does —
+   the expected cost of seeding each window from a rendered frame. The
+   `photo` reference mode is the lever if a customer prefers exact
+   likeness over pose continuity; not yet compared on the GPU.
+
+**Cost, re-measured.** 8 s windows cost 19.4 s of GPU per second of source
+(155 s per window) against 32 s/s for the one 10 s window measured on
+6 Sep (323 s). A 2-minute source at 8 s windows would be 15 windows ≈ 39
+minutes; at 10 s windows 12 windows ≈ 65 minutes. The cap stays 10 s
+because the client validated that window's quality and fewer seams is
+the safer default; `character_replacement_max_seconds=8` is the one-line
+speed option, to be judged on seams.
+
+Still open: the `photo` mode comparison, and a 60 s+ chain for drift and
+memory over more windows.
 
 ## 8. Rollback
 

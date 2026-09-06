@@ -132,6 +132,14 @@ is now **10** (commit `e02cc85`); the worker fails fast when ComfyUI dies
 under it (`1554bc4`); a job without a seed runs the graph's own fixed seeds
 (`93dccf2`).
 
+### Character Replacement over the whole source (6 Sep 2026, live)
+
+The chained tool on the client's own 32.73 s clip (job `597b8113`,
+`character-replacement-full-length.md` §7): 4 windows × 8 s at 157.7 /
+153.3 / 153.7 / 153.7 s, 638 s end to end, 769 frames = 32.042 s delivered,
+seams at 8/16/24 s with frame-to-frame PSNR 19.3 / 23.8 / 19.7 dB against a
+clip median of 21.3 dB. 8 s windows: 19.4 s of GPU per source second.
+
 ## Settings changed from the measurements
 
 `ltx_comfy_expected_wall_per_output_second` 8 → **7.5** (progress pacing:
