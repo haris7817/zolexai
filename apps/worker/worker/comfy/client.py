@@ -47,11 +47,19 @@ class ComfyClient:
         *,
         request_timeout: float = 30.0,
         poll_seconds: float = 3.0,
+        unreachable_limit_seconds: float = 120.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._request_timeout = request_timeout
         self._poll_seconds = poll_seconds
+        self._unreachable_limit = unreachable_limit_seconds
+        """How long the service may stay unreachable mid-render before the
+        job is failed (retriable). A ComfyUI killed by the container's RAM
+        limit is restarted by supervisord in seconds; the render it was
+        doing is gone, and a worker that keeps polling for the 90-minute
+        budget holds the slot for nothing (seen 6 Sep 2026, a 20 s character
+        replacement)."""
         self._transport = transport
 
     def _client(self) -> httpx.AsyncClient:
@@ -164,9 +172,7 @@ class ComfyClient:
                     if resp.status_code >= 400:
                         raise ComfyError(
                             "The finished video could not be found.",
-                            internal_detail=(
-                                f"GET /view {params} → {resp.status_code}"
-                            ),
+                            internal_detail=(f"GET /view {params} → {resp.status_code}"),
                         )
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     with dest.open("wb") as handle:
@@ -217,6 +223,22 @@ class ComfyClient:
             )
         return str(prompt_id)
 
+    async def queue_state(self) -> tuple[set[str], set[str]]:
+        """(running, pending) prompt ids as the server reports them."""
+        async with self._client() as client:
+            resp = await client.get("/queue")
+            resp.raise_for_status()
+            state = resp.json()
+
+        def ids(entries: Any) -> set[str]:
+            return {
+                str(entry[1])
+                for entry in entries or []
+                if isinstance(entry, (list, tuple)) and len(entry) > 1
+            }
+
+        return ids(state.get("queue_running")), ids(state.get("queue_pending"))
+
     async def history(self, prompt_id: str) -> dict[str, Any] | None:
         async with self._client() as client:
             resp = await client.get(f"/history/{prompt_id}")
@@ -235,9 +257,7 @@ class ComfyClient:
         """
         try:
             async with self._client() as client:
-                await client.post(
-                    "/free", json={"unload_models": True, "free_memory": True}
-                )
+                await client.post("/free", json={"unload_models": True, "free_memory": True})
         except Exception:  # noqa: BLE001 - best effort; health will catch worse
             logger.warning("comfy_free_failed", exc_info=True)
 
@@ -273,9 +293,7 @@ class ComfyClient:
                 if prompt_id in running:
                     await client.post("/interrupt")
         except Exception:  # noqa: BLE001 - the job is dying either way
-            logger.warning(
-                "comfy_cancel_failed", extra={"prompt_id": prompt_id}, exc_info=True
-            )
+            logger.warning("comfy_cancel_failed", extra={"prompt_id": prompt_id}, exc_info=True)
 
     async def wait(
         self,
@@ -293,6 +311,9 @@ class ComfyClient:
         the GPU is released.
         """
         started = time.monotonic()
+        unreachable_since: float | None = None
+        vanished_strikes = 0
+        last_queue_check = started
         try:
             while True:
                 elapsed = time.monotonic() - started
@@ -300,9 +321,7 @@ class ComfyClient:
                     await self.cancel(prompt_id)
                     raise ComfyError(
                         "This generation took too long and was stopped.",
-                        internal_detail=(
-                            f"prompt {prompt_id} exceeded {timeout_seconds:.0f}s"
-                        ),
+                        internal_detail=(f"prompt {prompt_id} exceeded {timeout_seconds:.0f}s"),
                     )
                 try:
                     job.raise_if_cancelled()
@@ -312,23 +331,61 @@ class ComfyClient:
 
                 try:
                     entry = await self.history(prompt_id)
+                    unreachable_since = None
                 except httpx.HTTPError as exc:
                     # One flaky poll is not a failed job; the next tick retries.
-                    logger.warning("comfy_poll_failed", extra={"error": str(exc)})
+                    # A service that stays down was killed mid-render and the
+                    # render is gone — fail retriably instead of waiting out
+                    # the whole budget.
+                    now = time.monotonic()
+                    unreachable_since = unreachable_since or now
+                    logger.warning(
+                        "comfy_poll_failed",
+                        extra={"error": str(exc), "down_for": round(now - unreachable_since, 1)},
+                    )
+                    if now - unreachable_since > self._unreachable_limit:
+                        raise ComfyError(
+                            "The video service restarted during this generation. Please try again.",
+                            internal_detail=(
+                                f"ComfyUI unreachable for {now - unreachable_since:.0f}s while "
+                                f"prompt {prompt_id} was running: {exc}"
+                            ),
+                        ) from exc
                     entry = None
+
+                if entry is None and unreachable_since is None:
+                    # Reachable but silent about our prompt: is it still queued
+                    # or running? A restarted server has an empty queue and no
+                    # history — the render was lost with the process.
+                    now = time.monotonic()
+                    if now - last_queue_check >= max(self._poll_seconds * 3, 9.0):
+                        last_queue_check = now
+                        try:
+                            running, pending = await self.queue_state()
+                        except httpx.HTTPError:
+                            running = pending = {prompt_id}  # unknown: assume alive
+                        if prompt_id in running or prompt_id in pending:
+                            vanished_strikes = 0
+                        else:
+                            vanished_strikes += 1
+                            if vanished_strikes >= 2:
+                                raise ComfyError(
+                                    "The video service restarted during this generation. "
+                                    "Please try again.",
+                                    internal_detail=(
+                                        f"prompt {prompt_id} is in neither the queue nor the "
+                                        "history: the service was restarted mid-render"
+                                    ),
+                                )
 
                 if entry is not None:
                     status = (entry.get("status") or {}).get("status_str")
                     if status == "success":
                         return entry
-                    messages = json.dumps(
-                        (entry.get("status") or {}).get("messages", [])
-                    )
+                    messages = json.dumps((entry.get("status") or {}).get("messages", []))
                     raise ComfyError(
                         "This generation failed.",
-                        internal_detail=(
-                            f"prompt {prompt_id} status={status}: {messages[:2000]}"
-                        ),
+                        internal_detail=(f"prompt {prompt_id} status={status}: {messages[:2000]}"),
                     )
 
                 if on_tick is not None:

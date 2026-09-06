@@ -53,6 +53,11 @@ class FakeLtxComfy:
         self.reject_submit: dict | None = None
         self.running: list[str] = []
         self.hang = False
+        self.vanish = False
+        """After submit: history stays empty AND the queue no longer lists the
+        prompt — what a restarted ComfyUI looks like."""
+        self.die_after_submit = False
+        """After submit every request fails at the socket — the process is gone."""
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -72,8 +77,12 @@ class FakeLtxComfy:
             self.submitted = json.loads(request.content)
             if self.reject_submit is not None:
                 return httpx.Response(400, json=self.reject_submit)
-            self.running = ["p-1"]
+            self.running = [] if self.vanish else ["p-1"]
             return httpx.Response(200, json={"prompt_id": "p-1", "number": 1, "node_errors": {}})
+        if self.die_after_submit and self.submitted is not None:
+            raise httpx.ConnectError("connection refused")
+        if self.vanish and path.startswith("/history/"):
+            return httpx.Response(200, json={})
         if path.startswith("/history/"):
             self.polls += 1
             if self.hang or self.polls < self.polls_before_done:
@@ -683,3 +692,45 @@ def test_pass_spec_section_copy(tmp_path: Path) -> None:
     )
     sectioned = adapter.with_section(spec, band=(15, 50), section=(1, 2, 0.0, 5.0))
     assert sectioned.band == (15, 50) and sectioned.section == (1, 2, 0.0, 5.0)
+
+
+# ── A ComfyUI that dies mid-render ───────────────────────────────────────────
+
+
+@needs_ffmpeg
+async def test_a_prompt_that_vanishes_from_the_server_fails_fast_and_retriably(
+    tmp_path: Path,
+) -> None:
+    """A restarted ComfyUI has an empty queue and no history entry for the
+    prompt it was rendering. The worker must not wait out its whole budget."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    fake = FakeLtxComfy(await _rendered(tmp_path / "render.mp4", 5.0))
+    fake.vanish = True
+    adapter = LtxComfyAdapter(service=_service(fake))
+    on_progress, _ = _recorder()
+    with pytest.raises(AdapterError) as raised:
+        await adapter.run(_job(workspace), on_progress)
+    assert raised.value.retriable is True
+    assert "neither the queue nor the history" in raised.value.internal_detail
+    assert fake.polls < 60  # seconds, not the 90-minute budget
+
+
+@needs_ffmpeg
+async def test_a_service_that_stays_unreachable_fails_fast_and_retriably(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    fake = FakeLtxComfy(await _rendered(tmp_path / "render.mp4", 5.0))
+    fake.die_after_submit = True
+    client = ComfyClient(
+        "http://ltx-comfy.test",
+        poll_seconds=0.01,
+        unreachable_limit_seconds=0.2,
+        transport=httpx.MockTransport(fake.handler),
+    )
+    adapter = LtxComfyAdapter(service=LtxComfyService(client=client))
+    on_progress, _ = _recorder()
+    with pytest.raises(AdapterError) as raised:
+        await adapter.run(_job(workspace), on_progress)
+    assert raised.value.retriable is True
+    assert "unreachable" in raised.value.internal_detail
