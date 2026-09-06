@@ -32,7 +32,6 @@ the delivered sample).
 
 from __future__ import annotations
 
-import hashlib
 import math
 import time
 from pathlib import Path
@@ -272,15 +271,22 @@ class CharacterReplacementAdapter:
         return window
 
     @staticmethod
-    def seed_base(job: AdapterJob) -> int:
+    def seed_base(job: AdapterJob) -> int | None:
+        """A customer seed wins; otherwise None — the graph's own fixed seeds.
+
+        The ZIP's character graph carries fixed seeds and the client asked
+        for the tool to behave exactly like the ZIP (6 Sep 2026). So a job
+        without a seed runs those seeds, and "Regenerate" with the same
+        inputs returns the same result — the seed control is the way to a
+        different take.
+        """
         raw = job.parameters.get("seed")
         try:
             if raw is not None and str(raw).strip() != "":
                 return abs(int(raw)) % (2**48)
         except (TypeError, ValueError):
             pass
-        digest = hashlib.sha256(job.job_id.encode("utf-8")).hexdigest()
-        return int(digest[:12], 16)
+        return None
 
     async def _probe(self, path: Path) -> MediaInfo:
         try:

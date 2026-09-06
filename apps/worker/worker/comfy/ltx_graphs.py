@@ -613,12 +613,23 @@ def set_aspect(flat: FlatGraph, label: str) -> None:
     flat.one_of_type("ResolutionSelector").widgets["aspect_ratio"] = label
 
 
-def set_seeds(flat: FlatGraph, plan: SeedPlan) -> list[int]:
-    """Every `RandomNoise` gets its own seed; returns them in node order."""
+def set_seeds(flat: FlatGraph, plan: SeedPlan | None) -> list[int]:
+    """Every `RandomNoise` gets its own seed; returns them in node order.
+
+    `plan=None` keeps the seeds the graph itself carries. The character
+    graph ships with two FIXED seeds (123463 and 42, `control_after_generate:
+    fixed`) — running it "as in the ZIP" means running those, so a job with
+    no customer seed does exactly that (client request, 6 Sep 2026). The
+    T2V/FLF graphs randomise their seed on every queue in ComfyUI, so for
+    them a per-job plan is the faithful reading.
+    """
     seeds: list[int] = []
     for index, node in enumerate(flat.of_type("RandomNoise")):
-        seed = plan.for_index(index)
-        node.widgets["noise_seed"] = seed
+        if plan is None:
+            seed = int(node.widgets.get("noise_seed", 0))
+        else:
+            seed = plan.for_index(index)
+            node.widgets["noise_seed"] = seed
         seeds.append(seed)
     if not seeds:
         raise GraphError("graph has no RandomNoise node")
@@ -736,7 +747,8 @@ class ReplacementEdits:
     seconds: int
     width: int
     height: int
-    seed_base: int
+    seed_base: int | None
+    """None runs the graph's own fixed seeds — the ZIP as shipped."""
     filename_prefix: str
 
 
@@ -748,7 +760,7 @@ def compile_character_replacement(graph: dict[str, Any], edits: ReplacementEdits
     set_int_constant(flat, "Set Length", edits.seconds)
     set_int_constant(flat, "Set Width", edits.width)
     set_int_constant(flat, "Set Height", edits.height)
-    set_seeds(flat, SeedPlan(edits.seed_base))
+    set_seeds(flat, SeedPlan(edits.seed_base) if edits.seed_base is not None else None)
     set_output_prefix(flat, edits.filename_prefix)
     flat.prune_unreachable()
     return flat.to_api_prompt()

@@ -121,7 +121,8 @@ async def test_replacement_runs_the_client_graph_end_to_end(tmp_path: Path) -> N
     [combine] = [e for e in prompt.values() if e["class_type"] == "VHS_VideoCombine"]
     assert combine["inputs"]["filename_prefix"] == "zolexai/job-cr-1/output"
     seeds = [e["inputs"]["noise_seed"] for e in prompt.values() if e["class_type"] == "RandomNoise"]
-    assert len(seeds) == 2 and len(set(seeds)) == 2
+    # No customer seed: the graph's own fixed seeds, exactly as the ZIP runs them.
+    assert seeds == [123463, 42]
     statuses = [status for status, _, _ in reports]
     assert statuses[0] == "preparing" and statuses[-1] == "uploading"
 
@@ -317,3 +318,24 @@ def test_character_replacement_resolves_to_its_own_adapter_and_never_to_v2v_path
     # The safety net keeps Video to Video on its own runtime even if a
     # deployment line pointed its Best level here.
     assert resolve_adapter(v2v).name == "ltx"
+
+
+def test_a_customer_seed_replaces_the_graphs_fixed_seeds(tmp_path: Path) -> None:
+    from worker.comfy.ltx_graphs import ReplacementEdits, compile_character_replacement, load_graph
+    from worker.providers.ltx_comfy import GRAPH_FILES
+
+    graph = load_graph(settings.ltx_comfy_workflows_dir / GRAPH_FILES["character_replacement"])
+    as_shipped = compile_character_replacement(
+        graph, ReplacementEdits("p", "n", "v.mp4", "i.png", 8, 736, 1280, None, "x")
+    )
+    assert [
+        e["inputs"]["noise_seed"] for e in as_shipped.values() if e["class_type"] == "RandomNoise"
+    ] == [123463, 42]
+    seeded = compile_character_replacement(
+        graph, ReplacementEdits("p", "n", "v.mp4", "i.png", 8, 736, 1280, 7, "x")
+    )
+    assert [
+        e["inputs"]["noise_seed"] for e in seeded.values() if e["class_type"] == "RandomNoise"
+    ] == [7, 7 + 7_919]
+    assert CharacterReplacementAdapter.seed_base(_job(tmp_path, [], seed=7)) == 7
+    assert CharacterReplacementAdapter.seed_base(_job(tmp_path, [])) is None
