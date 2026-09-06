@@ -20,6 +20,17 @@ starts with one picture the timeline already has. That frame is the
 30 s continuation contributes exactly 30 s × fps frames and no seam shows a
 held frame.
 
+## The customer's own first and last frame (6 Sep 2026)
+
+An extension may carry two optional stills. `first_frame` replaces the
+source's final frame as pass 0's conditioning picture — the customer chose
+the hand-off rather than taking the frame the video happened to end on.
+Nothing else changes: the same graph, the same one-frame overlap drop (the
+rendered index-0 frame is the still itself, one frame at the timeline's
+fps), the same length arithmetic. `last_frame` is the caller's business —
+it goes to the FINAL pass's second image through `render_pass`; the engine
+only records it here so `continuation.json` says what the run was given.
+
 ## Audio at the seams
 
 Each pass carries its own generated soundtrack; the source keeps its own.
@@ -111,6 +122,12 @@ class ContinuationMetadata:
     promised_seconds: float = 0.0
     measured_seconds: float | None = None
     status: str = "WAITING FOR GPU VALIDATION"
+    first_frame: str | None = None
+    """The customer's own first frame (file name), when one replaced the
+    source's final frame as pass 0's conditioning picture."""
+    last_frame: str | None = None
+    """The customer's own last frame (file name), when the final pass was
+    asked to end on it."""
 
     def write(self, path: Path) -> Path:
         path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
@@ -128,6 +145,8 @@ async def continue_video(
     reporter: StageReporter,
     engine: str = "ltx_comfy",
     output: Path | None = None,
+    first_frame: Path | None = None,
+    last_frame: Path | None = None,
 ) -> tuple[Path, ContinuationMetadata]:
     """The customer's clip plus `seconds` of continuation, one file.
 
@@ -135,6 +154,12 @@ async def continue_video(
     parameters every part shares); the continuation is chained at
     `per_pass_seconds` per pass; the result is verified against the promised
     total length before it is returned.
+
+    `first_frame`, when given, is pass 0's conditioning picture instead of
+    the source's extracted final frame. `last_frame` is recorded in the
+    metadata only; applying it to the final pass is `render_pass`'s job
+    (it is the one that knows which pass is last and how its graph takes a
+    second image).
     """
     info = await _probe(source)
     if not info.has_video or not info.duration_seconds:
@@ -168,19 +193,26 @@ async def continue_video(
             "has_audio": info.has_audio,
         },
         promised_seconds=info.duration_seconds + seconds,
+        first_frame=first_frame.name if first_frame is not None else None,
+        last_frame=last_frame.name if last_frame is not None else None,
     )
 
     await reporter.probing("Reading your video…")
-    try:
-        seed_frame = await cancellable(
-            job, extract_final_frame(source, job.workspace / "continuation-seed.png")
-        )
-    except FfmpegError as exc:
-        raise AdapterError(
-            "That video could not be read. Please try another.",
-            internal_detail=f"final-frame extraction failed: {exc}",
-            retriable=False,
-        ) from exc
+    if first_frame is not None:
+        # The customer chose the picture the continuation starts on; the
+        # source's own final frame is not extracted at all.
+        seed_frame = first_frame
+    else:
+        try:
+            seed_frame = await cancellable(
+                job, extract_final_frame(source, job.workspace / "continuation-seed.png")
+            )
+        except FfmpegError as exc:
+            raise AdapterError(
+                "That video could not be read. Please try another.",
+                internal_detail=f"final-frame extraction failed: {exc}",
+                retriable=False,
+            ) from exc
 
     parts = await generate_chain(
         job,
@@ -246,6 +278,8 @@ async def continue_video(
             "passes": len(parts),
             "seams": metadata.seams,
             "measured_seconds": round(measured, 3),
+            "first_frame": metadata.first_frame,
+            "last_frame": metadata.last_frame,
         },
     )
     return destination, metadata

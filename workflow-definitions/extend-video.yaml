@@ -21,17 +21,43 @@ inputs:
     required: true
     label: SOURCE VIDEO
     drop_hint: a video
-    help: Up to 30 minutes. Your video is kept as-is and continued from its final frame.
+    help: Up to 30 minutes. Your video is kept as-is and continued from its final frame, or from a first frame you add.
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
+  # First and last frame on an extension (client request, 6 Sep 2026). Both
+  # optional; both feed the same client First/Last Frame graph that renders
+  # every continuation pass, so nothing about the model changes. With
+  # neither, the continuation starts on the source's final frame and ends
+  # wherever the model takes it — the behaviour before this change, byte for
+  # byte. A first frame replaces the source's final frame as the picture the
+  # continuation starts on; a last frame is the picture it ends on. Neither
+  # is carried over to the next extension: every Extend starts from the new
+  # video unless the customer adds pictures again.
+  - role: first_frame
+    kind: image
+    required: false
+    label: FIRST FRAME
+    drop_hint: an optional first frame
+    help: Optional. The continuation starts on this picture instead of your video's final frame.
+    accept: ["image/jpeg", "image/png", "image/webp"]
+    max_size_mb: 25
+  - role: last_frame
+    kind: image
+    required: false
+    label: LAST FRAME
+    drop_hint: an optional last frame
+    help: Optional. The continuation ends on this picture.
+    accept: ["image/jpeg", "image/png", "image/webp"]
+    max_size_mb: 25
 
 duration_mode: fixed
 # The client's extension ladder (final milestone, 5 Sep 2026): each step is
-# ONE continuation pass conditioned on the source's final frame, and any
-# result can itself be extended again. That is how long videos are made —
-# chained continuation, never a single generation: 30 s + 30 s + 30 s. The
-# old long end (60s/2m/5m) left with the engine change; a customer who
-# wants two more minutes presses Extend four times.
+# ONE continuation pass conditioned on the source's final frame (or on the
+# optional first frame above), and any result can itself be extended again;
+# there is no count of extensions anywhere in the product. That is how long
+# videos are made — chained continuation, never a single generation:
+# 30 s + 30 s + 30 s. The old long end (60s/2m/5m) left with the engine
+# change; a customer who wants two more minutes presses Extend four times.
 supported_durations: ["5s", "10s", "15s", "30s"]
 supported_aspect_ratios: ["16:9", "9:16"]
 supported_quality_levels: []

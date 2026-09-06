@@ -132,7 +132,7 @@ class GenerationService:
             sound=params.sound,
         )
 
-        await self._validate_inputs(user, request, definition)
+        assets_by_id = await self._validate_inputs(user, request, definition)
 
         # Checked LAST among the guards, and deliberately: a user at their limit
         # should still get a precise validation error for a malformed request
@@ -157,6 +157,13 @@ class GenerationService:
                     # server-attached input, so the identity anchor survives
                     # any number of extensions.
                     job_inputs["identity_image"] = identity_asset
+            # Every extension records what it continues (client brief, 6 Sep
+            # 2026): the source's measured length, the job that produced it,
+            # and how many extensions deep the chain now is. There is no cap
+            # on that depth anywhere — the record is bookkeeping, not a gate.
+            stored_params["extension"] = await self._extension_record(
+                user, request, assets_by_id
+            )
 
         job = await self.repo.create_job(
             user_id=user.id,
@@ -257,6 +264,50 @@ class GenerationService:
             lineage["identity_image_asset_id"] = str(identity_id)
         return lineage, await self._usable_identity_asset(user, identity_id)
 
+    async def _extension_record(
+        self,
+        user: User,
+        request: GenerationCreateRequest,
+        assets: dict[uuid.UUID, Any],
+    ) -> dict[str, Any]:
+        """The chain an extension belongs to, resolved once and stored.
+
+        Derivable after the fact (the source asset is some job's output, that
+        job's source is another's…) but stored with the job so nobody has to
+        derive it: `generation` is 1 for the first extension of any video,
+        2 for an extension of an extension, and so on without limit;
+        `parent_job_id` is the user's own job that rendered the source, or
+        None for an uploaded source; `source_seconds` is the source's measured
+        length, so the delivered total (source + step) is known up front.
+
+        Absence at any step is the graceful answer: an upload has no parent
+        and starts a chain at 1; an extension made before this record existed
+        counts as generation 2 when extended.
+        """
+        record: dict[str, Any] = {
+            "source_seconds": None,
+            "parent_job_id": None,
+            "generation": 1,
+        }
+        source_id = request.inputs.get("source_video")
+        if source_id is None:
+            return record
+        asset = assets.get(source_id)
+        if asset is not None:
+            record["source_seconds"] = asset.duration_seconds
+        parent = await self.repo.producing_job_for_asset(source_id, user.id)
+        if parent is None:
+            return record
+        record["parent_job_id"] = str(parent.id)
+        if parent.workflow_id == "extend-video":
+            inherited = (parent.request_params or {}).get("extension")
+            try:
+                depth = int(inherited.get("generation")) if isinstance(inherited, dict) else 1
+            except (TypeError, ValueError):
+                depth = 1
+            record["generation"] = max(1, depth) + 1
+        return record
+
     async def _usable_identity_asset(
         self, user: User, asset_id: Any
     ) -> uuid.UUID | None:
@@ -285,15 +336,17 @@ class GenerationService:
 
     async def _validate_inputs(
         self, user: User, request: GenerationCreateRequest, definition: Any
-    ) -> None:
+    ) -> dict[uuid.UUID, Any]:
         """Checks every referenced asset belongs to the user, is ready, and is
-        the kind the role expects.
+        the kind the role expects. Returns the assets it loaded, by id, so a
+        caller that needs one (the extension record reads the source's
+        length) does not fetch it twice.
 
         Ownership is verified here rather than assumed: without it, a caller
         could name any asset id and have a worker fetch someone else's media.
         """
         if not request.inputs:
-            return
+            return {}
 
         found = await self.assets.repo.get_many_for_user(
             list(request.inputs.values()), user.id
@@ -333,6 +386,7 @@ class GenerationService:
                 code=ErrorCode.MISSING_REQUIRED_INPUT,
                 details={"fields": problems},
             )
+        return found
 
     # ── Reads ────────────────────────────────────────────────────────────
 

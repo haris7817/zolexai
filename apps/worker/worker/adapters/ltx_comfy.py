@@ -183,7 +183,15 @@ class LtxComfyAdapter:
         per section with the previous part's last picture as the first-frame
         still, drops the overlap frame at every seam, and stitches the
         source in front. Each section is one submission of the client's
-        First/Last Frame graph with the first frame only.
+        First/Last Frame graph.
+
+        Two optional stills (client request, 6 Sep 2026), both through the
+        same graph: `first_frame` replaces the source's final frame as pass
+        0's conditioning picture; `last_frame` goes to the FINAL pass as the
+        graph's second image, so the continuation ends on it. With neither
+        the run is what it was before — first frame only, from the source's
+        own final frame. Every extension is its own job with its own output;
+        the chain has no counter and the source is never rewritten.
         """
         source = job.input_for("source_video")
         if source is None:
@@ -208,6 +216,22 @@ class LtxComfyAdapter:
         negative = negative_for(job.workflow_id, job.execution)
         seed = self.seed_base(job)
 
+        first_still = job.input_for("first_frame")
+        last_still = job.input_for("last_frame")
+        # The last frame is uploaded once, up front, so a bad picture fails
+        # the job before any GPU time is spent rather than at the final pass.
+        last_name = await self.upload_still(job, last_still, "last") if last_still else None
+        logger.info(
+            "extension_framing",
+            extra={
+                "job_id": job.job_id,
+                "first_frame": first_still is not None,
+                "last_frame": last_still is not None,
+                "source_seconds": info.duration_seconds,
+                "added_seconds": seconds,
+            },
+        )
+
         async def render_pass(step: ChainStep, frame: Path | None) -> MediaInfo:
             if frame is None:
                 raise AdapterError(
@@ -216,7 +240,11 @@ class LtxComfyAdapter:
                     retriable=False,
                 )
             self._require_lattice(step.seconds)
+            # `frame` is the customer's first frame on pass 0 when they gave
+            # one (the engine seeds the chain with it), otherwise the
+            # previous part's last picture — the same upload either way.
             first = await self.upload_still(job, frame, f"continue{step.index:02d}")
+            final_pass = step.index + 1 == step.total
             spec = PassSpec(
                 seconds=step.seconds,
                 positive=positive,
@@ -224,7 +252,7 @@ class LtxComfyAdapter:
                 aspect_label=aspect_label,
                 seed_base=seed + step.index,
                 first_image=first,
-                last_image=None,
+                last_image=last_name if final_pass else None,
                 band=step.band,
                 section=step.section_progress,
             )
@@ -238,6 +266,8 @@ class LtxComfyAdapter:
             fps=float(settings.ltx_comfy_frame_rate),
             render_pass=render_pass,
             reporter=reporter,
+            first_frame=first_still.require_path() if first_still else None,
+            last_frame=last_still.require_path() if last_still else None,
         )
         result_info = await probe_media(output)
         return await self.deliver(job, output, result_info, reporter)
