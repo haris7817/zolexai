@@ -227,6 +227,27 @@ back to the anchor's level and spread, measured on the uploaded file; a
 seed at the anchor passes through; the switch and `photo` mode skip it;
 the anchor frames skip the handoff).
 
+**Validated live (7 Sep 2026, job `600c403f`):** `9d99f595` re-run with its
+own source, picture and prompt on the anchored worker. Window 1 is
+identical (same seed, deterministic); the seeds for windows 2–4 were
+corrected by gains 1.00 / 1.10 / 1.12 and offsets within ±6.4.
+
+| Window | full-frame mean Y before → after | character region before → after |
+|---|---|---|
+| 1 | 96.5 → 96.5 | 102.4 → 102.4 |
+| 2 | 91.4 → 95.2 | 94.4 → 98.4 |
+| 3 | 86.8 → 92.4 | 89.3 → 95.4 |
+| 4 | 80.5 → 91.7 | 85.3 → 95.3 |
+| last second against the first | −22 % → −10 % | −17 % → −10 % |
+
+The seam-to-seam compounding is gone; seams stay inside the clip's motion
+band (frame-to-frame PSNR 26.2 / 28.6 / 24.7 dB against a median of 25.9).
+In the frame strips the face and hands at 24 s and 32 s hold the tone of
+the first windows. What remains is a slope inside the last window (96 → 88
+full-frame over its 8 s), which the anchor does not address by design; if
+it is still noticed, the next lever is the bounded per-window de-trend of
+the output described above.
+
 ## 9. Rollback
 
 The previous behaviour (cut to 10 s) is `git checkout <this commit>^ --
