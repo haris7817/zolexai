@@ -156,6 +156,12 @@ thing not exercised.
    Aug). It works under the dev server, which is what earlier e2e runs used.
    Two e2e checks fail on it. Fix: read the param client-side
    (`useSearchParams`) or mark the route dynamic.
+   **Corrected 6 Sep 2026:** measured again with Playwright against
+   `next start` (API listening on both `127.0.0.1` and `::1`), the
+   hand-off fills on a hard navigation and on the result's own Extend
+   click; the earlier failure was the browser's `localhost` resolving to
+   `::1` while the API listened on `127.0.0.1` only. No route change was
+   needed. See `extension-first-last-frame.md` §1.3.
 7. **Pre-existing worker-suite failures (10)** reproduce at the milestone's
    starting commit: three "never touches the planner" tests (the soundscape
    clause the 28 Aug fix appends), five H3 video-to-video tests (H3's V2V

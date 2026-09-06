@@ -1,11 +1,11 @@
 # Extend Video — first/last frame on extension, and extending again
 
-**Status: IN PROGRESS.** Section 1 is the pre-change audit (Phase 1 of the
-6 Sep 2026 brief), written before any code moved. The remaining sections
-are filled in as the phases land.
+**Status: implemented and tested without a GPU (6 Sep 2026); the model's
+behaviour with a customer's own first/last frame at an extension seam is
+GPU validation pending (§10).**
 
 Safety checkpoint: tag `pre-extension-first-last-frame` = commit `c50f6bf`
-(the state the client is testing on). Rollback: §9.
+(the state the client was testing on). Rollback: §9.
 
 ## 1. Audit of the extension flow as it stood at `c50f6bf`
 
@@ -104,3 +104,212 @@ does not exist.
 * GPU: the First/Last Frame graph peaked at 30.7 GB VRAM for a 5 s pass on
   the RTX PRO 6000 (`ltx25-gpu-benchmark.md`); no extension step needs more
   than one such pass.
+
+## 2. Old behaviour → new behaviour
+
+| | Before (`c50f6bf`) | After |
+|---|---|---|
+| Extend inputs | SOURCE VIDEO only | SOURCE VIDEO, plus optional FIRST FRAME and LAST FRAME (both images) |
+| Pass 0 conditioning | always the source's extracted final frame | the customer's first frame when given, else the source's final frame |
+| End of the continuation | wherever the model takes it | the customer's last frame when given, else as before |
+| Pressing Extend on an extension result | URL changes, screen does not | canvas returns to its empty state, the source box shows the new file, the settings drawer opens on compact layouts |
+| Framing inputs across a hand-off | would carry over | cleared; prompt and duration still carry over |
+| Chain bookkeeping | parent derivable, not stored | `parameters.extension = {generation, parent_job_id, source_seconds}` stored with every extend-video job |
+| Extension count | none | none (nothing added) |
+
+What did NOT change: the client's graphs (`benchmarks/client-pack/ltx25/`,
+sha256-pinned), the compiler, the models/LoRAs/samplers/schedulers, the
+extension engine's seam arithmetic, the 5/10/15/30 s ladder, Video to
+Video, Music Video, Music, Character Replacement, H3 and its routing.
+
+## 3. The extension flow now
+
+```text
+Existing video (source_video, required)
+   + optional FIRST FRAME (first_frame, image)
+   + optional LAST FRAME  (last_frame, image)
+   + 5 / 10 / 15 / 30 s
+        │  POST /generations  (roles validated against the YAML; kinds checked;
+        │  extension record stored)
+        ▼
+  worker: LtxComfyAdapter._run_extension
+        │  probe source · upload last frame (if any) · seed = first frame (if any)
+        │                                           else the source's final frame
+        ▼
+  continue_video (unchanged chain: one pass per ≤30 s section)
+        │  pass k: client First/Last Frame graph
+        │     Load Image1 = seed (k = 0) or previous pass's final frame
+        │     Load Image2 = last frame, on the FINAL pass only
+        │  drop 1 overlap frame per seam · stitch source in front · verify length
+        ▼
+  Extended video = a NEW asset on a NEW job; the source is never rewritten
+        │
+        ▼  Extend again (same button, same route, ?source=<new asset>)
+```
+
+## 4. First frame, last frame, neither
+
+**Neither.** Byte-for-byte the previous behaviour: the source's final frame
+is extracted, uploaded as the only image, `num_images = 1`, and the run
+proceeds as before. Pinned by
+`test_no_stills_means_the_run_before_this_feature`.
+
+**First frame.** The picture the continuation starts on, instead of the
+frame the video happened to end on. The engine is seeded with it (the
+source's final frame is not extracted at all), it is uploaded as pass 0's
+`Load Image1`, and `continuation.json` records `first_frame` and the pass's
+`conditioning_frame`. The overlap policy is unchanged: the graph renders the
+still itself at index 0 and that one frame (1/24 s) is dropped, so the
+delivered length is exactly source + step. Use: an edited final frame (a
+prop added, a colour fixed), or a deliberate cut to a new framing.
+
+**Last frame.** The picture the continuation ends on. Uploaded once, up
+front (a broken picture fails the job before any GPU time is spent), and
+handed to the FINAL pass as `Load Image2`; the graph's own two-image wiring
+(`num_images.index_2 = -1`) is what runs. On a chained multi-pass
+continuation (not in the current ladder, where every step is one pass)
+only the last pass ends on it.
+
+**Both.** Pass 0 starts on the first frame, the final pass ends on the last;
+for a one-pass step they bracket the same pass, exactly as Image to Video
+with both stills does.
+
+The stills are resized by the graph to its canvas (the ZIP's behaviour); the
+canvas is the product ratio closest to the source video's own frame, and
+the engine fits every part to the source's dimensions afterwards.
+
+## 5. Unlimited chained extensions
+
+"Unlimited" means unlimited extension *jobs*, each a separate generation
+of at most 30 s of new material, never one long inference. `original → +30
+→ +30 → +30 → …` is `test_an_extension_can_be_extended_again_without_limit`
+(four generations deep in the test; nothing in the code knows the number).
+
+Every extension is its own job with its own output; the source asset and
+its producing job are untouched (the API test checks the original still has
+exactly its one output after four extensions, and that the original can
+still be extended in parallel — a chain is not a lock).
+
+`parameters.extension` on every extend-video job:
+
+| key | meaning |
+|---|---|
+| `generation` | 1 for the first extension of any video, 2 for an extension of an extension, and so on |
+| `parent_job_id` | the user's own completed job whose output the source is; `null` for an uploaded source |
+| `source_seconds` | the source's measured length, so the delivered total (source + step) is known at creation |
+
+It is bookkeeping resolved once at creation (`GenerationService._extension_record`),
+not a gate: nothing reads it to refuse anything.
+
+In the workspace, pressing Extend on an extension result hands the result
+over on the same route; `handOverSource` seeds the source, keeps prompt and
+duration, clears any first/last frame from the previous step, the canvas
+returns to its empty state and, where the settings panel is a drawer, it
+opens. The previous result stays one click away in the job strip.
+
+## 6. Hardware and workflow limits
+
+Nothing here changes resolution, model, LoRA, sampler, scheduler, workflow
+or precision. The limits are the ones measured on 5–6 Sep 2026:
+
+* A pass is ≤ 30 s (graph slider maximum). The ladder is 5/10/15/30 s.
+* First/Last Frame pass, 5 s: 63.8–66.9 s wall, 30.7 GB VRAM peak; a 30 s
+  T2V pass 215 s / 34.5 GB. A 30 s extension step is one such pass plus a
+  re-encode of the source and the stitch.
+* The source is re-encoded once per step, so a step on a 5-minute source
+  costs minutes of ffmpeg on top of the render; the input caps at 512 MB.
+* Character Replacement's 10 s ceiling is unrelated and unchanged.
+
+## 7. Failure behaviour
+
+* A still that cannot be decoded fails the job **before any submission**
+  (`test_an_unreadable_last_frame_fails_before_any_render`): no upload, no
+  render, non-retriable, customer copy "One of the selected images could
+  not be read."; the source asset is untouched.
+* A pass that dies mid-render is the same retriable failure as before; no
+  assembled output exists for the runner to upload.
+* A failed or cancelled extension leaves the source exactly as extendable
+  as before: the next Extend of the same video is accepted, and the chain
+  record counts only completed ancestors
+  (`test_a_failed_or_cancelled_extension_does_not_lock_the_chain`).
+* The worker's fail-fast for a dead ComfyUI (`1554bc4`) applies to
+  extension passes as to every other pass.
+* Nothing disables future extensions on failure — there is no state to
+  disable.
+
+## 8. Tests performed (6 Sep 2026, no GPU)
+
+New:
+
+* `apps/worker/tests/test_extension_stills.py` — 6 tests against the fake
+  ComfyUI with real ffmpeg files: first frame replaces the source's final
+  frame; last frame goes to the final pass only (two-section chain);
+  both stills on one pass; no stills = the previous run; unreadable still
+  fails before any render; failed pass with stills is retriable and leaves
+  no output.
+* `apps/api/tests/test_extension_chain.py` — 5 tests against real
+  PostgreSQL/Redis: the catalogue offers the two optional stills; the
+  request contract (source required, stills optional, unknown role
+  refused); a four-deep chain with the record counting 1–4 and the original
+  untouched and still extendable; stills stored by role and delivered to
+  the worker with download URLs, wrong-kind still refused; failed and
+  cancelled steps do not lock the chain.
+* `apps/web/scripts/qa-e2e.mjs` §8c — the Extend tool shows FIRST FRAME /
+  LAST FRAME optional, and pressing a result's Extend replaces the source
+  and empties the canvas.
+
+Existing, re-run: see the run log at the end of this file (§11).
+
+Browser checks under the production build (`next build` + `next start`,
+Playwright): §11.
+
+## 9. Rollback
+
+```bash
+# Everything back to the exact state the client was testing on:
+git checkout dual-engine-benchmark-prep
+git reset --hard pre-extension-first-last-frame     # = c50f6bf
+# (or, without moving the branch: git checkout pre-extension-first-last-frame)
+```
+
+Deploy after a rollback exactly as for any other commit
+(`vps-deploy-procedure`): fetch as `zolexai`, checkout, `deploy/vps-local.sh
+--profile client-test`, rebuild api + web, restart the GPU worker.
+
+Nothing was deleted: the previous behaviour is the "no stills" path, and
+the old hand-off (`withSourceAsset`) is still what a fresh visit uses.
+
+## 10. GPU validation pending
+
+Everything above was proven without a model. Pending on the RTX PRO 6000
+(steps in `gpu-validation-checklist.md` style, ≈ 15 minutes):
+
+1. Extend a 5 s Image to Video result by 5 s with **no stills** — compare
+   the seam with the 5 Sep benchmark (`extend +5 s = 65.3 s`, clean seam).
+2. Extend with a **first frame** that is an edited copy of the source's
+   final frame — expect the edit visible from the first continuation frame
+   and the seam otherwise continuous.
+3. Extend with a **last frame** — expect the final frames to converge on the
+   still, as Image to Video with a last frame does.
+4. Extend with **both**.
+5. Extend the result of (4) again with no stills — the chain continues from
+   the delivered last frame.
+
+Record wall clock and VRAM for each in `ltx25-gpu-benchmark.md`.
+
+## 11. Run log (6 Sep 2026, dev machine, no GPU)
+
+| Check | Result |
+|---|---|
+| Web `tsc --noEmit` | clean |
+| Web `eslint src --max-warnings=0` | clean |
+| Web `next build` | clean; `/app/create/[workflowId]` still `● (SSG)`, six create pages prerendered — the route was not changed |
+| Browser, production build (`next start`), desktop 1440×900 | `?source=A` fills the source box; the Extend tool shows FIRST FRAME optional and LAST FRAME optional; pressing the result's own Extend swaps the source to that result's file and empties the canvas |
+| Browser, production build, phone 390×844 | same, and the settings drawer opens on the seeded form |
+| Browser, live zolexai.com (read-only) | `?source=<first extension's output>` fills the source box on the deployed build; the client's chain 30 → 60 → 90 s is on record |
+| API suite (real PostgreSQL/Redis, `-p no:randomly`) | **136 passed, 3 skipped** (was 131 / 3; +5 new); the 3 skips are the Director-mode tests, unreachable since Director left the product |
+| Worker targeted (`test_continuation`, `test_ltx_comfy`, `test_first_last_frame_adapter`, `test_untouched_runtimes`, `test_extension_stills`) | **55 passed** |
+| Untouched-module guards (`test_untouched_workflows`, `test_untouched_runtimes`, `test_character_replacement`) | pass — V2V, Music, Music Video, Character Replacement YAML and the CLI/H3 adapters are hash-identical |
+| `git diff --stat pre-extension-first-last-frame HEAD -- <protected paths>` | empty: no change under `benchmarks/client-pack/`, `worker/comfy/`, `worker/providers/`, the other six YAMLs, `adapters/ltx.py`, `adapters/h3_comfy.py`, `adapters/character_replacement.py`, `deploy/`, `apps/web/src/app/` |
+| Worker full suite (`-p no:randomly`, 24 min) | **1067 passed, 10 failed, 1 skipped**; the 10 failures are exactly the pre-existing set recorded in the readiness report §7.7 (3 Director "never touches the planner", 5 H3 video-to-video, 2 music-video) — none involves the extension code |
+| `qa:e2e` harness (built web + local API + mock worker) | **27 / 27 checks pass.** Two harness defects fixed on the way: §8b sampled the source box before the asset lookup resolved (the "two remaining failures" of 5 Sep, wrongly attributed to the route), and expected Generate enabled with an EMPTY prompt on a tool whose prompt is required. §8c's "press the result's Extend" step is skipped by the harness when no Extend result is among the 8 most recent jobs (the mock T2V jobs it just created push it out); that click is proven by the direct Playwright run above on desktop and phone |
