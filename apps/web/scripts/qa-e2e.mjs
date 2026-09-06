@@ -237,8 +237,7 @@ try {
     // on the Extend tool (a same-route hand-off: only `?source=` changes)
     // must visibly set up the next extension — the canvas returns to its
     // empty state and the source control shows the new file.
-    console.log("
-8c. Extend offers first/last frame and can be pressed again");
+    console.log("\n8c. Extend offers first/last frame and can be pressed again");
     const extendText = await page.locator("body").innerText();
     check("Extend offers an optional FIRST FRAME", /FIRST FRAME\s*optional/i.test(extendText));
     check("Extend offers an optional LAST FRAME", /LAST FRAME\s*optional/i.test(extendText));
