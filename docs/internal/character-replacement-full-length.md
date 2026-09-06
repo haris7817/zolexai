@@ -92,6 +92,7 @@ seed + window index, so windows differ the way passes do elsewhere).
 | `character_replacement_max_total_seconds` / `execution.max_total_seconds` | 120 | the longest source followed in total; above it the tail is not followed and the log says so |
 | `character_replacement_chain_reference` / `execution.chain_reference` | `previous_frame` | `previous_frame`: continuity across seams, possible identity drift on very long chains; `photo`: no drift, a pose snap at every seam |
 | `character_replacement_expected_wall_per_output_second` | 30 | progress pacing only |
+| `character_replacement_anchor_reference` / `execution.anchor_reference` | true | colour-anchor every chained seed to the first window's own look before reuse (§8) |
 | YAML `timeout_seconds` | 10800 (was 5400) | 12 windows × ~5.5 min plus cutting and joining, with margin |
 
 **Why 2 minutes and not Video to Video's 5.** Measured cost is 323 s per
@@ -177,7 +178,56 @@ speed option, to be judged on seams.
 Still open: the `photo` mode comparison, and a 60 s+ chain for drift and
 memory over more windows.
 
-## 8. Rollback
+## 8. Colour anchoring of chained seeds (7 Sep 2026)
+
+**The report.** "Everything is perfect until the last seconds and the hands
+get darker"; on another video "he went darker through the video".
+
+**Measured** (`signalstats`, per frame, on four chained outputs):
+
+| Job | Full-frame mean Y per window | Where it drops |
+|---|---|---|
+| client `9d99f595` | 96.5 → 91.4 → 86.8 → 80.5 (−17 %) | at each seam: every window starts a few units darker than the previous one ended, and it compounds |
+| `597b8113` (the 32 s validation) | flat across windows; the character region falls 81 → 60 inside window 3 and 77 → 65 inside window 4 | inside the later windows |
+| client `4bc701b1`, `b6662624` | within ±5 % | fine |
+
+On `9d99f595` the seed frames' 90th-percentile luminance is 164 → 157 →
+146 → 145 against 178 in the first window's own rendering, while the chroma
+means do not move: the drift is a loss of highlights and contrast. The
+mechanism is the chain itself — every window after the first is seeded from
+a RENDERED frame, and the graph renders that look a little darker and
+flatter than it was given, so the loss compounds. It is the colour drift
+every autoregressive image chain shows, and the established remedy is to
+colour-match the seed before it goes back in (Deforum's "colour coherence"),
+not to touch the model.
+
+**The fix.** Before a window's last frame becomes the next reference, the
+adapter measures it and matches it to an anchor: the first window's own
+rendering just after its four-frame handoff (frames 4–27, one second) — the
+look the customer approved. Luminance gets a gain that restores the
+anchor's 10th–90th-percentile spread and an offset that restores its mean;
+chroma gets offsets to the anchor's means. All bounded (gain 0.80–1.30,
+luminance offset ±40, chroma ±16), so a genuine change of framing is only
+partly taken back and can never be inverted. ffmpeg only (`signalstats`,
+`lutyuv`), no new dependency. The correction is written to the job's
+`character-replacement.json` per window and to the log
+(`character_replacement_anchor`), so the drift of every job is on record.
+A seed already at the anchor passes through untouched. Sources within one
+window, and `photo` mode, are unaffected; `anchor_reference: false` turns
+it off.
+
+**What it does not do.** It does not re-grade the delivered frames, so a
+window that darkens inside itself still does — but the next window starts
+fresh, so nothing compounds. If a within-window slope remains visible after
+this, the next lever is a bounded per-window de-trend of the output; not
+built, not needed until measured.
+
+Tests: `test_character_replacement_anchor.py` (a darkened seed is brought
+back to the anchor's level and spread, measured on the uploaded file; a
+seed at the anchor passes through; the switch and `photo` mode skip it;
+the anchor frames skip the handoff).
+
+## 9. Rollback
 
 The previous behaviour (cut to 10 s) is `git checkout <this commit>^ --
 apps/worker/worker/adapters/character_replacement.py apps/worker/worker/core/config.py
