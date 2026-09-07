@@ -60,6 +60,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from worker.comfy.widget_values import resolve as resolve_widgets
+from worker.comfy.widget_values import subgraph_widget_slots
+
 #: Frontend-only node types. They never reach the server; the compiler
 #: resolves what they wire and drops them.
 VIRTUAL_TYPES = frozenset(
@@ -287,8 +290,12 @@ def _constant_of(node: dict[str, Any]) -> str:
 
 
 class _Flattener:
-    def __init__(self, graph: dict[str, Any]) -> None:
+    def __init__(self, graph: dict[str, Any], catalogue: dict[str, Any] | None = None) -> None:
         self.graph = graph
+        self.catalogue = catalogue
+        """The server's `/object_info`, needed only for graphs exported by a
+        frontend that writes positional `widgets_values` and no named form."""
+        self.widget_complaints: list[str] = []
         self.subgraphs: dict[str, dict[str, Any]] = {
             sg["id"]: sg for sg in (graph.get("definitions") or {}).get("subgraphs", [])
         }
@@ -336,11 +343,17 @@ class _Flattener:
                     continue
                 inputs[inp["name"]] = src
             ui_only = UI_ONLY_KEYS | UI_ONLY_KEYS_BY_CLASS.get(node_type, frozenset())
-            widgets = {
-                k: v
-                for k, v in (node.get("widgets_values_named") or {}).items()
-                if k not in ui_only
-            }
+            named = node.get("widgets_values_named")
+            if named is None and self.catalogue is not None:
+                # A newer frontend export: positional values only. Read them
+                # the way the browser does, against the server's catalogue.
+                values = node.get("widgets_values")
+                if isinstance(values, list) and values:
+                    named, complaints = resolve_widgets(node_type, values, self.catalogue)
+                    self.widget_complaints.extend(f"node {flat_id}: {c}" for c in complaints)
+                else:
+                    named = {}
+            widgets = {k: v for k, v in (named or {}).items() if k not in ui_only}
             self.flat.nodes[flat_id] = FlatNode(
                 id=flat_id,
                 type=node_type,
@@ -366,7 +379,23 @@ class _Flattener:
         )
         instance_inputs = node.get("inputs", [])
         by_name = {inp["name"]: inp for inp in instance_inputs}
-        named = node.get("widgets_values_named") or {}
+        named = node.get("widgets_values_named")
+        if named is None:
+            # Positional export: the instance's values cover the definition's
+            # widget-backed inputs, in the definition's own order.
+            values = node.get("widgets_values")
+            named = {}
+            if isinstance(values, list) and values:
+                slots = subgraph_widget_slots(sg)
+                sg_inputs = sg.get("inputs") or []
+                for value, slot in zip(values, slots, strict=False):
+                    if slot < len(sg_inputs):
+                        named[sg_inputs[slot]["name"]] = value
+                if len(values) != len(slots):
+                    self.widget_complaints.append(
+                        f"subgraph {flat_id}: {len(values)} widget value(s) for "
+                        f"{len(slots)} promoted widget input(s)"
+                    )
         for index, sg_input in enumerate(sg.get("inputs", [])):
             name = sg_input["name"]
             inst = by_name.get(name)
@@ -473,14 +502,26 @@ def load_graph(path: Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def flatten(graph: dict[str, Any]) -> FlatGraph:
+def flatten(graph: dict[str, Any], catalogue: dict[str, Any] | None = None) -> FlatGraph:
     """The frontend's own "Queue" conversion, minus the server round trip.
 
     Raises `GraphError` on anything the compiler cannot account for — a
     dangling boundary, an orphan `GetNode`, a cycle — so a graph edit that
     breaks the conversion breaks here, without a GPU.
+
+    `catalogue` is the server's `/object_info`. It is needed only for a graph
+    exported by a frontend that writes positional `widgets_values` and no
+    `widgets_values_named` (see `worker.comfy.widget_values`); a graph that
+    carries the named form compiles exactly as before, catalogue or not. A
+    positional graph given no catalogue raises rather than silently emitting
+    a node with no inputs, which the server would reject anyway.
     """
-    flat = _Flattener(graph).run()
+    flattener = _Flattener(graph, catalogue)
+    flat = flattener.run()
+    if flattener.widget_complaints:
+        raise GraphError(
+            "widget values could not be read: " + "; ".join(flattener.widget_complaints[:6])
+        )
     for node in flat.nodes.values():
         if node.type in VIRTUAL_TYPES:
             raise GraphError(f"virtual node {node.id} ({node.type}) survived flattening")
