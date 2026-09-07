@@ -270,14 +270,40 @@ def compose(prompt: str, dialogue: Dialogue, *, add_speech_rule: bool = False) -
         except KeyError:
             continue
         verb = _speech_verb(line, speaker, spoke)
-        text = line.text.strip().rstrip()
-        sentences.append(f'{speaker.description} {verb}, "{text}"')
+        sentences.append(f'{speaker.description} {verb}, "{_spoken(line.text)}"')
     if not sentences:
         return prompt
-    block = " ".join(_capfirst(s) + "." for s in sentences)
+    block = " ".join(_sentence(_capfirst(s)) for s in sentences)
     if add_speech_rule:
         block = f"{block} {speech_rule(dialogue.language)}"
     return f"{prompt.rstrip()}\n\n{block}"
+
+
+def _spoken(text: str) -> str:
+    """The line as it appears inside the quotation marks.
+
+    Its terminal punctuation goes INSIDE the quote, which is where a reader
+    and a text encoder both expect it. The alternative — closing the quote and
+    then adding a stop — produces `"Where to?".`, and the model reads that
+    trailing stop as part of what it is meant to say.
+    """
+    body = text.strip()
+    return body if not body or body[-1] in ".!?" else body + "."
+
+
+def _sentence(text: str, terminal: str = ".") -> str:
+    """Terminate a clause without doubling a stop.
+
+    `_sentence` in the Director compiler, reproduced: a clause ending in a
+    closing quote is already finished, and "Where to?"." is a stop the model
+    reads as part of the line.
+    """
+    body = text.strip()
+    if not body:
+        return ""
+    if body[-1] in '.!?"':
+        return body
+    return body + terminal
 
 
 def _capfirst(text: str) -> str:

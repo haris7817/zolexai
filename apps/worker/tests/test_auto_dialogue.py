@@ -223,6 +223,20 @@ def test_the_lines_become_quoted_speech_the_soundtrack_rule_recognises() -> None
     assert "spoken a single time" in clause
 
 
+def test_a_line_that_ends_in_punctuation_is_not_given_a_second_stop() -> None:
+    """`"Where to?".` is a stop the model reads as part of the line. The
+    Director compiler's `_sentence` rule, reproduced."""
+    dialogue = Dialogue(
+        speakers=(Speaker("driver", "the taxi driver"),),
+        lines=(Line("driver", "Hop in. Where to?"), Line("driver", "Nasty night")),
+    )
+    enriched = compose(SCENE, dialogue)
+    assert '"Hop in. Where to?"' in enriched
+    assert '".' not in enriched
+    # A line with no terminator of its own still gets one.
+    assert '"Nasty night."' in enriched
+
+
 def test_the_first_line_carries_the_voice_and_later_ones_do_not_restate_it() -> None:
     enriched = compose(SCENE, _dialogue())
     assert 'The taxi driver says in a low and weary voice, "Where to tonight?"' in enriched
