@@ -786,22 +786,26 @@ class WorkerSettings(BaseSettings):
     each window starts where window 1 started. Sources within one window
     are untouched; `photo` mode needs no anchor."""
 
-    character_replacement_chain_skin_clause: bool = False
+    character_replacement_chain_skin_clause: bool = True
     """Adds the hands clause (`CHARACTER_REPLACEMENT_SKIN`) to the prompt of
     every window of a CHAINED character replacement, between the pack's lead
     sentence and the customer's text. Never touches a source within one
-    window. Off until the A/B on the client's clip says it helps
-    (`execution.chain_skin_clause` overrides per deployment)."""
+    window. On since the A/B of 7 Sep 2026 on the client's clip: with the skin
+    anchor it took the hands at 16-33 s from 83/91 to 107/108 on the
+    source-hand-masked metric and the hand/face ratio from 0.94/0.97 to
+    1.23/1.21, face unchanged (`execution.chain_skin_clause` overrides per
+    deployment)."""
 
-    character_replacement_skin_anchor: bool = False
+    character_replacement_skin_anchor: bool = True
     """Skin-region re-anchoring of every chained seed (`worker.media.skin`,
     7 Sep 2026): inside the source performer's skin silhouette at the seam,
     skin that is dark AS A WHOLE against the first window's own skin level
     is lifted back to it (bounded additive offsets) before the seed becomes
     the next reference. Containment for "the hands get darker": stops the
     compounding at each seam; the within-window slide is the clause's job.
-    Never touches a source within one window. Off until the A/B on the
-    client's clip (`execution.skin_anchor` overrides per deployment)."""
+    Never touches a source within one window. On since the A/B of 7 Sep 2026
+    (see `character_replacement_chain_skin_clause`); `execution.skin_anchor`
+    overrides per deployment."""
 
     character_replacement_chain_window_seconds: int | None = None
     """Window length for CHAINED sources only (None = `max_seconds`, as

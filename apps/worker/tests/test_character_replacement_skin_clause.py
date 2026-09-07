@@ -52,9 +52,9 @@ def test_the_prompt_helper_is_byte_identical_without_the_clause() -> None:
     assert "same skin tone as the face" in lowered
 
 
-def test_the_clause_is_off_by_default() -> None:
-    assert settings.character_replacement_chain_skin_clause is False
-    assert CharacterReplacementAdapter.chain_skin_clause(_job(Path("."), [])) is False
+def test_the_clause_is_on_by_default_and_the_override_wins() -> None:
+    assert settings.character_replacement_chain_skin_clause is True
+    assert CharacterReplacementAdapter.chain_skin_clause(_job(Path("."), [])) is True
     on = AdapterJob(
         job_id="j",
         workflow_id="character-replacement",

@@ -315,13 +315,24 @@ performer's hand mask so dark hands count whatever their colour —
 |---|---|---|---|---|
 | control = §8 rerun `600c403f` | 111 / 95 / 83 / 91 | 1.28 / 1.14 / 0.94 / 0.97 | 67 / 62 / 57 / 56 % | 87 / 84 / 88 / 93 |
 | B1 clause (`2ef2f6a3`) | 113 / 113 / 94 / 99 | 1.32 / 1.35 / 1.07 / 1.09 | 67 / 75 / 71 / 70 % | 86 / 84 / 87 / 91 |
-| BC clause + skin anchor | (running) | | | |
+| **BC clause + skin anchor (`5805b378`)** | **113 / 114 / 107 / 108** | **1.31 / 1.38 / 1.23 / 1.21** | 67 / 74 / 70 / 70 % | 86 / 82 / 87 / 89 |
 
 B1 alone: the 8–16 s band is fully recovered and the 16–33 s bands recover
 about 40 % of the gap, face unchanged — a clear partial, just under the
 panel's ship-alone bar (hand Y ≥ 95 and ratio ≥ 1.10 in both late bands).
-Ship rule: the smallest passing arm; whatever ships stays default-off
-elsewhere.
+
+**BC passes every criterion:** both late bands above the bar; face within
+−5 / +15 of control in every band; the skin correction fired at all three
+seams with gate cover 8–17 % of the frame, 45–62 % of the keyed skin dark,
+lifts of 44–53 units toward a target of 161; seam PSNR 26.2 / 27.7 /
+24.4 dB against a clip median of 24.8 (no pop); in the 0/13/20/32 s tile
+the hands read as the face's tone where the control's went brown, the room
+and the jacket edges unchanged. **Shipped (7 Sep 2026):**
+`character_replacement_chain_skin_clause` and
+`character_replacement_skin_anchor` default on; `chain_window_seconds`
+stays off (not needed on the evidence). A residual remains — the hands at
+32 s are still a shade under the face — and the shorter-window lever is
+the next thing to try if the client still sees it.
 
 ## 10. Rollback
 

@@ -101,10 +101,10 @@ execution:
   #                           last frame the previous window produced).
   # anchor_reference: true  — colour-anchor every chained seed to the first
   #                           window's own look before reuse (default on).
-  # chain_skin_clause: false — the hands clause in every chained window's
-  #                           prompt (7 Sep 2026; off until the A/B).
-  # skin_anchor: false      — skin-region re-anchoring of every chained seed
-  #                           inside the source's silhouette (off until the A/B).
+  # chain_skin_clause: true — the hands clause in every chained window's
+  #                           prompt (on since the 7 Sep 2026 A/B).
+  # skin_anchor: true       — skin-region re-anchoring of every chained seed
+  #                           inside the source's silhouette (on since the A/B).
   # chain_window_seconds: 5 — window length for sources that chain anyway
   #                           (default: max_seconds); never touches a source
   #                           within one window.
