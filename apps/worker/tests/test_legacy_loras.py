@@ -199,10 +199,10 @@ def _t2v(**over):
 def test_the_two_stage_levers_change_two_numbers_the_graph_already_carries() -> None:
     """Base canvas via the selector's own megapixel budget, delivery via the
     closing ImageScaleBy. Nothing is added to the client's graph."""
-    api = _t2v(megapixels=0.52, final_scale_by=1.0)
+    api = _t2v(megapixels=0.49, final_scale_by=1.0)
     [sel] = [e for e in api.values() if e["class_type"] == "ResolutionSelector"]
     [scale] = [e for e in api.values() if e["class_type"] == "ImageScaleBy"]
-    assert sel["inputs"]["megapixels"] == 0.52
+    assert sel["inputs"]["megapixels"] == 0.49
     assert scale["inputs"]["scale_by"] == 1.0
     # The upscaler stage the client shipped is still in the prompt.
     assert any(e["class_type"] == "LTXVLatentUpsampler" for e in api.values())
@@ -225,13 +225,29 @@ def test_a_lever_off_its_range_is_refused() -> None:
         _t2v(final_scale_by=2.0)
 
 
-def test_the_base_canvas_arithmetic_lands_on_960x544() -> None:
-    """What 0.52 MP means at 16:9 on the 32 grid — and why the delivered
-    frame is 1088 rows, not 1080: the model's stride, cropped afterwards."""
+def test_the_base_canvas_arithmetic_mirrors_the_server_exactly() -> None:
+    """Read from comfy_extras/nodes_resolution.py: a megapixel is 1024², and
+    each side rounds to the 32 grid on its own. The first mirror used 1e6
+    and predicted 960x544 for 0.52; the server made 992x544 and the render
+    came back 1984 wide. 0.49 is the base that doubles to 1920x1088."""
     from worker.comfy.ltx_graphs import megapixel_canvas
 
-    assert megapixel_canvas("16:9", 0.52) == (960, 544)
-    assert megapixel_canvas("9:16", 0.52) == (544, 960)
+    assert megapixel_canvas("16:9", 0.52) == (992, 544)
+    assert megapixel_canvas("16:9", 0.49) == (960, 544)
+    assert megapixel_canvas("9:16", 0.49) == (544, 960)
+    # The pack's own 0.9 comes out 1280x736 by this arithmetic; the earlier
+    # benchmark reported 1280x704 delivered. That gap is recorded, not asserted.
+    assert megapixel_canvas("16:9", 0.9) == (1280, 736)
+
+
+def test_a_side_just_over_a_standard_size_is_trimmed_and_others_are_not() -> None:
+    from worker.adapters.ltx_comfy import _standard_side
+
+    assert _standard_side(1088) == 1080
+    assert _standard_side(1984) == 1920
+    assert _standard_side(1080) == 1080
+    assert _standard_side(1280) == 1280
+    assert _standard_side(704) == 704
 
 
 def _transformer(api: dict) -> tuple[str, dict]:

@@ -830,7 +830,7 @@ class WorkerSettings(BaseSettings):
     16:9).
 
     With `ltx_comfy_final_scale_by = 1.0` this is LTX's two-stage 1080p path
-    (8 Sep 2026): 0.52 MP is 960x544 at 16:9, the graph's latent upscaler
+    (8 Sep 2026): 0.49 MP is 960x544 at 16:9, the graph's latent upscaler
     doubles it to 1920x1088, the 3-step refine generates detail at full
     size, and the adapter crops the eight spare rows. Built after the FAST
     1080 graph measured 304 s for 15 s and a pixel upscale measured 0.29x

@@ -779,7 +779,8 @@ class GenerationEdits:
     only — the first/last-frame compiler ignores it.
 
     This is the first stage of LTX's two-stage 1080p path (8 Sep 2026):
-    0.52 MP is 960x544 at 16:9, which the graph's own `LTXVLatentUpsampler`
+    0.49 MP is 960x544 at 16:9 (the server rounds each side separately —
+    0.52 lands on 992x544), which the graph's own `LTXVLatentUpsampler`
     doubles to 1920x1088 for its 3-step refine. The refine GENERATES detail
     at full size — the difference between this and a pixel upscale."""
     final_scale_by: float | None = None
@@ -1200,12 +1201,18 @@ def canvas_pixels(width: int, height: int) -> float:
 def megapixel_canvas(ratio: str, megapixels: float = 0.9, multiple: int = 32) -> tuple[int, int]:
     """What the selector's arithmetic yields — for documentation and tests only.
 
-    The server computes the real value; this mirrors the documented rule
-    (`sqrt(mp·1e6·w/h)` rounded to the nearest multiple) so a benchmark can
-    label a run before the file exists.
+    The server computes the real value; this mirrors it EXACTLY, read from
+    `comfy_extras/nodes_resolution.py` on the node (8 Sep 2026) after the
+    earlier "documented rule" mirror predicted 960x544 for 0.52 MP and the
+    server produced 992x544: a megapixel is 1024², the scale is
+    `sqrt(total / (w·h))`, and EACH side is rounded to the multiple on its
+    own. That per-side rounding is why 0.49 MP is the base that doubles to
+    1920x1088 and 0.52 is not.
     """
     num, den = (int(p) for p in ratio.split(":"))
-    width = math.sqrt(megapixels * 1e6 * num / den)
-    height = width * den / num
-    round_to = lambda v: int(round(v / multiple)) * multiple  # noqa: E731
-    return round_to(width), round_to(height)
+    total = megapixels * 1024 * 1024
+    scale = math.sqrt(total / (num * den))
+    return (
+        int(round(num * scale / multiple)) * multiple,
+        int(round(den * scale / multiple)) * multiple,
+    )

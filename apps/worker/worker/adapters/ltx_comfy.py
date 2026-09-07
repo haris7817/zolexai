@@ -80,6 +80,20 @@ from worker.providers.ltx_comfy import LtxComfyService
 
 logger = get_logger(__name__)
 
+#: A delivered side just over a standard size is the model's 32-stride
+#: showing (1088 for 1080; 992x2 = 1984 for 1920 when a base rounds up).
+#: Anything within 64 px above a standard size is trimmed to it, centred;
+#: anything else is left alone.
+_STANDARD_SIDES = (1080, 1920, 720, 1280)
+
+
+def _standard_side(pixels: int) -> int:
+    for standard in _STANDARD_SIDES:
+        if standard < pixels <= standard + 64:
+            return standard
+    return pixels
+
+
 
 @dataclass(frozen=True)
 class PassSpec:
@@ -195,10 +209,12 @@ class LtxComfyAdapter:
         pack graph has no such node, so it is done here — and only here,
         when a side is 1088, so every other render is untouched.
         """
-        if self.final_scale_by(job) is None or 1088 not in (info.width, info.height):
+        if self.final_scale_by(job) is None:
             return output, info
-        width = 1080 if info.width == 1088 else info.width
-        height = 1080 if info.height == 1088 else info.height
+        width = _standard_side(info.width)
+        height = _standard_side(info.height)
+        if (width, height) == (info.width, info.height):
+            return output, info
         trimmed = output.with_name(f"{output.stem}_1080.mp4")
         try:
             await cancellable(
