@@ -200,6 +200,32 @@ arm, and it should not need anything new from the graph.
 differing plus a repeat is a pattern rather than transcription noise, but the
 exact wording above should not be quoted as ground truth.
 
+## Measured, later on 7 Sep: separation is what was missing
+
+Same four garage lines, same seed (4242), 15 s, the writer bypassed with a
+fixed answer so the arms differ in one thing — how the lines are laid into
+the prompt. Whisper on both:
+
+| layout | delivered | where the lines landed | repeat |
+| --- | --- | --- | --- |
+| paragraph (all four in one block) | **4 / 4 exact** | all four in 0.0–7.4 s | **"Got a spare part?" again at 9.9–14.8 s** |
+| beats ("Early on, … After a short pause, … Near the end, …") | **4 / 4 exact** | 0.0 / 4.6 / 10.3 / 13.2 s | none |
+
+**Two verdicts, again separate.** Word-level adherence was fine in *both*
+arms this time — so the paraphrasing in the first render was run-to-run
+variation, not the layout (same prompt and seed, different words; this
+stack is not bit-deterministic). What the layout fixes is *pacing*: given
+four lines and no cue about when, the model spoke them all in the first
+half and filled the second half by repeating the last one — the dead-air
+repeat the whole feature exists to prevent. Given cues, it spread them
+across the clip and had nothing left to fill.
+
+**Switched on for client-test**: `AUTO_DIALOGUE_LAYOUT=beats` on the node
+(the code default stays `paragraph`; commit `ea90b2d`). One pair, so the
+usual caveat — but the timings are the mechanism itself, not a proxy for it,
+and they are the thing the client hears. Clips:
+`E:\Downloads\zolexai-dialogue-ab\`.
+
 ## Not done
 
 * Sectioned multi-voice dialogue with a master voice track and post-stitch
