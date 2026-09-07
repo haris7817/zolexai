@@ -396,6 +396,27 @@ skin; at full resolution the room, the hood and the jacket are identical
 (`scratchpad/hold-preview/closeup-480.png`, `diff.png`). The plan's own
 numbers: mean lift 20 Y, max 41, no frame refused.
 
+**Validated live** (7 Sep 08:56 UTC, job `30d33685`, the client's exact
+inputs and their exposure-only prompt, worker on `c2dfcf0`): four windows,
+all held, no frame refused, mean lift 10 / 24 / 23 / 18 Y per window,
+18–19 s of hold per window against ~155 s of render (623 s total, the same
+as the run without it). Measured on the delivered file:
+
+| | 0–8 s | 8–16 s | 16–24 s | 24–33 s |
+|---|---|---|---|---|
+| hand Y before | 109.4 | 94.9 | 89.4 | 91.2 |
+| **hand Y live** | **119.2** | **115.3** | **108.4** | **99.6** |
+| ratio before | 1.26 | 1.15 | 1.03 | 1.00 |
+| **ratio live** | **1.37** | **1.38** | **1.24** | **1.11** |
+| face Y before / live | 87.2 / 87.2 | 82.2 / 83.5 | 86.5 / 87.5 | 91.2 / 89.7 |
+
+Seam PSNR 26.3 / 26.8 / 24.4 dB against a clip median of 25.3 — no pop
+introduced. That is on the HARDER prompt: the same clip with the client's
+descriptive prompt and only the seed-side fix read 113 / 114 / 107 / 108,
+so the hold on a prompt that says nothing about the character now matches
+it for three bands of four. The last band still gives up about 8 units; the
+remaining lever is `chain_window_seconds`.
+
 **Cost, measured on the node** (ffmpeg 6.1, Threadripper 9965WX, half-canvas
 masks): 54 s to measure and 64 s to apply 769 frames — about 30 s per
 193-frame window against 164–323 s of GPU for the same window. Both passes
