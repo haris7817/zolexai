@@ -70,7 +70,7 @@ class LtxHdAdapter:
         return workflow_id == WORKFLOW_ID
 
     async def run(self, job: AdapterJob, on_progress: ProgressCallback) -> AdapterResult:
-        reporter = StageReporter(job, on_progress)
+        reporter = StageReporter(on_progress)
         await reporter.preparing()
 
         seconds = self._seconds(job)
