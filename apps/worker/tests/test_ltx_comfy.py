@@ -167,6 +167,29 @@ class FakeLtxComfy:
         return httpx.Response(404)
 
 
+async def test_an_error_out_of_the_progress_callback_still_cancels_the_prompt(
+    tmp_path: Path,
+) -> None:
+    """A lease lost mid-poll rises out of `on_tick`, not out of
+    `raise_if_cancelled`. Before 7 Sep 2026 that path left the prompt
+    rendering: a cancelled job's window kept the card for its full length
+    after the worker had abandoned it."""
+    fake = FakeLtxComfy(tmp_path / "unused.mp4")
+    fake.hang = True
+    fake.running = ["p-1"]
+    client = ComfyClient(
+        "http://ltx-comfy.test", poll_seconds=0.01, transport=httpx.MockTransport(fake.handler)
+    )
+
+    async def rejected(elapsed: float) -> None:
+        raise RuntimeError("progress rejected: job already cancelled")
+
+    with pytest.raises(RuntimeError, match="already cancelled"):
+        await client.wait(_job(tmp_path), "p-1", timeout_seconds=5, on_tick=rejected)
+    assert fake.queue_deletes == [["p-1"]]
+    assert fake.interrupts == 1
+
+
 def _catalogue() -> dict:
     """Only what the adapter asks a live server about."""
     return {

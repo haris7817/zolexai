@@ -411,6 +411,25 @@ class ComfyClient:
             except BaseException:  # noqa: BLE001 - best effort while dying
                 logger.warning("comfy_cancel_on_teardown_failed", exc_info=True)
             raise
+        except ComfyError:
+            # Raised by this loop itself: the timeout path has already
+            # cancelled, and a failure status means the prompt is finished.
+            raise
+        except BaseException:
+            # Anything ELSE escaping the loop must not leave the prompt
+            # rendering for nobody. The case that found this (7 Sep 2026):
+            # the platform cancelled a Character Replacement job, the
+            # worker's next progress report was rejected, `LeaseLost` rose
+            # out of `on_tick` — and the job's window kept the card for its
+            # full length after the worker had already walked away. A
+            # second cancel from the cooperative path above is harmless: the
+            # delete is idempotent and the interrupt fires only if this
+            # prompt is the one still running.
+            try:
+                await asyncio.shield(self.cancel(prompt_id))
+            except BaseException:  # noqa: BLE001 - best effort while dying
+                logger.warning("comfy_cancel_on_error_failed", exc_info=True)
+            raise
 
 
 async def evict_comfy_vram(
