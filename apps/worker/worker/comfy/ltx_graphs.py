@@ -773,20 +773,28 @@ class GenerationEdits:
     (the community Q8_0 GGUF); Lightricks' int8 safetensors is what the
     character graph already runs on this node."""
     megapixels: float | None = None
-    """The base canvas, as the graph's own `ResolutionSelector` takes it: a
-    megapixel budget the server turns into a 32-aligned size for the chosen
-    aspect. None keeps the pack's 0.9 (1280x704 at 16:9). Text to Video
-    only — the first/last-frame compiler ignores it.
+    """The `ResolutionSelector` budget, which is the pack graph's DELIVERED
+    size: a megapixel count the server turns into a 32-aligned canvas for the
+    chosen aspect (each side rounded on its own; 0.9 is 1280x736 at 16:9).
+    None keeps the pack's 0.9. Text to Video only — the first/last-frame
+    compiler ignores it.
 
-    This is the first stage of LTX's two-stage 1080p path (8 Sep 2026):
-    0.49 MP is 960x544 at 16:9 (the server rounds each side separately —
-    0.52 lands on 992x544), which the graph's own `LTXVLatentUpsampler`
-    doubles to 1920x1088 for its 3-step refine. The refine GENERATES detail
-    at full size — the difference between this and a pixel upscale."""
-    final_scale_by: float | None = None
-    """The graph's closing `ImageScaleBy`. The pack halves the refined frame
-    back to base size (0.5) and delivers 1280x704; 1.0 delivers the refined
-    frame as it is. Text to Video only. None keeps the pack's 0.5."""
+    How the pack really works (read off the compiled prompt, 8 Sep 2026):
+    `ResolutionSelector -> EmptyImage -> ImageScaleBy(0.5) -> GetImageSize ->
+    EmptyLTXVLatentVideo`. The first pass runs at HALF the selector size, the
+    latent upsampler doubles it back, and the 3-step refine runs at selector
+    size, which is what is delivered. So the selector budget is the output
+    size and `base_scale` below is how much of it the first pass sees."""
+    base_scale: float | None = None
+    """The `ImageScaleBy` that sizes the FIRST pass, as a fraction of the
+    selector size. The pack's 0.5 puts the base at half the delivered size
+    (640x368 for a 1280x736 delivery). None keeps the pack's 0.5.
+
+    This was first named `final_scale_by` on the belief it scaled the
+    delivery; it does not, and a render "delivered at x0.75" was in fact a
+    first pass at 0.75 of the selector size. Measured clean at 16:9 0.9 MP,
+    15 s: base 0.5 → 92 s; base 0.75 → 240 s. The base is where the time
+    goes."""
 
 
 #: Filled by the compilers with what the model-chain switches actually did,
@@ -830,19 +838,19 @@ def compile_text_to_video(graph: dict[str, Any], edits: GenerationEdits) -> dict
     set_seeds(flat, SeedPlan(edits.seed_base))
     set_output_prefix(flat, edits.filename_prefix)
     report = _apply_model_chain_edits(flat, edits)
-    # The two-stage 1080p levers. Both are the graph's own widgets — the
-    # selector's megapixel budget and the closing scale — so nothing is
-    # added to the client's graph; two numbers it already carries change.
+    # Two numbers the graph already carries: the selector's megapixel budget
+    # (the delivered size) and the ImageScaleBy that sizes the first pass.
+    # Nothing is added to the client's graph.
     if edits.megapixels is not None:
         if not 0.1 <= edits.megapixels <= 4.0:
             raise GraphError(f"megapixels {edits.megapixels} is outside 0.1-4.0")
         flat.one_of_type("ResolutionSelector").widgets["megapixels"] = float(edits.megapixels)
-        report["base_megapixels"] = float(edits.megapixels)
-    if edits.final_scale_by is not None:
-        if not 0.25 <= edits.final_scale_by <= 1.0:
-            raise GraphError(f"final_scale_by {edits.final_scale_by} is outside 0.25-1.0")
-        flat.one_of_type("ImageScaleBy").widgets["scale_by"] = float(edits.final_scale_by)
-        report["final_scale_by"] = float(edits.final_scale_by)
+        report["delivered_megapixels"] = float(edits.megapixels)
+    if edits.base_scale is not None:
+        if not 0.25 <= edits.base_scale <= 1.0:
+            raise GraphError(f"base_scale {edits.base_scale} is outside 0.25-1.0")
+        flat.one_of_type("ImageScaleBy").widgets["scale_by"] = float(edits.base_scale)
+        report["base_scale"] = float(edits.base_scale)
     flat.prune_unreachable()
     api = flat.to_api_prompt()
     LAST_MODEL_CHAIN.clear()

@@ -196,10 +196,11 @@ def _t2v(**over):
     return compile_text_to_video(graph, edits)
 
 
-def test_the_two_stage_levers_change_two_numbers_the_graph_already_carries() -> None:
-    """Base canvas via the selector's own megapixel budget, delivery via the
-    closing ImageScaleBy. Nothing is added to the client's graph."""
-    api = _t2v(megapixels=0.49, final_scale_by=1.0)
+def test_the_two_levers_change_two_numbers_the_graph_already_carries() -> None:
+    """Delivered size via the selector's megapixel budget; first-pass size via
+    the ImageScaleBy that feeds GetImageSize. Nothing is added to the
+    client's graph."""
+    api = _t2v(megapixels=0.49, base_scale=1.0)
     [sel] = [e for e in api.values() if e["class_type"] == "ResolutionSelector"]
     [scale] = [e for e in api.values() if e["class_type"] == "ImageScaleBy"]
     assert sel["inputs"]["megapixels"] == 0.49
@@ -222,10 +223,23 @@ def test_a_lever_off_its_range_is_refused() -> None:
     with pytest.raises(GraphError):
         _t2v(megapixels=9.0)
     with pytest.raises(GraphError):
-        _t2v(final_scale_by=2.0)
+        _t2v(base_scale=2.0)
 
 
-def test_the_base_canvas_arithmetic_mirrors_the_server_exactly() -> None:
+def test_the_image_scale_sizes_the_first_pass_not_the_delivery() -> None:
+    """The misreading that cost an afternoon, pinned: ImageScaleBy feeds
+    GetImageSize feeds the latent. It is the BASE. The delivery is the
+    selector size, reached by the latent upsampler."""
+    api = _t2v()
+    [latent] = [k for k, v in api.items() if v["class_type"] == "EmptyLTXVLatentVideo"]
+    size_src = api[latent]["inputs"]["width"][0]
+    assert api[size_src]["class_type"] == "GetImageSize"
+    scale_src = api[size_src]["inputs"]["image"][0]
+    assert api[scale_src]["class_type"] == "ImageScaleBy"
+    assert api[scale_src]["inputs"]["scale_by"] == 0.5
+
+
+def test_the_delivered_canvas_arithmetic_mirrors_the_server_exactly() -> None:
     """Read from comfy_extras/nodes_resolution.py: a megapixel is 1024², and
     each side rounds to the 32 grid on its own. The first mirror used 1e6
     and predicted 960x544 for 0.52; the server made 992x544 and the render

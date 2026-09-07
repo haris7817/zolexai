@@ -825,24 +825,25 @@ class WorkerSettings(BaseSettings):
 
     ltx_comfy_megapixels: float | None = None
     """
-    Text to Video's base canvas on the pack graph, as a megapixel budget for
-    its own `ResolutionSelector`. None keeps the pack's 0.9 (1280x704 at
-    16:9).
+    Text to Video's DELIVERED size on the pack graph, as the megapixel budget
+    of its own `ResolutionSelector` (0.9 is 1280x736 at 16:9; 2.0 is
+    1920x1088). None keeps the pack's 0.9. `execution.megapixels` overrides.
 
-    With `ltx_comfy_final_scale_by = 1.0` this is LTX's two-stage 1080p path
-    (8 Sep 2026): 0.49 MP is 960x544 at 16:9, the graph's latent upscaler
-    doubles it to 1920x1088, the 3-step refine generates detail at full
-    size, and the adapter crops the eight spare rows. Built after the FAST
-    1080 graph measured 304 s for 15 s and a pixel upscale measured 0.29x
-    the detail — this is the path that keeps it. `execution.megapixels`
-    overrides per workflow.
+    The pack's first pass runs at half this (see `ltx_comfy_base_scale`) and
+    its latent upsampler + 3-step refine bring it back up. Measured clean on
+    the RTX PRO 6000, 15 s at 16:9 (8 Sep 2026): 0.9 MP delivers in 92 s;
+    the FAST 1080 graph's native single pass takes ~310 s; a 0.9 MP delivery
+    with the base at 0.75 takes 240 s at 0.46x native detail. Every faster
+    path measured costs detail — see docs/internal/text-to-video-speed.md.
     """
 
-    ltx_comfy_final_scale_by: float | None = None
+    ltx_comfy_base_scale: float | None = None
     """
-    The pack graph's closing `ImageScaleBy`. The pack halves the refined
-    frame back to base size (0.5); 1.0 delivers the refined frame. None keeps
-    the pack's own. `execution.final_scale_by` overrides.
+    The pack graph's `ImageScaleBy` that sizes the FIRST pass, as a fraction
+    of the delivered size. The pack's own is 0.5. None keeps it.
+    `execution.base_scale` overrides. Named `final_scale_by` for a few hours
+    on 8 Sep 2026 under a misreading of the graph; it never touched the
+    delivery.
     """
 
     ltx_comfy_transformer: str = ""

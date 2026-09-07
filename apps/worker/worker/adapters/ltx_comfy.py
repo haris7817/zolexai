@@ -201,15 +201,15 @@ class LtxComfyAdapter:
     async def _trim_to_1080(
         self, job: AdapterJob, output: Path, info: MediaInfo
     ) -> tuple[Path, MediaInfo]:
-        """1920x1088 → 1920x1080 (or 1088x1920 → 1080x1920), centre crop.
+        """A side just over a standard size is trimmed to it, centred.
 
-        The two-stage path delivers the refined frame at 2x a 32-aligned
-        base, which for 16:9 is 1088 rows: the model's stride, not a video
-        size. The FAST 1080 graph does exactly this crop inside ComfyUI; the
-        pack graph has no such node, so it is done here — and only here,
-        when a side is 1088, so every other render is untouched.
+        A 1080p delivery from the pack graph comes out 1920x1088 — the
+        selector's 32-grid, the model's stride — where the FAST graph crops
+        inside ComfyUI. The pack graph has no such node, so it is done here,
+        and only when the delivery levers are in use, so the pack's own
+        1280x736 (and every other render) is untouched.
         """
-        if self.final_scale_by(job) is None:
+        if self.base_scale(job) is None and self.megapixels(job) is None:
             return output, info
         width = _standard_side(info.width)
         height = _standard_side(info.height)
@@ -388,7 +388,7 @@ class LtxComfyAdapter:
             bypass_detailer=self.bypasses_detailer(job),
             transformer=self.transformer(job),
             megapixels=self.megapixels(job),
-            final_scale_by=self.final_scale_by(job),
+            base_scale=self.base_scale(job),
         )
         try:
             if spec.first_image is None:
@@ -563,11 +563,12 @@ class LtxComfyAdapter:
             return None
 
     @staticmethod
-    def final_scale_by(job: AdapterJob) -> float | None:
-        """Closing scale for Text to Video, or None for the pack's own 0.5."""
-        raw = job.execution.get("final_scale_by")
+    def base_scale(job: AdapterJob) -> float | None:
+        """First-pass size as a fraction of the delivery, or None for the
+        pack's own 0.5."""
+        raw = job.execution.get("base_scale")
         if raw is None:
-            raw = settings.ltx_comfy_final_scale_by
+            raw = settings.ltx_comfy_base_scale
         if raw is None or str(raw).strip() == "":
             return None
         try:
