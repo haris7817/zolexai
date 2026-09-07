@@ -872,6 +872,14 @@ class Fast1080Edits:
     `bypass_i2v`. False runs text to video and the picture is ignored; true
     conditions on it. Separate from `image` so a text-to-video job can
     satisfy the loader without turning image conditioning on."""
+    canvas: tuple[int, int] | None = None
+    """Generation canvas (width, height), or None for the graph's own
+    1920x1088. The graph already ends in an `ImageScale` to 1920x1080 with
+    `crop=center` — that is how it turns 1088 rows into 1080 — so a smaller
+    canvas is upscaled and centre-cropped by the graph's own node, and the
+    soundtrack never passes through it. A speed lever (user request, 7 Sep
+    2026): 1280x736 is ~2.3x fewer pixels than native. Both sides must be
+    multiples of 32, the model's spatial stride."""
 
 
 def compile_fast_1080(
@@ -897,6 +905,13 @@ def compile_fast_1080(
         flat.set_value(flat.one_of_type("LoadImage"), "image", edits.image)
     # `use image input` — the graph inverts it into `bypass_i2v`.
     flat.set_value(flat.one_of_type("PrimitiveBoolean"), "value", bool(edits.condition_on_image))
+    if edits.canvas is not None:
+        width, height = edits.canvas
+        if width % 32 or height % 32 or width < 256 or height < 256:
+            raise GraphError(f"canvas {width}x{height} is not a multiple of 32 on both sides")
+        latent = flat.one_of_type("EmptyLTXVLatentVideo")
+        flat.set_value(latent, "width", int(width))
+        flat.set_value(latent, "height", int(height))
     flat.prune_unreachable()
     return flat.to_api_prompt()
 

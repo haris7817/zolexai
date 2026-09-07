@@ -138,6 +138,51 @@ def test_a_job_sets_its_own_inputs_and_keeps_the_clients_negative() -> None:
     assert duration == [15.0]
 
 
+def test_a_smaller_canvas_reaches_the_latent_and_the_final_scale_stays_1080p() -> None:
+    """The speed lever: generate small, let the graph's own lanczos+crop node
+    deliver 1920x1080. The final ImageScale is deliberately NOT touched —
+    it is what makes the output size independent of the canvas."""
+    catalogue = json.loads((Path(__file__).parent / "data/ltx_object_info.json").read_text())
+    api = compile_fast_1080(
+        load_graph(CLIENT_GRAPH),
+        Fast1080Edits(
+            positive="p", negative=None, seconds=8, seed=1,
+            filename_prefix="x", image="placeholder.png", canvas=(1280, 736),
+        ),
+        catalogue,
+    )
+    [latent] = [e for e in api.values() if e["class_type"] == "EmptyLTXVLatentVideo"]
+    assert (latent["inputs"]["width"], latent["inputs"]["height"]) == (1280, 736)
+    [scale] = [e for e in api.values() if e["class_type"] == "ImageScale"]
+    assert (scale["inputs"]["width"], scale["inputs"]["height"]) == (1920, 1080)
+    assert scale["inputs"]["crop"] == "center"
+
+
+def test_a_canvas_off_the_32_grid_is_refused_at_compile_time() -> None:
+    from worker.comfy.ltx_graphs import GraphError
+
+    catalogue = json.loads((Path(__file__).parent / "data/ltx_object_info.json").read_text())
+    with pytest.raises(GraphError):
+        compile_fast_1080(
+            load_graph(CLIENT_GRAPH),
+            Fast1080Edits(positive="p", negative=None, seconds=8, seed=1,
+                          filename_prefix="x", image="placeholder.png", canvas=(1280, 720)),
+            catalogue,
+        )
+
+
+def test_the_canvas_comes_from_the_job_then_the_deployment_then_the_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = LtxHdAdapter()
+    assert adapter._canvas(_job(tmp_path)) is None                      # graph's own
+    monkeypatch.setattr(settings, "ltx_hd_canvas", "1280x736")
+    assert adapter._canvas(_job(tmp_path)) == (1280, 736)              # deployment
+    job = _job(tmp_path)
+    job.execution["canvas"] = "native"
+    assert adapter._canvas(job) is None                                 # job wins
+
+
 def test_a_length_above_the_ceiling_is_refused_before_any_gpu_time(tmp_path: Path) -> None:
     adapter = LtxHdAdapter()
     with pytest.raises(AdapterError) as caught:

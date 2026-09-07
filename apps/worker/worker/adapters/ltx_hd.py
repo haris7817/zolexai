@@ -118,6 +118,7 @@ class LtxHdAdapter:
                     filename_prefix=f"zolexai/{job.job_id}/output",
                     image=image,
                     condition_on_image=False,
+                    canvas=self._canvas(job),
                 ),
                 catalogue,
             )
@@ -135,6 +136,7 @@ class LtxHdAdapter:
                 "seconds": seconds,
                 "frames": frames,
                 "nodes": len(api),
+                "canvas": self._canvas(job) or "native",
             },
         )
 
@@ -231,6 +233,24 @@ class LtxHdAdapter:
         except (TypeError, ValueError):
             pass
         return abs(hash(job.job_id)) % (2**48)
+
+    @staticmethod
+    def _canvas(job: AdapterJob) -> tuple[int, int] | None:
+        """The generation canvas: a job's `execution.canvas`, else the
+        deployment's `ltx_hd_canvas`, else the graph's own. "native" and an
+        empty value both mean the graph's own; "1280x736" means that."""
+        raw = str(job.execution.get("canvas") or settings.ltx_hd_canvas or "native").strip().lower()
+        if raw in ("", "native"):
+            return None
+        try:
+            width, height = (int(part) for part in raw.split("x", 1))
+        except ValueError as exc:
+            raise AdapterError(
+                "This tool is temporarily unavailable.",
+                internal_detail=f"ltx_hd canvas {raw!r} is not WxH",
+                retriable=False,
+            ) from exc
+        return width, height
 
     @staticmethod
     def _negative(job: AdapterJob) -> str | None:

@@ -818,6 +818,18 @@ class WorkerSettings(BaseSettings):
     measure against "the videos are taking longer" (client, 7 Sep 2026).
     `execution.transformer` overrides."""
 
+    ltx_hd_canvas: str = "native"
+    """
+    Generation canvas for the FAST 1080 graph: "native" (the graph's own
+    1920x1088) or "WxH" such as "1280x736".
+
+    The speed lever the user asked for (7 Sep 2026): generate at a
+    720p-class size and let the graph's own final `ImageScale` (lanczos,
+    crop=center) bring it to 1920x1080. Native 15 s measured 306 s; this
+    exists so the alternative can be measured against it on the same seed
+    rather than assumed. Both sides must be multiples of 32.
+    """
+
     ltx_hd_max_seconds: float = 15.0
     """The longest Text to Video HD renders. Benchmarked 7 Sep 2026 on the
     RTX PRO 6000: 8 s = 121 s, 15 s = 306 s, 30 s = 1051 s. Thirty seconds
