@@ -368,12 +368,39 @@ chained window is measured under the same source-silhouette gate and the
 same local-skin-mean ramp as the seed pass, and each pixel is lifted by ITS
 OWN deficit to the first window's skin level, capped. A lit face gets
 nothing by construction; a dark hand gets what it lacks. The per-frame
-target follows the source performer's own skin under the very pixels being
-lifted (ratio clamped 0.8–1.15, smoothed ±24 frames), so a shadow the
-source shows stays a shadow. The gate's plausibility is a smoothed weight
-on the cap, not a per-frame on/off. The seed for the next window is then
-taken from the HELD frames, so the seam frame and the seed carry the same
-skin.
+target follows the source performer's own skin under the corrected region
+(ratio clamped 0.8–1.15, smoothed ±24 frames), so a shadow the source shows
+stays a shadow. The gate's plausibility is a smoothed weight on the cap,
+not a per-frame on/off; a window is held only when the average lift across
+the keyed silhouette reaches 6 units, because a window that does not drift
+at all still reads 3.4 from the feathered edge of the mask alone. The seed
+for the next window is taken from the HELD frames, so the seam frame and
+the seed carry the same skin, and the seed pass's own skin step stands down
+for that window.
+
+**Measured on the client's delivered video** (job `1702032c`, 769 frames,
+the hold run offline on the node against the source resampled to the same
+24 fps grid — `scratchpad/preview_hold.py`):
+
+| | 0–8 s | 8–16 s | 16–24 s | 24–33 s |
+|---|---|---|---|---|
+| hand Y before | 109.4 | 94.9 | 89.4 | 91.2 |
+| **hand Y held** | **116.7** | **116.4** | **114.5** | **105.5** |
+| hand/face ratio before | 1.26 | 1.15 | 1.03 | 1.00 |
+| **hand/face ratio held** | **1.34** | **1.42** | **1.33** | **1.16** |
+| face Y (both) | 87 | 82 | 86 | 91 |
+
+Fixed regions, before → after: face +0.1, room +0.0, frame 0 unchanged (the
+customer's own picture). The difference image is confined to the character's
+skin; at full resolution the room, the hood and the jacket are identical
+(`scratchpad/hold-preview/closeup-480.png`, `diff.png`). The plan's own
+numbers: mean lift 20 Y, max 41, no frame refused.
+
+**Cost, measured on the node** (ffmpeg 6.1, Threadripper 9965WX, half-canvas
+masks): 54 s to measure and 64 s to apply 769 frames — about 30 s per
+193-frame window against 164–323 s of GPU for the same window. Both passes
+are contained: an `FfmpegError` or a `TimeoutError` (budget 3 s per frame)
+is logged and the window is joined exactly as it was, never a failed job.
 
 *Why per pixel.* A per-frame scalar through the mask — the seed pass's own
 primitive — was built first and refuted before it shipped: on a synthetic
@@ -398,10 +425,19 @@ against 164–323 s of GPU time.
 Sep 02:32); the container's cgroup reports `oom_kill 4` against a 241 GiB
 limit, and the 02:32 one killed the client's own job mid-render (it retried
 and finished, 623 s of GPU time wasted). The idle server was measured at
-91.7 GB resident and dropped to 21.1 GB on `POST /free {"free_memory":
-true}` with the models still warm. `ltx_comfy_free_cache_after_job`
-(default on) makes that call after every LTX job; `ltx_comfy_free_after_job`
-(which also unloads models) is unchanged.
+91.7 GB resident, dropping to 21.1 GB — and the card to 0.9 GB — on `POST
+/free`. A chained job is the accumulator: one prompt per window, so
+`character_replacement_free_after_chain` (default on) makes that call after
+a chain finishes.
+
+*Not "cache only".* The first attempt at this shipped a switch that claimed
+to drop the cache while leaving the models warm, on the strength of the
+`unload_models` flag. ComfyUI does not work that way: its worker reads
+`flags.get("unload_models", free_memory)`, so a `/free` asking only for
+`free_memory` unloads everything (read in `main.py` on the node; the 21.1 GB
+and 0.9 GB readings above are exactly that). The switch is therefore scoped
+to chained jobs, which run for tens of minutes and can absorb one model
+load, instead of taxing every 50-second Text to Video render.
 
 **Settings added.**
 
@@ -409,7 +445,7 @@ true}` with the models still warm. `ltx_comfy_free_cache_after_job`
 |---|---|---|
 | `character_replacement_skin_hold` / `execution.skin_hold` | true | the per-frame hold on every chained window's delivered frames |
 | `character_replacement_ripple_strength` / `execution.ripple_strength` | none | the Ripple LoRA's `strength_model` (the graph's own 1.35 when unset); the client's advisor suggests 1.45–1.50 |
-| `ltx_comfy_free_cache_after_job` | true | drop ComfyUI's execution cache after every LTX job, models left warm |
+| `character_replacement_free_after_chain` | true | let ComfyUI release its memory after a chained job (it unloads models; the next job pays one load) |
 
 ## 11. Rollback
 

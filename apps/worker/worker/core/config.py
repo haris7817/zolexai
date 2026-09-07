@@ -734,15 +734,6 @@ class WorkerSettings(BaseSettings):
     models stay warm between LTX jobs and are evicted only when another
     engine needs the card (`evict_comfy_vram`)."""
 
-    ltx_comfy_free_cache_after_job: bool = True
-    """Drop the LTX ComfyUI's execution cache after every job, models left
-    warm (`POST /free {"free_memory": true}`). The cache of decoded frames and
-    latents grows about 10 GB per prompt; the container's cgroup killed the
-    server four times in two days at its 241 GiB limit (7 Sep 2026), each
-    kill re-running a customer's job from scratch. Measured: the idle server
-    went from 91.7 GB to 21.1 GB on this call. Ignored when
-    `ltx_comfy_free_after_job` already unloads everything."""
-
     ltx_comfy_input_dir: Path | None = None
     """ComfyUI's `input/` directory when the worker shares a filesystem with
     it. Optional: inputs travel over HTTP either way; this only enables
@@ -828,6 +819,19 @@ class WorkerSettings(BaseSettings):
     bounded offset, following the source performer's own skin level so real
     shadows stay. The GPU renders and the seeds are unchanged; a source
     within one window is untouched. `execution.skin_hold` overrides."""
+
+    character_replacement_free_after_chain: bool = True
+    """Ask ComfyUI to release its memory after a CHAINED job (7 Sep 2026).
+    A chain submits one prompt per window and ComfyUI's resident set grows
+    with them: measured at 91.7 GB after an afternoon of jobs, dropping to
+    21.1 GB on `POST /free`, and the container's cgroup killed the server
+    four times in two days at its 241 GiB limit — once mid-render of the
+    client's own job, which cost 10 minutes of GPU and re-ran from scratch.
+    NOTE: ComfyUI unloads its models on any `/free`, whatever `unload_models`
+    says (its `main.py` reads `flags.get("unload_models", free_memory)`), so
+    the next job pays a model load. That is why this is scoped to chained
+    jobs — the ones that accumulate, and that run for tens of minutes anyway;
+    a single-window job leaves the models warm exactly as before."""
 
     character_replacement_ripple_strength: float | None = None
     """Overrides the Ripple LoRA's `strength_model` in the client's graph

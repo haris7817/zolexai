@@ -131,6 +131,12 @@ SEAM_OVERLAP_FRAMES = 1
 #: unheld one in the same delivery.)
 PART_ENCODE = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]
 
+#: Wall-clock allowance per frame for one pass of the skin hold. Measured on
+#: the node (ffmpeg 6.1, Threadripper 9965WX): 0.04 s per frame to measure
+#: and 0.08 s to apply at half canvas; this is an order of magnitude above
+#: that, so only a pass that has genuinely hung hits it.
+HOLD_SECONDS_PER_FRAME = 3.0
+
 #: The first window's frames the colour anchor is read from: after the
 #: graph's four-frame handoff from the photo, one second of its own
 #: rendering of the customer's picture in the source's framing.
@@ -335,10 +341,13 @@ class CharacterReplacementAdapter:
                 job, reporter, source, reference, info, windows, width, height
             )
         finally:
-            if settings.ltx_comfy_free_after_job:
+            # A chain leaves ComfyUI holding one prompt's worth of memory per
+            # window, and the container's limit is what killed the server four
+            # times in two days — once mid-render of the client's own job.
+            if settings.ltx_comfy_free_after_job or (
+                len(windows) > 1 and settings.character_replacement_free_after_chain
+            ):
                 await self.service().free_memory()
-            elif settings.ltx_comfy_free_cache_after_job:
-                await self.service().free_memory(unload_models=False)
 
     # ── One window: the source as uploaded ───────────────────────────────
 
@@ -1212,7 +1221,7 @@ class CharacterReplacementAdapter:
                 job,
                 source_skin_level(clip, frames=ANCHOR_FRAMES, width=width, height=height),
             )
-        except FfmpegError as exc:
+        except (FfmpegError, TimeoutError) as exc:
             logger.warning(
                 "character_replacement_skin_source_failed",
                 extra={"job_id": job.job_id, "detail": str(exc)[:300]},
@@ -1276,6 +1285,11 @@ class CharacterReplacementAdapter:
         started = time.monotonic()
         dest = job.workspace / f"part-{window.index:04d}.mp4"
         skip = 0 if window.index == 0 else SEAM_OVERLAP_FRAMES
+        # Measured on the node: 8 s of measuring and 16 s of applying per
+        # 193-frame window. The budget is generous against that, and a pass
+        # that overruns it is contained like any other failure rather than
+        # taking the finished renders down with it.
+        budget = max(600.0, HOLD_SECONDS_PER_FRAME * window.frames)
         try:
             readings, planes = await cancellable(
                 job,
@@ -1287,8 +1301,10 @@ class CharacterReplacementAdapter:
                     height=height,
                     work_dir=job.workspace,
                     tag=f"window{window.index:02d}",
+                    timeout=budget,
                 ),
             )
+            measured = time.monotonic() - started
             plan = plan_hold(readings, target, first_window=window.index == 0)
             record: dict[str, object] = {**plan.summary(), "measured_frames": len(readings)}
             applied = False
@@ -1313,18 +1329,22 @@ class CharacterReplacementAdapter:
                             skip=skip,
                             kept_frames=window.kept_frames,
                             encode=PART_ENCODE,
-                        )
+                        ),
+                        timeout=budget,
                     ),
                 )
                 record["reason"] = "applied"
                 applied = True
-        except FfmpegError as exc:
+        except (FfmpegError, TimeoutError) as exc:
             logger.warning(
                 "character_replacement_skin_hold_failed",
                 extra={"job_id": job.job_id, "window": window.index, "detail": str(exc)[:300]},
             )
-            return None, {"applied": False, "reason": f"ffmpeg: {str(exc)[:120]}"}
+            return None, {"applied": False, "reason": f"{type(exc).__name__}: {str(exc)[:120]}"}
+        record["measure_seconds"] = round(measured, 1)
         record["wall_seconds"] = round(time.monotonic() - started, 1)
+        record["target_y"] = round(target.y, 2)
+        record["source_y_ref"] = round(target.source_y, 2)
         logger.info(
             "character_replacement_skin_hold",
             extra={"job_id": job.job_id, "window": window.index, **record},

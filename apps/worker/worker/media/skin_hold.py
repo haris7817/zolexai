@@ -219,9 +219,10 @@ def _lift_expr(target: str, cap: str) -> str:
     """The per-pixel lift from the local mean `lum(X,Y)`: the deficit to the
     target, capped, weighted by the ramp that is 0 within `RAMP_DEAD` of the
     target and 1 from `RAMP_FULL` below it."""
+    # `+0.5` because geq truncates: a lift of 0.6 would otherwise land as 0.
     return (
-        f"clip(min({target}-lum(X,Y),{cap})"
-        f"*clip(({target}-{RAMP_DEAD}-lum(X,Y))/{RAMP_FULL - RAMP_DEAD},0,1),0,255)"
+        f"clip(floor(min({target}-lum(X,Y),{cap})"
+        f"*clip(({target}-{RAMP_DEAD}-lum(X,Y))/{RAMP_FULL - RAMP_DEAD},0,1)+0.5),0,255)"
     )
 
 
@@ -312,6 +313,7 @@ async def measure_window(
     height: int,
     work_dir: Path,
     tag: str,
+    timeout: float = 600.0,
 ) -> tuple[list[FrameReading], Planes]:
     """The measure pass: per-frame readings and the two mask planes.
 
@@ -357,17 +359,23 @@ async def measure_window(
             str(planes.keyed),
         ],
         cwd=work_dir,
+        timeout=timeout,
     )
     series = {
         key: _parse_series((work_dir / name).read_text(encoding="utf-8", errors="replace"))
         for key, name in names.items()
     }
     counts = {key: len(value) for key, value in series.items()}
-    if len(set(counts.values())) != 1 or counts["product"] == 0:
+    frames = min(counts.values())
+    if frames == 0:
+        raise FfmpegError(f"the hold measured nothing: {counts}")
+    if max(counts.values()) - frames > 2:
+        # A branch or two ending a frame early is ordinary (the statistics
+        # are flushed per branch); a real disagreement is not.
         raise FfmpegError(f"hold statistics disagree on the frame count: {counts}")
 
     readings: list[FrameReading] = []
-    for index in range(counts["product"]):
+    for index in range(frames):
         gate = series["gate"][index].get("YAVG", 0.0) / 255.0
         keyed = series["keyed"][index].get("YAVG", 0.0) / 255.0
         ramped = series["ramped"][index].get("YAVG", 0.0) / 255.0

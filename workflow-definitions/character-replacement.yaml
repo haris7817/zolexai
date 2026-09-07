@@ -111,11 +111,16 @@ execution:
   # skin_hold: true         — per-frame skin hold on every chained window's
   #                           delivered frames (7 Sep 2026): dark skin is
   #                           lifted back to the first window's own level
-  #                           inside the source's silhouette, smoothly over
-  #                           time; renders and seeds unchanged (default on).
+  #                           inside the source's silhouette, each pixel by
+  #                           its own deficit, smoothly over time. The graph
+  #                           and its renders are untouched; the next
+  #                           window's seed is taken from the held frames
+  #                           (default on).
   # ripple_strength: 1.45   — the Ripple LoRA's strength_model for the run
   #                           (default: the graph's own 1.35). A lever for
-  #                           the A/B the client's advisor asked for.
+  #                           the A/B the client's advisor asked for; unlike
+  #                           the rest of this block it applies to a
+  #                           single-window job too.
   # negative_prompt: "…"    — overrides the house negative prompt (default:
   #                           derived from the client's own graph).
 

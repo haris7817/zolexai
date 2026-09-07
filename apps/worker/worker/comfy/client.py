@@ -255,12 +255,13 @@ class ComfyClient:
         the card. The next H3 job pays a model reload (~40-60 s) — measured,
         and cheap against an OOM'd customer job.
 
-        `unload_models=False` frees only the cache — host RAM, not the card.
-        Measured 7 Sep 2026 on the LTX ComfyUI: the cache of decoded frames
-        and latents grows ~10 GB per prompt and the container's cgroup killed
-        the server four times in two days at its 241 GiB limit (each kill
-        re-ran a customer's job from scratch); `free_memory` alone took the
-        idle server from 91.7 GB to 21.1 GB with the models still warm.
+        `unload_models=False` is NOT a lighter option: ComfyUI's worker reads
+        `flags.get("unload_models", free_memory)`, so a `/free` asking only
+        for `free_memory` unloads the models anyway (read in its `main.py` on
+        the node, 7 Sep 2026, and confirmed by measurement — the LTX server
+        went from 91.7 GB to 21.1 GB and the card to 0.9 GB on `free_memory`
+        alone). The parameter is kept so a caller can say what it means; the
+        server behaves the same either way.
         """
         try:
             async with self._client() as client:

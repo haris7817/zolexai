@@ -380,8 +380,6 @@ class LtxComfyAdapter:
         finally:
             if settings.ltx_comfy_free_after_job:
                 await service.free_memory()
-            elif settings.ltx_comfy_free_cache_after_job:
-                await service.free_memory(unload_models=False)
         wall = time.monotonic() - started
 
         # The graphs render fps·s+1 frames, so the file is one frame longer
