@@ -167,6 +167,23 @@ class FlatGraph:
             )
         return found[0]
 
+    def set_value(self, node: FlatNode, name: str, value: Any) -> None:
+        """Sets an input whether it is the node's own widget or a value
+        promoted across a subgraph boundary.
+
+        A promoted value lives in `inputs` as a `Literal` and shadows the
+        widget of the same name, so writing the widget alone would be
+        silently discarded — which is how the seed and the image switch of
+        the client's FAST 1080 graph first came out unchanged.
+        """
+        current = node.inputs.get(name)
+        if isinstance(current, Literal):
+            node.inputs[name] = Literal(value)
+        elif isinstance(current, tuple):
+            raise GraphError(f"{node.id}.{name} is driven by a link, not a value")
+        else:
+            node.widgets[name] = value
+
     def consumers_of(self, node_id: str) -> list[tuple[FlatNode, str, int]]:
         """(consumer, input name, slot) for every input reading `node_id`."""
         out: list[tuple[FlatNode, str, int]] = []
@@ -825,6 +842,60 @@ def compile_first_last_frame(graph: dict[str, Any], edits: GenerationEdits) -> d
     LAST_MODEL_CHAIN.clear()
     LAST_MODEL_CHAIN.update(report)
     return api
+
+
+@dataclass(frozen=True)
+class Fast1080Edits:
+    """Runtime inputs for the client's FAST 1080 workflow (7 Sep 2026).
+
+    A different graph from the pack's three: no LoRAs, no detailer, the
+    NVFP4 transformer, one 8-step stage, 1920x1088 decoded and scaled to
+    1920x1080. It drives its length from a duration in seconds and computes
+    the frame count itself (`1 + floor(fps*seconds/8)*8`), so a job sets
+    seconds, not frames.
+    """
+
+    positive: str
+    negative: str
+    seconds: float
+    seed: int
+    filename_prefix: str
+    image: str | None = None
+    """Filename in ComfyUI's input directory. The slot always needs a real
+    file: the graph as delivered has it empty, and ComfyUI refuses that at
+    validation even though the picture is discarded, so a text-to-video job
+    still names a placeholder."""
+    condition_on_image: bool = False
+    """The graph's own `use image input` switch, which it inverts into
+    `bypass_i2v`. False runs text to video and the picture is ignored; true
+    conditions on it. Separate from `image` so a text-to-video job can
+    satisfy the loader without turning image conditioning on."""
+
+
+def compile_fast_1080(
+    graph: dict[str, Any], edits: Fast1080Edits, catalogue: dict[str, Any]
+) -> dict[str, Any]:
+    """The client's FAST 1080 workflow with a job's inputs, nothing else.
+
+    `catalogue` is required: this graph is a positional export and cannot be
+    read without the server's `/object_info` (`worker.comfy.widget_values`).
+    """
+    flat = flatten(graph, catalogue)
+    text = "PrimitiveStringMultiline"
+    flat.set_value(flat.one_titled("Prompt (positive)", text), "value", edits.positive)
+    flat.set_value(flat.one_titled("Prompt (negative)", text), "value", edits.negative)
+    # Two nodes carry this title; the root one is the source and the copy
+    # inside the subgraph reads it over a link.
+    duration = flat.one_titled("determines frames", "PrimitiveFloat")
+    flat.set_value(duration, "value", float(edits.seconds))
+    flat.set_value(flat.one_of_type("RandomNoise"), "noise_seed", int(edits.seed))
+    flat.set_value(flat.one_of_type("SaveVideo"), "filename_prefix", edits.filename_prefix)
+    if edits.image is not None:
+        flat.set_value(flat.one_of_type("LoadImage"), "image", edits.image)
+    # `use image input` — the graph inverts it into `bypass_i2v`.
+    flat.set_value(flat.one_of_type("PrimitiveBoolean"), "value", bool(edits.condition_on_image))
+    flat.prune_unreachable()
+    return flat.to_api_prompt()
 
 
 @dataclass(frozen=True)
