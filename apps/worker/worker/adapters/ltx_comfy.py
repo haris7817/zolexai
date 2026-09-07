@@ -62,6 +62,7 @@ from worker.comfy.ltx_graphs import (
 from worker.comfy.ltx_prompts import negative_for
 from worker.core.config import settings
 from worker.core.logging import get_logger
+from worker.dialogue import add_auto_dialogue
 from worker.longform import GENERATE_FROM, GENERATE_TO, StageReporter, structure_prompt
 from worker.longform.chain import ChainStep
 from worker.longform.continuation import continue_video
@@ -148,6 +149,13 @@ class LtxComfyAdapter:
                 retriable=False,
             )
         self._require_lattice(seconds)
+
+        # Spoken lines, when this deployment asks for them and the prompt has
+        # none. One pass, so one voice — the constraint that makes generated
+        # speech honest here and would not across a seam. Returns the job
+        # untouched on every refusal and every failure, so nothing below this
+        # line knows it happened.
+        job = await add_auto_dialogue(job, seconds)
 
         first = job.input_for("source_image")
         last = job.input_for("last_frame")

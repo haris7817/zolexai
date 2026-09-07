@@ -588,6 +588,63 @@ class WorkerSettings(BaseSettings):
     the structure rules in the prompt are still followed.
     """
 
+    # ── Automatic dialogue (client pack, 7 Sep 2026) ─────────────────────
+
+    auto_dialogue_enabled: bool = False
+    """
+    Write spoken lines into a prompt that has none, on the single-pass video
+    workflows.
+
+    Off by default, and that default is the honest one: this changes what a
+    customer's video SAYS, on a surface a client is mid-test on, and a feature
+    that starts talking without being asked is a surprise rather than an
+    improvement. A job's own `auto_dialogue` parameter overrides it either way.
+
+    What it does is small — a prompt with no quoted words gets some — but what
+    that unlocks is not, because `worker/longform/language.py` already hands
+    the soundtrack to the scene when nobody speaks and to the people on screen
+    when somebody does. See `worker/dialogue/__init__.py`.
+    """
+
+    auto_dialogue_local_fallback: bool = True
+    """
+    Fall back to the local Gemma checkpoint when the hosted writer is
+    unavailable.
+
+    Kept on: the fallback costs GPU seconds before the render starts, which is
+    why it is second, but a video that quietly stops speaking whenever a
+    hosted service is rate-limited is the kind of intermittency nobody can
+    reproduce.
+    """
+
+    auto_dialogue_timeout_seconds: float = 30.0
+    """
+    How long either writer may take.
+
+    Deliberately far under the Director planner's 900 s. This runs before a
+    render that itself takes minutes, and it is optional — a writer that has
+    not answered in half a minute has already cost more than the feature is
+    worth, and failing open renders the customer's own prompt.
+    """
+
+    auto_dialogue_max_tokens: int = 1200
+    """
+    Output budget for the hosted writer.
+
+    Room for a handful of short lines and their speaker locks, plus the
+    reasoning headroom the lyrics writer's measurement demands: a reasoning
+    model that overspends `max_completion_tokens` returns an empty string with
+    `finish_reason: stop` and no error at all.
+    """
+
+    auto_dialogue_temperature: float = 0.7
+    """
+    Sampling temperature for dialogue writing.
+
+    The Director planner's value, because this is the same job on a smaller
+    canvas: the words need life, and the JSON around them still has to parse.
+    """
+
     music_crossfade_seconds: float = 1.5
     """
     Overlap between generated sections of one song.

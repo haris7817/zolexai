@@ -39,6 +39,7 @@ from worker.comfy.ltx_graphs import (
 from worker.comfy.ltx_prompts import negative_for
 from worker.core.config import settings
 from worker.core.logging import get_logger
+from worker.dialogue import add_auto_dialogue
 from worker.longform import GENERATE_FROM, GENERATE_TO, StageReporter
 from worker.media import FfmpegError, OutputExpectation, ffmpeg, verify_output
 from worker.providers.ltx_comfy import LtxComfyService
@@ -75,6 +76,12 @@ class LtxHdAdapter:
 
         seconds = self._seconds(job)
         frames = frames_for(seconds, settings.ltx_comfy_frame_rate)
+        # Spoken lines, when this deployment asks for them and the prompt has
+        # none. This graph writes its own soundtrack in one pass, which is
+        # exactly the shape generated speech is honest in.
+        # No soundscape clause runs on this path — the graph is driven from
+        # the job's own text — so the anti-repeat rule comes with the lines.
+        job = await add_auto_dialogue(job, seconds, carries_soundscape_clause=False)
         service = self.service()
 
         catalogue = await service.object_info()

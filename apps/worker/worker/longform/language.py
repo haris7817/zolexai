@@ -170,6 +170,22 @@ def soundscape_clause(
     )
 
 
+def spoken_language_name(
+    parameters: Mapping[str, Any],
+    execution: Mapping[str, Any],
+    plan_language: str = "",
+) -> str:
+    """The language name this video's speech will be named in, or "".
+
+    Public because automatic dialogue has to WRITE in the language this
+    module is about to NAME. Two independent answers to that question is one
+    more than the prompt can survive: a line written in English under a
+    sentence saying it is spoken in Spanish is a contradiction the model
+    resolves by mumbling.
+    """
+    return _resolve(parameters, execution, plan_language)
+
+
 def _resolve(
     parameters: Mapping[str, Any],
     execution: Mapping[str, Any],
