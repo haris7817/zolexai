@@ -170,3 +170,25 @@ the only free speed on the table.
 * Swap to NVFP4 for speed: measured the same speed as int8 on this stack,
   and darker.
 * Cut steps: the graph is already the 8-step distilled schedule.
+
+---
+
+## Superseded in part, 8 Sep 2026: there *is* a free 1.45×
+
+This document's conclusion — "every faster path measured costs detail" — was
+true of everything tested on 7 Sep, all of which changed **what the model
+generates** (a smaller canvas, a different base size, a different graph).
+
+It missed the one lever that changes only **how fast the same maths runs**:
+the attention kernel. The node was running plain PyTorch SDPA on a Blackwell
+card with no accelerated attention installed. With SageAttention built and
+`--use-sage-attention` on, the FAST 1080 graph renders 15 s in **213.6 s
+instead of 310.3 s (1.45×)** and 30 s in **652.5 s instead of 1040.6 s
+(1.59×)** at 1920×1080 — same graph, same schedule, same NVFP4 transformer,
+same seed. At 30 s: detail 1.09× of baseline, brightness 67.2 vs 67.0, motion
+and exposure drift unchanged, SSIM 0.908, audio in sync, and the same shot on
+screen. The gain grows with length because the quadratic attention term is
+what got cheaper.
+
+The canvas and two-stage numbers below stand; they are still the wrong trade.
+Full method and the rejected options: `ltx25_speed_optimization_report.md`.

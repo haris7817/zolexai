@@ -2449,3 +2449,90 @@ node to look like, so GPU day is provisioning and validation, not design.
 every workflow back on the CLI runtime and hides Character Replacement;
 `supervisorctl stop zolexai-ltx-comfy`; drop the two runtimes from
 `RUNTIMES`. Nothing else moved.
+
+## 47. Deploy: SageAttention on the LTX ComfyUI (8 Sep 2026)
+
+The one optimization that survived measurement in the FAST 1080 speed work
+(`docs/internal/ltx25_speed_optimization_report.md`): a quantized attention
+kernel for Blackwell. **30 s: 1040.6 s → 652.5 s (1.59×). 15 s: 310.3 s →
+213.6 s (1.45×).** The workflow, schedule, transformer and resolution are all
+unchanged, and detail, brightness, motion and audio measured unchanged
+(30 s SSIM 0.908, detail 1.09×). Peak host RAM at 30 s also falls 23%.
+
+It is a **server flag on the LTX ComfyUI instance**. No worker change, no
+API change, no VPS change, no graph edit.
+
+### Build (once per node)
+
+The stock build does not work against this ComfyUI's toolchain. Two fixes:
+the CUDA 13 headers need `libcusolver-dev`, and torch 2.14 requires C++20
+while the package still asks for C++17. The venv is uv-managed and has no
+`pip`, so install with `uv pip --python`.
+
+```bash
+DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  cuda-nvcc-13-0 cuda-cudart-dev-13-0 libcublas-dev-13-0 \
+  libcusolver-dev-13-0 libcurand-dev-13-0 libcufft-dev-13-0
+cd /workspace && git clone --depth 1 https://github.com/thu-ml/SageAttention.git
+cd SageAttention && sed -i 's/-std=c++17/-std=c++20/g' setup.py
+CUDA_HOME=/usr/local/cuda-13.0 PATH=/usr/local/cuda-13.0/bin:$PATH \
+TORCH_CUDA_ARCH_LIST=12.0 MAX_JOBS=8 \
+  uv pip install --python /workspace/ComfyUI-ltx/.venv/bin/python \
+  --no-build-isolation --no-deps .
+cd /tmp && /workspace/ComfyUI-ltx/.venv/bin/python -c "import sageattention; print('ok')"
+```
+
+The build takes a few minutes. `nice -n 15` it if a render is in flight.
+
+### Enable
+
+`deploy/gpu/zolexai-ltx-comfy.sh` passes `--use-sage-attention` by default
+and reads `/workspace/comfy_extra_args` as an override. Install the script,
+then restart:
+
+```bash
+cp deploy/gpu/zolexai-ltx-comfy.sh /opt/supervisor-scripts/ && chmod +x /opt/supervisor-scripts/zolexai-ltx-comfy.sh
+: > /workspace/comfy_extra_args
+supervisorctl restart zolexai-ltx-comfy
+grep -m1 "Using .* attention" /tmp/zolexai-ltx-comfy.log   # → "Using sage attention"
+```
+
+**Verify before believing it.** If the package is missing, ComfyUI logs an
+error and falls back to PyTorch attention — it does not refuse to start, so
+the only proof is that log line and the step rate (21.6 s/step at 15 s, vs
+34.0 without).
+
+### Rollback (one line, no rebuild)
+
+```bash
+echo --no-sage > /workspace/comfy_extra_args
+supervisorctl restart zolexai-ltx-comfy
+```
+
+`--no-sage` is the launcher's own word for "the stock launch line". Any other
+content in that file replaces the flags wholesale.
+
+**Fallback that needs no build.** If the SageAttention build ever breaks —
+a ComfyUI or torch upgrade, a recreated venv — ComfyUI's own kernel is
+already present and measured within 3% (15 s 218.4 s, 30 s 670.2 s, same
+quality):
+
+```bash
+echo --use-ck-attention > /workspace/comfy_extra_args
+supervisorctl restart zolexai-ltx-comfy
+grep -m1 "Using .* attention" /tmp/zolexai-ltx-comfy.log   # → "Using Comfy Kitchen attention"
+```
+
+**Launcher trap (cost an outage on 8 Sep).** The first version of this script
+read the file with `grep -v '^#'`. On a **0-byte** file grep exits 1, and
+under `set -e -o pipefail` that killed the launcher: supervisor reported
+`FATAL Exited too quickly` with nothing useful in the ComfyUI log, because
+ComfyUI never started. It now reads the file with `sed`, which returns 0 on
+empty input. If you edit this script, keep that property.
+
+### Scope warning
+
+The flag is **server-wide**: every graph on this ComfyUI gets the kernel,
+including Character Replacement, Image to Video and Extend. It was validated
+on FAST 1080 and side-checked on the pack Text to Video graph. If a future
+graph shows an artefact, roll back with the line above before investigating.
