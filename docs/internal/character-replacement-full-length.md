@@ -248,7 +248,82 @@ full-frame over its 8 s), which the anchor does not address by design; if
 it is still noticed, the next lever is the bounded per-window de-trend of
 the output described above.
 
-## 9. Rollback
+## 9. The hands (7 Sep 2026)
+
+**The report, with screenshots.** On the same clip after §8: "everything is
+perfect until the last seconds and the hands get darker" — the hands are a
+bit darker at 13 s, darker at 20 s, dark brown in the last second, while
+the face holds.
+
+**Measured, and what it turned out to be.** Not exposure: the whole-frame
+anchor of §8 had already levelled the room and the face. Not the source
+performer's colour either — measured on hand crops, his hand skin (Y ≈
+166–180) is as light as the character's (≈ 160); the rendered hands end up
+darker and greyer than both inputs (Y ≈ 90–112). The drift starts inside
+the first window (from about 6 s, when the big hands come up in front of
+the face) and every seed then carries it on. The mechanism is the model
+re-synthesising small, fast-moving hands in the photo's dark room with weak
+identity evidence (the photo shows them small and at another pose), a
+little worse per window, compounded at each seam. On the other clip the
+client ran (`929bc48d`, one 10 s window, a performer of similar tone) there
+is no drift at all. Side-by-side of source / original / §8 rerun at 0, 13,
+20 and 32 s: `scratchpad/cr-source/compare-0-13-20-32.png` (session files).
+
+**How the fix was chosen.** A four-design panel with three judges and a
+skeptic round (workflow `wf_8c37e0b8-b6a`), all inside the client's rules
+(the graph's nodes, models, LoRA strengths and parameters untouched; the
+worker sets prompt, seed, length, input media, output location; no new
+Python dependency on the worker). Ranking: (B) a relational hands clause in
+the prompt for chained jobs; (C) seed-side skin re-anchoring at every seam,
+gated by the source performer's silhouette; (D) a combination with a
+chain-only window length; (A) recolouring the source video — rejected by
+all three skeptics on measurement (the guide's hands are already light; a
+keyed lift is a global exposure lift with a hole; the Ripple mechanism
+reads the frame-0-to-frame-1 discontinuity, which the lift would turn into
+a darkening edit).
+
+**Built (all default off until the A/B; none touches a source within one
+window):**
+
+* `CHARACTER_REPLACEMENT_SKIN` — the hands and any bare skin share the
+  face's skin tone and lighting whenever they are in view, first frame to
+  last. Names no colour, so it cannot pull any character the wrong way.
+  Between the pack's lead sentence and the customer's words, chained jobs
+  only. `character_replacement_chain_skin_clause` / `execution.chain_skin_clause`.
+* `worker/media/skin.py` — inside the source performer's skin silhouette at
+  the seam (tight key, dilated), skin that is dark AS A WHOLE against the
+  first window's own skin level (a ramp on the local skin-mean luminance,
+  never ordinary shading) is lifted back to it with bounded additive
+  offsets, applied through an alpha plane so the lift is exact. Guards
+  refuse on a gate under 2 % or over 40 % of the frame, under 30 % of the
+  keyed skin dark, negligible offsets, or a sign that disagrees with the
+  ramp; refusals are logged and the seed passes through. Every number is
+  read in one range (a two-input `blend` was measured to read 7 units
+  high; `maskedmerge` to land at 94 % of the offset — both avoided).
+  `character_replacement_skin_anchor` / `execution.skin_anchor`.
+* `character_replacement_chain_window_seconds` /
+  `execution.chain_window_seconds` — a shorter window for sources that
+  chain anyway (never `max_seconds`, which would chain 6–10 s sources that
+  ran as one window yesterday).
+
+**A/B on the client's exact clip** (source `3a95fdb2`, picture `8a5b0f0c`,
+the client's prompt, the graph's fixed seeds; measured under the SOURCE
+performer's hand mask so dark hands count whatever their colour —
+`scratchpad/hand_trend2.py`; bands 0–8 / 8–16 / 16–24 / 24–33 s):
+
+| Arm | hand Y | hand/face ratio | skin-pass | face Y |
+|---|---|---|---|---|
+| control = §8 rerun `600c403f` | 111 / 95 / 83 / 91 | 1.28 / 1.14 / 0.94 / 0.97 | 67 / 62 / 57 / 56 % | 87 / 84 / 88 / 93 |
+| B1 clause (`2ef2f6a3`) | 113 / 113 / 94 / 99 | 1.32 / 1.35 / 1.07 / 1.09 | 67 / 75 / 71 / 70 % | 86 / 84 / 87 / 91 |
+| BC clause + skin anchor | (running) | | | |
+
+B1 alone: the 8–16 s band is fully recovered and the 16–33 s bands recover
+about 40 % of the gap, face unchanged — a clear partial, just under the
+panel's ship-alone bar (hand Y ≥ 95 and ratio ≥ 1.10 in both late bands).
+Ship rule: the smallest passing arm; whatever ships stays default-off
+elsewhere.
+
+## 10. Rollback
 
 The previous behaviour (cut to 10 s) is `git checkout <this commit>^ --
 apps/worker/worker/adapters/character_replacement.py apps/worker/worker/core/config.py
