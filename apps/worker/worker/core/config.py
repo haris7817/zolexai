@@ -823,6 +823,28 @@ class WorkerSettings(BaseSettings):
     no source claims the two are compatible. Off until the A/B says
     otherwise. `execution.bypass_detailer` overrides."""
 
+    ltx_comfy_megapixels: float | None = None
+    """
+    Text to Video's base canvas on the pack graph, as a megapixel budget for
+    its own `ResolutionSelector`. None keeps the pack's 0.9 (1280x704 at
+    16:9).
+
+    With `ltx_comfy_final_scale_by = 1.0` this is LTX's two-stage 1080p path
+    (8 Sep 2026): 0.52 MP is 960x544 at 16:9, the graph's latent upscaler
+    doubles it to 1920x1088, the 3-step refine generates detail at full
+    size, and the adapter crops the eight spare rows. Built after the FAST
+    1080 graph measured 304 s for 15 s and a pixel upscale measured 0.29x
+    the detail — this is the path that keeps it. `execution.megapixels`
+    overrides per workflow.
+    """
+
+    ltx_comfy_final_scale_by: float | None = None
+    """
+    The pack graph's closing `ImageScaleBy`. The pack halves the refined
+    frame back to base size (0.5); 1.0 delivers the refined frame. None keeps
+    the pack's own. `execution.final_scale_by` overrides.
+    """
+
     ltx_comfy_transformer: str = ""
     """Overrides the diffusion transformer the GENERATION graphs load. Empty
     runs the pack's own `LTX-2.5-Distilled-Q8_0.gguf`. The node also carries

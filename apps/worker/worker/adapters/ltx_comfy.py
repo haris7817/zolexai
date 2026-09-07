@@ -47,6 +47,7 @@ from worker.adapters.base import (
     AdapterJob,
     AdapterResult,
     ProgressCallback,
+    cancellable,
     parse_duration_seconds,
 )
 from worker.comfy.client import ComfyError, evict_comfy_vram
@@ -180,7 +181,48 @@ class LtxComfyAdapter:
         )
         output = job.workspace / "output.mp4"
         info = await self.render_pass(job, spec, output, reporter)
+        output, info = await self._trim_to_1080(job, output, info)
         return await self.deliver(job, output, info, reporter)
+
+    async def _trim_to_1080(
+        self, job: AdapterJob, output: Path, info: MediaInfo
+    ) -> tuple[Path, MediaInfo]:
+        """1920x1088 → 1920x1080 (or 1088x1920 → 1080x1920), centre crop.
+
+        The two-stage path delivers the refined frame at 2x a 32-aligned
+        base, which for 16:9 is 1088 rows: the model's stride, not a video
+        size. The FAST 1080 graph does exactly this crop inside ComfyUI; the
+        pack graph has no such node, so it is done here — and only here,
+        when a side is 1088, so every other render is untouched.
+        """
+        if self.final_scale_by(job) is None or 1088 not in (info.width, info.height):
+            return output, info
+        width = 1080 if info.width == 1088 else info.width
+        height = 1080 if info.height == 1088 else info.height
+        trimmed = output.with_name(f"{output.stem}_1080.mp4")
+        try:
+            await cancellable(
+                job,
+                ffmpeg([
+                    "-i", str(output),
+                    "-filter:v", f"crop={width}:{height}",
+                    "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
+                    "-c:a", "copy", "-movflags", "+faststart",
+                    str(trimmed), "-y",
+                ]),
+            )
+            probed = await probe_media(trimmed)
+        except FfmpegError as exc:
+            raise AdapterError(
+                "The finished video failed its check.",
+                internal_detail=f"1088→1080 crop failed: {exc}",
+            ) from exc
+        logger.info(
+            "ltx_comfy_trimmed_to_1080",
+            extra={"job_id": job.job_id, "from": f"{info.width}x{info.height}",
+                   "to": f"{probed.width}x{probed.height}"},
+        )
+        return trimmed, probed
 
     # ── extend-video ─────────────────────────────────────────────────────
 
@@ -329,6 +371,8 @@ class LtxComfyAdapter:
             disabled_loras=self.disabled_loras(job),
             bypass_detailer=self.bypasses_detailer(job),
             transformer=self.transformer(job),
+            megapixels=self.megapixels(job),
+            final_scale_by=self.final_scale_by(job),
         )
         try:
             if spec.first_image is None:
@@ -488,6 +532,32 @@ class LtxComfyAdapter:
             raw = settings.ltx_comfy_transformer
         name = str(raw or "").strip()
         return name or None
+
+    @staticmethod
+    def megapixels(job: AdapterJob) -> float | None:
+        """Base canvas budget for Text to Video, or None for the pack's own."""
+        raw = job.execution.get("megapixels")
+        if raw is None:
+            raw = settings.ltx_comfy_megapixels
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def final_scale_by(job: AdapterJob) -> float | None:
+        """Closing scale for Text to Video, or None for the pack's own 0.5."""
+        raw = job.execution.get("final_scale_by")
+        if raw is None:
+            raw = settings.ltx_comfy_final_scale_by
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def bypasses_detailer(job: AdapterJob) -> bool:

@@ -772,6 +772,20 @@ class GenerationEdits:
     """Overrides the diffusion transformer file. None keeps the pack's own
     (the community Q8_0 GGUF); Lightricks' int8 safetensors is what the
     character graph already runs on this node."""
+    megapixels: float | None = None
+    """The base canvas, as the graph's own `ResolutionSelector` takes it: a
+    megapixel budget the server turns into a 32-aligned size for the chosen
+    aspect. None keeps the pack's 0.9 (1280x704 at 16:9). Text to Video
+    only — the first/last-frame compiler ignores it.
+
+    This is the first stage of LTX's two-stage 1080p path (8 Sep 2026):
+    0.52 MP is 960x544 at 16:9, which the graph's own `LTXVLatentUpsampler`
+    doubles to 1920x1088 for its 3-step refine. The refine GENERATES detail
+    at full size — the difference between this and a pixel upscale."""
+    final_scale_by: float | None = None
+    """The graph's closing `ImageScaleBy`. The pack halves the refined frame
+    back to base size (0.5) and delivers 1280x704; 1.0 delivers the refined
+    frame as it is. Text to Video only. None keeps the pack's 0.5."""
 
 
 #: Filled by the compilers with what the model-chain switches actually did,
@@ -815,6 +829,19 @@ def compile_text_to_video(graph: dict[str, Any], edits: GenerationEdits) -> dict
     set_seeds(flat, SeedPlan(edits.seed_base))
     set_output_prefix(flat, edits.filename_prefix)
     report = _apply_model_chain_edits(flat, edits)
+    # The two-stage 1080p levers. Both are the graph's own widgets — the
+    # selector's megapixel budget and the closing scale — so nothing is
+    # added to the client's graph; two numbers it already carries change.
+    if edits.megapixels is not None:
+        if not 0.1 <= edits.megapixels <= 4.0:
+            raise GraphError(f"megapixels {edits.megapixels} is outside 0.1-4.0")
+        flat.one_of_type("ResolutionSelector").widgets["megapixels"] = float(edits.megapixels)
+        report["base_megapixels"] = float(edits.megapixels)
+    if edits.final_scale_by is not None:
+        if not 0.25 <= edits.final_scale_by <= 1.0:
+            raise GraphError(f"final_scale_by {edits.final_scale_by} is outside 0.25-1.0")
+        flat.one_of_type("ImageScaleBy").widgets["scale_by"] = float(edits.final_scale_by)
+        report["final_scale_by"] = float(edits.final_scale_by)
     flat.prune_unreachable()
     api = flat.to_api_prompt()
     LAST_MODEL_CHAIN.clear()

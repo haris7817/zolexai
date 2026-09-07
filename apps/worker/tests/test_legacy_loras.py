@@ -16,6 +16,8 @@ is the contract and any drift from it has to be deliberate and visible.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tests.test_ltx_graphs import _graph
@@ -177,6 +179,59 @@ def test_the_settings_are_read_when_the_workflow_says_nothing(
 
 GGUF = "LTX-2.5-Distilled-Q8_0.gguf"
 INT8 = "LTXVideo/v2/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+
+
+# ── The two-stage 1080p levers (8 Sep 2026) ────────────────────────────────
+
+
+def _t2v(**over):
+    from worker.comfy.ltx_graphs import GenerationEdits, compile_text_to_video, load_graph
+
+    repo = Path(__file__).resolve().parents[3]
+    graph = load_graph(repo / "benchmarks/client-pack/ltx25/ltx25_text_to_video.json")
+    edits = GenerationEdits(
+        positive="p", negative="n", seconds=15, aspect_label="16:9 (Widescreen)",
+        seed_base=1, filename_prefix="x", **over,
+    )
+    return compile_text_to_video(graph, edits)
+
+
+def test_the_two_stage_levers_change_two_numbers_the_graph_already_carries() -> None:
+    """Base canvas via the selector's own megapixel budget, delivery via the
+    closing ImageScaleBy. Nothing is added to the client's graph."""
+    api = _t2v(megapixels=0.52, final_scale_by=1.0)
+    [sel] = [e for e in api.values() if e["class_type"] == "ResolutionSelector"]
+    [scale] = [e for e in api.values() if e["class_type"] == "ImageScaleBy"]
+    assert sel["inputs"]["megapixels"] == 0.52
+    assert scale["inputs"]["scale_by"] == 1.0
+    # The upscaler stage the client shipped is still in the prompt.
+    assert any(e["class_type"] == "LTXVLatentUpsampler" for e in api.values())
+
+
+def test_without_the_levers_the_pack_is_as_delivered() -> None:
+    api = _t2v()
+    [sel] = [e for e in api.values() if e["class_type"] == "ResolutionSelector"]
+    [scale] = [e for e in api.values() if e["class_type"] == "ImageScaleBy"]
+    assert sel["inputs"]["megapixels"] == 0.9
+    assert scale["inputs"]["scale_by"] == 0.5
+
+
+def test_a_lever_off_its_range_is_refused() -> None:
+    from worker.comfy.ltx_graphs import GraphError
+
+    with pytest.raises(GraphError):
+        _t2v(megapixels=9.0)
+    with pytest.raises(GraphError):
+        _t2v(final_scale_by=2.0)
+
+
+def test_the_base_canvas_arithmetic_lands_on_960x544() -> None:
+    """What 0.52 MP means at 16:9 on the 32 grid — and why the delivered
+    frame is 1088 rows, not 1080: the model's stride, cropped afterwards."""
+    from worker.comfy.ltx_graphs import megapixel_canvas
+
+    assert megapixel_canvas("16:9", 0.52) == (960, 544)
+    assert megapixel_canvas("9:16", 0.52) == (544, 960)
 
 
 def _transformer(api: dict) -> tuple[str, dict]:
