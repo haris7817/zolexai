@@ -74,10 +74,11 @@ product names, and the node already carries the int8 and nvfp4 builds.
 
 Same prompt (job `aa1118c7`), same seed 424242, same 30 s, 16:9.
 
-| Arm | Render | Y mean | Y drift over the clip | Saturation | Job |
-|---|---|---|---|---|---|
-| as delivered | **222.1 s** | 62.9 | **+11.0** | 14.5 | `cf3d7b3a` |
-| both 2.3 LoRAs off + detailer bypassed | **210.9 s** | 60.3 | **+34.6** | 12.3 | `121cafc2` |
+| Arm | Render | Y mean | Y first → last | Drift | Sat | Job |
+|---|---|---|---|---|---|---|
+| as delivered | **222.1 s** | 62.9 | 49.9 → 60.9 | **+11.0** | 14.5 | `cf3d7b3a` |
+| both 2.3 LoRAs off + detailer bypassed | 210.9 s | 60.3 | 34.2 → 68.8 | **+34.6** | 12.3 | `121cafc2` |
+| **official int8 transformer, adapters untouched** | **190.3 s** | 61.8 | 48.5 → 60.7 | **+12.2** | 15.8 | `c350981c` |
 
 The operator's changes are 5 % faster and **worse on the very thing they
 were meant to fix**: exposure drift over the clip tripled, and the clip
@@ -88,6 +89,22 @@ skin detail (`scratchpad/t2v-compare.png`).
 That is consistent with what OmniNFT is: a reward-tuned quality pass over
 the whole model. It is part of this pack's look, not a defect sitting on top
 of it.
+
+**The transformer swap is the real win, and it is the one change the client
+suggested that we should take.** Lightricks' int8 file, with the adapters
+left exactly as delivered, renders the same 30 s in **190.3 s — 14 % faster
+than the pack, nearly three times the saving the adapter removal bought**,
+and it keeps the look: mean luminance 61.8 against 62.9, drift +12.2 against
++11.0, saturation 15.8 against 14.5, and the same shot progression and
+framing at 1 / 10 / 18 / 25 / 30 s (`scratchpad/t2v-int8-compare.png`). The
+GGUF is dequantized on every forward pass; the int8 file is not, and it is
+what Character Replacement has been running all along.
+
+One caveat before defaulting it: ComfyUI logged `prepared for dynamic VRAM
+loading, 20484MB staged` for the int8 build with LoRA patches attached,
+where the GGUF path reported a full load. Dynamic loading streams weights,
+so the saving may vary with what else holds the card. Repeat the arm once
+more, and once at 10 s, before flipping the default.
 
 **Verdict: do not flip these on by default.** The switches ship off. One
 prompt and one seed is not a proof, but it is enough to refuse a silent
@@ -136,7 +153,8 @@ audio seam are fixed.
 
 ## 7. Open
 
-* The int8 transformer arm (speed) — running.
+* Repeat the int8 arm (a second 30 s, and a 10 s) before defaulting it, per
+  the dynamic-VRAM caveat above.
 * `ModelPreviewOverrideKJ` bypass: preview-only and therefore safe, but it
   decodes and JPEG-encodes up to 240 preview frames per run, so there may
   be a saving. Not built; it needs its own flag and its own timing arm.
