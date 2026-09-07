@@ -80,7 +80,15 @@ CHARACTER_REPLACEMENT_NEGATIVE = (
     "smearing, edge tearing, halos, warping, melting, glitch, compression "
     "artifacts, pixelation, low resolution, soft focus, excessive blur, "
     "oversharpening, oversaturation, posterization, artificial skin, plastic "
-    "skin, waxy skin, CGI appearance, cartoon, illustration, anime"
+    "skin, waxy skin, CGI appearance, cartoon, illustration, anime, "
+    # The client's own additions (7 Sep 2026), and the reason they matter:
+    # every exposure term this list already carried was SYMMETRICAL —
+    # "brightness shifts", "exposure pumping", "skin-tone shifts" name a
+    # change without naming a direction, and the fault we measured only
+    # ever goes one way. Naming the direction is what the client's graph
+    # added, and it costs nothing to carry.
+    "darker face, darker person, darkening skin, underexposure, crushed "
+    "blacks, lighter skin, inconsistent face color, inconsistent hand color"
 )
 
 DEFAULT_NEGATIVE: dict[str, str] = {
@@ -118,16 +126,54 @@ CHARACTER_REPLACEMENT_SKIN = (
 )
 
 
-def character_replacement_prompt(description: str, *, skin: str | None = None) -> str:
+#: The exposure lock, from the client's MULTI4 graph (7 Sep 2026). Their
+#: positive prompt carries two sentences this one condenses: the source's own
+#: light is preserved ("lighting direction, shadows, ... exposure, contrast,
+#: saturation, and white balance"), and the character's skin holds what the
+#: first frame established ("Faces, necks, arms, and hands retain the
+#: brightness and color established in the edited first frame").
+#:
+#: RELATIONAL, like `CHARACTER_REPLACEMENT_SKIN` beside it and for the same
+#: reason: it names no colour and no brightness, only sameness. A clause that
+#: said "bright" or "light skin" would pull every character towards one
+#: complexion, which is a worse fault than the one being fixed.
+#:
+#: Directional on purpose in its second half. Everything the negative prompt
+#: carried before today named a CHANGE ("brightness shifts", "exposure
+#: pumping") where the measured fault only ever goes one way, and a
+#: symmetrical word gives an unguided runtime nothing to lean against.
+CHARACTER_REPLACEMENT_EXPOSURE = (
+    "The light in the scene is the reference video's own: the same lighting "
+    "direction, the same shadows, the same exposure, contrast, saturation and "
+    "white balance from the first frame to the last. The character's face, "
+    "neck, arms and hands keep exactly the brightness and colour they have in "
+    "the first frame and never grow darker as the video goes on."
+)
+
+
+def character_replacement_prompt(
+    description: str,
+    *,
+    skin: str | None = None,
+    exposure: str | None = None,
+) -> str:
     """The pack's lead sentence, then the customer's description of the new
     character (which the sample prompt shows is what carries identity).
 
-    With `skin` (the hands clause, chained jobs only) it goes between the two;
-    without it the text is byte for byte what it always was."""
+    With `skin` (the hands clause, chained jobs only) and `exposure` (the
+    client's lighting lock) those go between the two, in that order; with
+    neither the text is byte for byte what it always was.
+
+    Order is deliberate. The customer's own description goes LAST, because
+    the sample prompt shows it is what carries identity, and the constraints
+    read as conditions on the character it introduces rather than the other
+    way round."""
     description = description.strip()
     parts = [CHARACTER_REPLACEMENT_LEAD]
     if skin and skin.strip():
         parts.append(skin.strip())
+    if exposure and exposure.strip():
+        parts.append(exposure.strip())
     if description:
         parts.append(description)
     return " ".join(parts)

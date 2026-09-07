@@ -83,6 +83,7 @@ from worker.comfy.ltx_graphs import (
     oriented_canvas,
 )
 from worker.comfy.ltx_prompts import (
+    CHARACTER_REPLACEMENT_EXPOSURE,
     CHARACTER_REPLACEMENT_SKIN,
     character_replacement_prompt,
     negative_for,
@@ -367,7 +368,9 @@ class CharacterReplacementAdapter:
         image_name = await self._upload_still(job, reference.require_path(), "reference")
 
         edits = ReplacementEdits(
-            positive=character_replacement_prompt(job.prompt),
+            positive=character_replacement_prompt(
+                job.prompt, exposure=self.exposure_clause(job)
+            ),
             negative=negative_for(WORKFLOW_ID, job.execution),
             video=video_name,
             image=image_name,
@@ -479,7 +482,9 @@ class CharacterReplacementAdapter:
             clips.append(clip)
             video_name = await self._upload_clip(clip)
             edits = ReplacementEdits(
-                positive=character_replacement_prompt(job.prompt, skin=skin_clause),
+                positive=character_replacement_prompt(
+                    job.prompt, skin=skin_clause, exposure=self.exposure_clause(job)
+                ),
                 negative=negative_for(WORKFLOW_ID, job.execution),
                 video=video_name,
                 image=image_name,
@@ -774,6 +779,23 @@ class CharacterReplacementAdapter:
             # sees this setting.
             return plan_windows(total, min(chain, per_window))
         return plan_windows(total, per_window)
+
+    @staticmethod
+    def exposure_clause(job: AdapterJob) -> str | None:
+        """The client's lighting lock, or None when this deployment is without it.
+
+        On by default because the client asked for it directly, and unlike
+        every other prompt lever here it is switchable per job so an A/B needs
+        no redeploy. It applies to single-window jobs as well as chained ones:
+        the darkening was measured WITHIN a window, so a clause that ran only
+        across seams would leave the short jobs carrying the fault.
+        """
+        raw = job.execution.get("exposure_clause")
+        if raw is None:
+            raw = settings.character_replacement_exposure_clause
+        if str(raw).strip().lower() in ("false", "no", "off", "0"):
+            return None
+        return CHARACTER_REPLACEMENT_EXPOSURE
 
     @staticmethod
     def chain_skin_clause(job: AdapterJob) -> bool:

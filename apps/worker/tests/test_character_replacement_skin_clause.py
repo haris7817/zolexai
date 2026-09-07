@@ -21,6 +21,7 @@ from tests.test_ltx_comfy import FakeLtxComfy, _recorder, _service
 from worker.adapters.base import AdapterJob
 from worker.adapters.character_replacement import CharacterReplacementAdapter
 from worker.comfy.ltx_prompts import (
+    CHARACTER_REPLACEMENT_EXPOSURE,
     CHARACTER_REPLACEMENT_LEAD,
     CHARACTER_REPLACEMENT_SKIN,
     character_replacement_prompt,
@@ -102,6 +103,7 @@ async def test_a_chained_job_puts_the_clause_in_every_window(
         text = _positive(submission["prompt"])
         assert text == (
             f"{CHARACTER_REPLACEMENT_LEAD} {CHARACTER_REPLACEMENT_SKIN} "
+            f"{CHARACTER_REPLACEMENT_EXPOSURE} "
             "a woman with silver hair in a red coat"
         )
     metadata = json.loads((workspace / "character-replacement.json").read_text(encoding="utf-8"))
@@ -111,10 +113,16 @@ async def test_a_chained_job_puts_the_clause_in_every_window(
 
 
 @needs_ffmpeg
-async def test_a_source_within_one_window_never_gets_the_clause(
+async def test_a_source_within_one_window_never_gets_the_hands_clause(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Even with the switch on, the single-window path is what it always was."""
+    """The hands clause is for seams; the exposure lock is not.
+
+    The hands clause answers a fault measured ACROSS windows, so a source that
+    fits in one still never sees it. The client's exposure lock answers one
+    measured WITHIN a window, so it applies here too — which is the whole
+    reason the two are separate strings rather than one paragraph.
+    """
     monkeypatch.setattr(settings, "character_replacement_chain_skin_clause", True)
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -134,7 +142,65 @@ async def test_a_source_within_one_window_never_gets_the_clause(
     )
 
     assert len(fake.submissions) == 1
-    assert _positive(fake.submitted["prompt"]) == (
-        f"{CHARACTER_REPLACEMENT_LEAD} a man with short black curls and a charcoal suit"
+    text = _positive(fake.submitted["prompt"])
+    assert text == (
+        f"{CHARACTER_REPLACEMENT_LEAD} {CHARACTER_REPLACEMENT_EXPOSURE} "
+        "a man with short black curls and a charcoal suit"
     )
+    assert CHARACTER_REPLACEMENT_SKIN not in text
     assert not (workspace / "character-replacement.json").exists()
+
+# ── The client's darkening fix (MULTI4 graph, 7 Sep 2026) ──────────────────
+
+
+def test_the_negative_names_the_direction_of_the_fault() -> None:
+    """Every exposure word this list carried before was symmetrical.
+
+    "brightness shifts", "exposure pumping", "skin-tone shifts" all name a
+    CHANGE without naming a direction, and the fault the client reported only
+    ever goes one way. On an unguided runtime a symmetrical word gives the
+    model nothing to lean against, which is why their graph's negative names
+    darkness outright. These are the words that were missing.
+    """
+    from worker.comfy.ltx_prompts import CHARACTER_REPLACEMENT_NEGATIVE
+
+    lowered = CHARACTER_REPLACEMENT_NEGATIVE.lower()
+    for term in (
+        "darker face",
+        "darker person",
+        "darkening skin",
+        "underexposure",
+        "crushed blacks",
+        "inconsistent face color",
+        "inconsistent hand color",
+    ):
+        assert term in lowered, term
+    # The symmetrical ones stay: they cover flicker, which is a real and
+    # different fault from a one-way drift.
+    for kept in ("exposure pumping", "brightness shifts", "white-balance shifts"):
+        assert kept in lowered, kept
+
+
+def test_the_exposure_lock_names_no_colour_and_no_brightness() -> None:
+    """Relational, like the hands clause beside it and for the same reason.
+
+    A clause that said "bright skin" or "light skin" would pull every
+    character towards one complexion — a worse fault than the one being
+    fixed, and one no customer would forgive. It may only assert sameness.
+    """
+    lowered = CHARACTER_REPLACEMENT_EXPOSURE.lower()
+    for forbidden in ("light skin", "bright skin", "fair", "pale", "white skin", "tan"):
+        assert forbidden not in lowered, forbidden
+    # It pins to the first frame, and it names the one direction that fails.
+    assert "first frame" in lowered
+    assert "never grow darker" in lowered
+
+
+def test_the_exposure_lock_can_be_switched_off_per_job() -> None:
+    """An A/B on the GPU should need no redeploy."""
+    from worker.adapters.character_replacement import CharacterReplacementAdapter
+
+    job = _job(Path("."), [], prompt="a man in a grey coat")
+    assert CharacterReplacementAdapter.exposure_clause(job) == CHARACTER_REPLACEMENT_EXPOSURE
+    job.execution["exposure_clause"] = "false"
+    assert CharacterReplacementAdapter.exposure_clause(job) is None

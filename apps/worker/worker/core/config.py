@@ -904,6 +904,22 @@ class WorkerSettings(BaseSettings):
     (see `character_replacement_chain_skin_clause`); `execution.skin_anchor`
     overrides per deployment."""
 
+    character_replacement_exposure_clause: bool = True
+    """
+    The client's lighting lock in the character-replacement prompt.
+
+    Their MULTI4 graph (7 Sep 2026) answers the darkening report with two
+    things this platform did not have: a positive sentence pinning the
+    scene's light and the character's skin brightness to what the first frame
+    established, and a negative that names the DIRECTION of the fault
+    ("darker face", "underexposure", "crushed blacks") where ours only ever
+    named a change. Both are carried; this switches the positive half.
+
+    On by default because the client asked for it. It is not the whole of
+    their fix — see `character_replacement_chain_reference`, whose default
+    does the very thing their backend contract forbids.
+    """
+
     character_replacement_skin_hold: bool = True
     """Per-frame skin hold on every window of a CHAINED character
     replacement (`worker.media.skin_hold`, 7 Sep 2026). The seed pass puts
