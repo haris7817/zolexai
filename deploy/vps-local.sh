@@ -230,7 +230,13 @@ if [ -n "$CHECK_ONLY" ]; then
   echo "checking $DEFS/ against profile '$PROFILE' ..."
   failed=0
   for w in "${WORKFLOWS[@]}"; do check_one "$w" || failed=1; done
-  if [ "$failed" -eq 0 ]; then echo "all seven workflows carry the '$PROFILE' runtime block"; fi
+  # Counted, not spelled out. The word said "seven" for a while after the
+  # eighth workflow joined the list — the loop above was checking all of
+  # them, but a verification step that miscounts out loud is worth less than
+  # one that says nothing.
+  if [ "$failed" -eq 0 ]; then
+    echo "all ${#WORKFLOWS[@]} workflows carry the '$PROFILE' runtime block"
+  fi
   exit "$failed"
 fi
 

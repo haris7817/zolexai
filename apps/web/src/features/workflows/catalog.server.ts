@@ -82,6 +82,12 @@ interface RawWorkflow {
 /** Product display order — the same sequence the API serves. */
 const DISPLAY_ORDER = [
   "text-to-video",
+  // Beside its sibling, not after it. An id missing from this list still
+  // renders — the sort gives an unknown one 999 and it lands at the end —
+  // so a new tool appears whether or not anyone remembers this file. It
+  // just appears in the wrong place, which is how Text to Video HD spent
+  // its first hour sitting below Music Video.
+  "text-to-video-hd",
   "image-to-video",
   "video-to-video",
   "character-replacement",
