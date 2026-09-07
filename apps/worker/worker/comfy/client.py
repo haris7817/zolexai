@@ -325,11 +325,22 @@ class ComfyClient:
         unreachable_since: float | None = None
         vanished_strikes = 0
         last_queue_check = started
+        cancelled = False
+
+        async def cancel_once() -> None:
+            # Exactly one cancel per prompt, whichever path gets there first:
+            # the delete is idempotent but the interrupt is not a thing to
+            # send twice, and the tests pin once.
+            nonlocal cancelled
+            if not cancelled:
+                cancelled = True
+                await self.cancel(prompt_id)
+
         try:
             while True:
                 elapsed = time.monotonic() - started
                 if elapsed > timeout_seconds:
-                    await self.cancel(prompt_id)
+                    await cancel_once()
                     raise ComfyError(
                         "This generation took too long and was stopped.",
                         internal_detail=(f"prompt {prompt_id} exceeded {timeout_seconds:.0f}s"),
@@ -337,7 +348,7 @@ class ComfyClient:
                 try:
                     job.raise_if_cancelled()
                 except BaseException:
-                    await self.cancel(prompt_id)
+                    await cancel_once()
                     raise
 
                 try:
@@ -407,7 +418,7 @@ class ComfyClient:
             # not leave the prompt queued or rendering as an orphan. Shielded
             # because this coroutine is already being torn down.
             try:
-                await asyncio.shield(self.cancel(prompt_id))
+                await asyncio.shield(cancel_once())
             except BaseException:  # noqa: BLE001 - best effort while dying
                 logger.warning("comfy_cancel_on_teardown_failed", exc_info=True)
             raise
@@ -421,12 +432,11 @@ class ComfyClient:
             # the platform cancelled a Character Replacement job, the
             # worker's next progress report was rejected, `LeaseLost` rose
             # out of `on_tick` — and the job's window kept the card for its
-            # full length after the worker had already walked away. A
-            # second cancel from the cooperative path above is harmless: the
-            # delete is idempotent and the interrupt fires only if this
-            # prompt is the one still running.
+            # full length after the worker had already walked away.
+            # `cancel_once` keeps the cooperative path above and this one
+            # from both firing.
             try:
-                await asyncio.shield(self.cancel(prompt_id))
+                await asyncio.shield(cancel_once())
             except BaseException:  # noqa: BLE001 - best effort while dying
                 logger.warning("comfy_cancel_on_error_failed", exc_info=True)
             raise
