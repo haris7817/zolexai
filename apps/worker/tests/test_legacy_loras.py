@@ -22,9 +22,11 @@ from tests.test_ltx_graphs import _graph
 from worker.adapters.base import AdapterJob
 from worker.adapters.ltx_comfy import LtxComfyAdapter
 from worker.comfy.ltx_graphs import (
+    LAST_MODEL_CHAIN,
     GenerationEdits,
     compile_first_last_frame,
     compile_text_to_video,
+    model_files_referenced,
 )
 from worker.core.config import settings
 
@@ -169,3 +171,74 @@ def test_the_settings_are_read_when_the_workflow_says_nothing(
     assert LtxComfyAdapter.bypasses_detailer(_job()) is True
     # The workflow still wins.
     assert LtxComfyAdapter.bypasses_detailer(_job(bypass_detailer="no")) is False
+
+
+# ── The transformer the generation graphs load ──────────────────────────────
+
+GGUF = "LTX-2.5-Distilled-Q8_0.gguf"
+INT8 = "LTXVideo/v2/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+
+
+def _transformer(api: dict) -> tuple[str, dict]:
+    [node] = [e for e in api.values() if e["class_type"] in ("UNETLoader", "UnetLoaderGGUF")]
+    return node["class_type"], node["inputs"]
+
+
+def test_the_generation_graphs_load_the_community_gguf_as_delivered() -> None:
+    """Worth pinning: the character graph loads Lightricks' own int8 file, so
+    the pack ships two different transformers under three product names."""
+    api = compile_text_to_video(_graph("text_to_video"), GenerationEdits(**_BASE))
+    cls, inputs = _transformer(api)
+    assert (cls, inputs["unet_name"]) == ("UnetLoaderGGUF", GGUF)
+
+
+def test_the_transformer_can_be_swapped_for_the_official_safetensors() -> None:
+    graph = _graph("text_to_video")
+    before = compile_text_to_video(graph, GenerationEdits(**_BASE))
+    after = compile_text_to_video(graph, GenerationEdits(**_BASE, transformer=INT8))
+
+    cls, inputs = _transformer(after)
+    assert cls == "UNETLoader"
+    assert inputs == {"unet_name": INT8, "weight_dtype": "default"}
+    # The swap is the loader and nothing else.
+    changed = [nid for nid in before if before[nid] != after.get(nid)]
+    assert len(changed) == 1 and before[changed[0]]["class_type"] == "UnetLoaderGGUF"
+    assert set(before) == set(after)
+    # And the health check follows the file that will actually be loaded.
+    assert INT8 in model_files_referenced(after)["UNETLoader.unet_name"]
+    assert GGUF in model_files_referenced(before)["UnetLoaderGGUF.unet_name"]
+
+
+def test_a_gguf_name_puts_the_gguf_loader_back() -> None:
+    api = compile_text_to_video(_graph("text_to_video"), GenerationEdits(**_BASE, transformer=GGUF))
+    assert _transformer(api) == ("UnetLoaderGGUF", {"unet_name": GGUF})
+
+
+def test_the_switches_are_reported_so_a_render_can_be_traced_to_its_model_chain() -> None:
+    compile_text_to_video(_graph("text_to_video"), GenerationEdits(**_BASE))
+    assert LAST_MODEL_CHAIN == {}
+
+    compile_text_to_video(
+        _graph("text_to_video"),
+        GenerationEdits(
+            **_BASE,
+            disabled_loras=("OmniNFT", "ltx2.3-transition"),
+            bypass_detailer=True,
+            transformer=INT8,
+        ),
+    )
+    assert LAST_MODEL_CHAIN["loras_off"] == [OMNI, TRANSITION]
+    assert LAST_MODEL_CHAIN["detailer_off"] == DETAILER
+    assert LAST_MODEL_CHAIN["transformer"] == INT8
+    assert LAST_MODEL_CHAIN["transformer_was"] == GGUF
+    assert "loras_not_found" not in LAST_MODEL_CHAIN
+
+
+def test_a_fragment_that_matches_nothing_is_reported_rather_than_swallowed() -> None:
+    """A typo in a deployment's LTX_COMFY_DISABLED_LORAS would otherwise look
+    exactly like a successful run."""
+    compile_text_to_video(
+        _graph("text_to_video"), GenerationEdits(**_BASE, disabled_loras=("OmniNFT", "typo-here"))
+    )
+    assert LAST_MODEL_CHAIN["loras_off"] == [OMNI]
+    assert LAST_MODEL_CHAIN["loras_not_found"] == ["typo-here"]
