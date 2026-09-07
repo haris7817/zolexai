@@ -263,10 +263,14 @@ def test_the_beats_layout_separates_lines_with_cues_and_changes_nothing_else() -
     assert beats.startswith(SCENE + "\n\nEarly on, the taxi driver says")
     assert "After a short pause, the passenger says" in beats
     assert "Near the end, the taxi driver says" in beats
-    for quoted in ('"Where to tonight?"', '"The old harbour road."', '"That is a long way in this."'):
+    lines = ('"Where to tonight?"', '"The old harbour road."', '"That is a long way in this."')
+    for quoted in lines:
         assert quoted in beats and quoted in paragraph
     # The cues are the only difference.
-    assert beats.replace("Early on, t", "T").replace("After a short pause, t", "T").replace("Near the end, t", "T") == paragraph
+    stripped = beats
+    for cue in ("Early on, t", "After a short pause, t", "Near the end, t"):
+        stripped = stripped.replace(cue, "T")
+    assert stripped == paragraph
 
 
 def test_the_language_is_named_once_not_twice() -> None:
