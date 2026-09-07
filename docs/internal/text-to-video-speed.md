@@ -70,22 +70,98 @@ time a real render by changing the seed — wall does not depend on it. And a
 job queued behind another on ComfyUI carries the queue wait in the
 adapter's clock (the first 1600 arm read 318 s); render on a free card.
 
-## The options, honestly
+## The actual cause, found the same evening: the node was memory-throttled
 
-| option | expected wall (15 s) | detail | cost to build |
-| --- | --- | --- | --- |
-| A. 1280×736 + lanczos | 95 s (measured) | 0.29× (measured) | done, switch only |
-| B. 1600×896 + lanczos | 177 s (measured, 1.7×) | 0.49× (measured) | done, switch only |
-| C. two-stage latent: 8 steps at 960×544 → ×2 latent upscaler → 3-step refine at 1920×1088 | est. ~190 s (0.63× native step-cost, better under attention superlinearity) | near native — the refine pass *generates* detail at full size | needs the upscaler + second sampler in the FAST graph |
-| D. 30 s as 2×15 s sections | 1050 → ~610 s for 30 s only | seam + audio restart | exists (chain), off |
+Every number above was measured on a node that had **hit its container memory
+ceiling**. `memory.max` is 241.5 GiB; `memory.peak` equalled it;
+`memory.events` showed **592,934 `max` hits** — the kernel reclaiming on
+nearly every allocation, which throttles every GPU step — and `oom_kill` had
+gone from 4 to **6**. ComfyUI-ltx was SIGKILLed at 17:26 and again at 19:36,
+the second time with a client's Character Replacement job in flight; that job
+ended `job_abandoned`.
 
-**C is LTX's designed 1080p path**, and the client already uses exactly it in
-their own earlier T2V graph and their MULTI4 character-replacement graph
-(`ltx-2.5-latent-spatial-upscaler-x2`, sigmas `0.85, 0.725, 0.4219, 0`).
-Adding it to the FAST graph is a redesign of the client's workflow, which is
-the one thing the adapter is built not to do on its own. The right move is
-to ask the client for the two-stage variant of their FAST graph — they
-clearly have the pattern — or to get their explicit go-ahead to add it.
+The tell was the pack graph's own default — the 1280×704 delivery that took
+**106 s** for 15 s on 5 Sep — taking **247 s** today by ComfyUI's own
+execution clock. Power (300 W, the Max-Q part's default, capped since day
+one) and clocks had not changed. What had changed was resident RAM: every
+transformer loaded that day (GGUF, int8, NVFP4) stayed in memory, plus the
+text encoder, plus Character Replacement's ~110 GiB per window.
+
+**Mitigation:** `LTX_COMFY_FREE_AFTER_JOB=true` on the node — models unload
+after every ltx_comfy / ltx_hd job (cold reload measured at ~9 s here), the
+orphaned prompt interrupted, worker restarted idle. Between jobs the process
+now sits at ~11 GiB.
+
+**Confirmed:** the same pack-default 15 s render on the fresh process:
+**91.7 s** (vs 247 s) — faster than 5 Sep, because int8 with the LoRAs off
+is faster than the pack's GGUF. Same graph, same output, 2.7×.
+
+| render (15 s) | under pressure | fresh process |
+| --- | --- | --- |
+| pack default, 1280×704 | 247 s | **91.7 s** |
+| FAST native, 1920×1080 | 304 s | **314.5 s** |
+
+**Two different stories, then.** The memory ceiling explains the pack
+graph's 2.7× and the kills — but the FAST graph is **no faster on a clean
+node**. Native 1920×1088 in one 8-step pass over 361 frames is intrinsically
+~300 s for 15 s on this card; the pack graph's 1280×704 delivery is
+intrinsically ~92 s. The throttling was real and had to be fixed (it cost a
+client a job), but it was not the reason the client's graph is slow.
+
+The canvas and two-stage numbers above were measured on the throttled node
+and are valid only as *relative* comparisons among themselves. The one path
+not yet measured clean is the pack graph's own refine delivered by
+*downscale* rather than halved — see the next section.
+
+**A second gap the incident exposed, fixed:** when the platform cancelled
+that job, the worker's next progress report was rejected, `LeaseLost` rose
+out of the progress callback, and the job's ComfyUI prompt kept the card for
+its full length after the worker had walked away. `wait()` now cancels the
+prompt on any exception it did not raise itself.
+
+## The two-stage path, measured clean — and a misreading corrected
+
+The pack graph's wiring, read off the compiled prompt rather than assumed:
+
+    ResolutionSelector → EmptyImage → ImageScaleBy(0.5) → GetImageSize → EmptyLTXVLatentVideo
+                                                              ↓
+              first pass at HALF the selector size → LTXVLatentUpsampler ×2 → 3-step refine at selector size → deliver
+
+So the selector's megapixel budget is the **delivered** size and the
+`ImageScaleBy` sizes the **first pass**. I had read that node as a final
+scaler and built (and named) a lever on that belief — `final_scale_by`, now
+`base_scale`. A render I described as "the refine delivered by downscale"
+was in fact a first pass at 0.75 of the selector size. The doc above this
+section was written under that misreading and is left as the record of it.
+
+Clean numbers, 15 s at 16:9, same seed as the native reference:
+
+| path | first pass | delivered | wall (ComfyUI exec) | detail vs native |
+| --- | --- | --- | --- | --- |
+| FAST native (deployed Text to Video) | 1920×1088, 8 steps | 1920×1080 | **~310 s** | 1.00 |
+| pack graph, as shipped (0.9 MP, base 0.5) | 640×368 | 1280×736 | **92 s** | — (not 1080p) |
+| pack graph, 0.9 MP, base 0.75 | 960×552 | 1920×1080 (cropped) | **240 s** | 0.46 |
+| pack graph, 0.52 MP delivery, base 1.0 | 992×544 | 1984×1080 (cropped) | 245 s (throttled node) | 0.31 |
+| FAST graph, 1600×896 canvas + lanczos | — | 1920×1080 | 177 s (throttled) | 0.49 |
+| FAST graph, 1280×736 canvas + lanczos | — | 1920×1080 | 95 s (throttled) | 0.29 |
+
+**Verdict.** On this card, with this model family, native 1080p costs ~300 s
+for 15 s and every faster route measured pays for it in detail — the
+two-stage refine included, which at a 1080p delivery recovers roughly half
+the native detail for a 1.3× saving. There is no "faster without losing
+quality" inside the graph. What there was, was a node running everything
+2.7× slow because it had hit its memory ceiling — fixed, and that fix is
+the only free speed on the table.
+
+**What the client can be offered honestly:**
+
+1. Native 1080p at ~5 min per 15 s (what is deployed), on a node that no
+   longer throttles or drops jobs.
+2. A **speed setting** the customer chooses: `LTX_HD_CANVAS=1600x896`
+   (~3 min, visibly softer) — presented as a draft quality, not as 1080p.
+3. Hardware: this is a 300 W Max-Q part running at ~1.6 GHz under its own
+   cap; a full-power RTX PRO 6000 or a second card for parallel jobs is
+   the only route that keeps native quality and cuts wall time.
 
 ## What NOT to do
 
