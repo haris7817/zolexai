@@ -80,6 +80,10 @@ def test_routing_comes_from_the_workflow_definition() -> None:
         "harness",
         "ltx",
         "ltx_comfy",
+        # Text to Video HD, the client's FAST 1080 graph. Its own adapter
+        # rather than a branch inside ltx_comfy, so that nothing it does can
+        # reach the tools that were already here.
+        "ltx_hd",
         "mock",
         "music",
     ]
