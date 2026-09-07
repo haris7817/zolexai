@@ -106,10 +106,12 @@ where the GGUF path reported a full load. Dynamic loading streams weights,
 so the saving may vary with what else holds the card. Repeat the arm once
 more, and once at 10 s, before flipping the default.
 
-**Verdict: do not flip these on by default.** The switches ship off. One
-prompt and one seed is not a proof, but it is enough to refuse a silent
-change to every video the client generates, and the direction is against the
-hypothesis.
+**Verdict on the adapters: do not flip them off by default.** One prompt and
+one seed is not a proof, but it is enough to refuse a silent change to every
+video the client generates, and the direction is against the hypothesis.
+**Verdict on the transformer: recommend it, after one repeat.** All three
+switches ship off, and the node's env was cleared after the A/B so it runs
+the pack as delivered until the client chooses otherwise.
 
 ## 5. What shipped
 
