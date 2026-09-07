@@ -858,7 +858,10 @@ class WorkerSettings(BaseSettings):
     ltx_hd_canvas: str = "native"
     """
     Generation canvas for the FAST 1080 graph: "native" (the graph's own
-    1920x1088) or "WxH" such as "1280x736".
+    1920x1088), **"720p"** (the client's speed plan — 1280x704 landscape,
+    704x1280 vertical, 960x960 square, each upscaled to 1080p by the graph's
+    own closing node; see `DRAFT_CANVAS` in the adapter), or "WxH" such as
+    "1280x736".
 
     The speed lever the user asked for (7 Sep 2026): generate at a
     720p-class size and let the graph's own final `ImageScale` (lanczos,

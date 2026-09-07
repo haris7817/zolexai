@@ -87,6 +87,27 @@ ASPECTS: dict[str, tuple[tuple[int, int] | None, tuple[int, int] | None]] = {
     "1:1": ((1088, 1088), (1080, 1080)),
 }
 
+#: The "720p" generation canvas per ratio — the client's speed plan (8 Sep
+#: 2026): "generate at the LTX-compatible 720p size, 1280x704 for landscape
+#: or 704x1280 for vertical, then upscale to 1080p on the GPU keeping the
+#: same audio". The upscale is the graph's own closing `ImageScale` (lanczos,
+#: crop=center), so it runs on the GPU inside ComfyUI and the soundtrack —
+#: which never passes through that node — is untouched.
+#:
+#: 1:1 is not in the client's sentence and cannot be derived by transposing
+#: a landscape size, so it gets its own square canvas at the same ~0.9 MP
+#: budget. Without it, a square job would generate a 16:9 frame and have its
+#: sides cropped off.
+#:
+#: What this costs is not in dispute and is not small: measured 7 Sep 2026,
+#: a 1280-wide generation upscaled to 1080p carries **0.29x the fine detail**
+#: of a native 1920x1088 render. See docs/internal/text-to-video-speed.md.
+DRAFT_CANVAS: dict[str, tuple[int, int]] = {
+    "16:9": (1280, 704),
+    "9:16": (704, 1280),
+    "1:1": (960, 960),
+}
+
 
 class LtxHdAdapter:
     """One pass of the client's FAST 1080 graph."""
@@ -265,8 +286,10 @@ class LtxHdAdapter:
         deployment's `ltx_hd_canvas`, else what the ratio asks for.
 
         "native" and an empty value both mean "whatever this ratio needs",
-        which for 16:9 is the graph's own widget and so None. "1280x736"
-        means that size.
+        which for 16:9 is the graph's own widget and so None. **"720p"** is
+        the client's speed plan — `DRAFT_CANVAS` for this ratio, upscaled to
+        1080p by the graph's own closing node. An explicit "1280x736" means
+        that size.
 
         An override is a SIZE lever (the 7 Sep speed work), not an
         orientation choice, and a deployment sets one string for every job.
@@ -276,6 +299,8 @@ class LtxHdAdapter:
         wanted = ASPECTS[aspect][0]
         if raw in ("", "native"):
             return wanted
+        if raw in ("720p", "draft"):
+            return DRAFT_CANVAS[aspect]
         try:
             width, height = (int(part) for part in raw.split("x", 1))
         except ValueError as exc:

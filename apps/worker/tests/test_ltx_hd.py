@@ -268,6 +268,50 @@ def test_landscape_still_leaves_both_size_widgets_exactly_as_delivered() -> None
     assert (scale["inputs"]["width"], scale["inputs"]["height"]) == (1920, 1080)
 
 
+def test_the_720p_keyword_gives_each_ratio_its_own_canvas_and_a_1080p_delivery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The client's speed plan (8 Sep 2026): generate at the LTX 720p size,
+    let the graph's own closing node upscale to 1080p. Square gets a square
+    canvas rather than a transposed landscape one — otherwise a 1:1 job
+    would generate 16:9 and have its sides cropped off."""
+    from worker.adapters.ltx_hd import ASPECTS, DRAFT_CANVAS
+
+    adapter = LtxHdAdapter()
+    monkeypatch.setattr(settings, "ltx_hd_canvas", "720p")
+    assert adapter._canvas(_job(tmp_path), "16:9") == (1280, 704)
+    assert adapter._canvas(_job(tmp_path), "9:16") == (704, 1280)
+    assert adapter._canvas(_job(tmp_path), "1:1") == (960, 960)
+    # every generation side stays on the model's 32 grid
+    for ratio, (width, height) in DRAFT_CANVAS.items():
+        assert width % 32 == 0 and height % 32 == 0, ratio
+    # and the delivered size is still 1080p, which is what the customer gets
+    assert ASPECTS["16:9"][1] is None          # the graph's own 1920x1080
+    assert ASPECTS["9:16"][1] == (1080, 1920)
+
+
+def test_the_720p_canvas_reaches_the_latent_while_the_delivery_stays_1080p() -> None:
+    """Compiled proof for landscape: generate 1280x704, deliver 1920x1080
+    through the graph's own lanczos centre-crop. The soundtrack never passes
+    through that node, so the upscale cannot touch it."""
+    catalogue = json.loads((Path(__file__).parent / "data/ltx_object_info.json").read_text())
+    api = compile_fast_1080(
+        load_graph(CLIENT_GRAPH),
+        Fast1080Edits(positive="p", negative=None, seconds=8, seed=1,
+                      filename_prefix="x", image="placeholder.png",
+                      canvas=(1280, 704), delivery=None),
+        catalogue,
+    )
+    [latent] = [e for e in api.values() if e["class_type"] == "EmptyLTXVLatentVideo"]
+    assert (latent["inputs"]["width"], latent["inputs"]["height"]) == (1280, 704)
+    [scale] = [e for e in api.values() if e["class_type"] == "ImageScale"]
+    assert (scale["inputs"]["width"], scale["inputs"]["height"]) == (1920, 1080)
+    assert scale["inputs"]["upscale_method"] == "lanczos"
+    # the audio branch reaches CreateVideo without meeting ImageScale
+    [video] = [e for e in api.values() if e["class_type"] == "CreateVideo"]
+    assert video["inputs"]["audio"][0] != scale["inputs"]["image"][0]
+
+
 def test_a_landscape_speed_canvas_is_transposed_for_a_portrait_job(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
