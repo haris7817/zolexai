@@ -252,6 +252,23 @@ def test_the_hd_path_carries_its_own_anti_repeat_rule() -> None:
     assert "spoken a single time" in with_rule
 
 
+def test_the_beats_layout_separates_lines_with_cues_and_changes_nothing_else() -> None:
+    """Same lines, same speakers, same quotes — with a beat between them.
+    The paragraph layout is byte-identical to before, so the default
+    render does not move while the experiment runs."""
+    paragraph = compose(SCENE, _dialogue())
+    beats = compose(SCENE, _dialogue(), layout="beats")
+    assert paragraph == compose(SCENE, _dialogue(), layout="paragraph")
+    assert beats.startswith(SCENE)
+    assert beats.startswith(SCENE + "\n\nEarly on, the taxi driver says")
+    assert "After a short pause, the passenger says" in beats
+    assert "Near the end, the taxi driver says" in beats
+    for quoted in ('"Where to tonight?"', '"The old harbour road."', '"That is a long way in this."'):
+        assert quoted in beats and quoted in paragraph
+    # The cues are the only difference.
+    assert beats.replace("Early on, t", "T").replace("After a short pause, t", "T").replace("Near the end, t", "T") == paragraph
+
+
 def test_the_language_is_named_once_not_twice() -> None:
     """A line written in one language under a sentence naming another is a
     contradiction the model resolves by mumbling."""

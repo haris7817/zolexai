@@ -606,6 +606,20 @@ class WorkerSettings(BaseSettings):
     when somebody does. See `worker/dialogue/__init__.py`.
     """
 
+    auto_dialogue_layout: str = "paragraph"
+    """
+    How written lines are laid into the prompt: "paragraph" (all lines in
+    one block) or "beats" (each line led by a cue — "Early on", "After a
+    short pause", "Near the end").
+
+    The first real render (7 Sep 2026) took four lines in one paragraph and
+    delivered the gist of them: one verbatim, three paraphrased, one phrase
+    twice. Director mode, measured delivering lines verbatim on this same
+    runtime, spreads them across events with a beat between. This is that
+    lever, isolated, so a single render can say whether separation is what
+    was missing. Default unchanged until it does.
+    """
+
     auto_dialogue_local_fallback: bool = True
     """
     Fall back to the local Gemma checkpoint when the hosted writer is

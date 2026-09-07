@@ -246,7 +246,26 @@ def speech_rule(language: str = "") -> str:
     )
 
 
-def compose(prompt: str, dialogue: Dialogue, *, add_speech_rule: bool = False) -> str:
+#: Where in the clip each line falls, as words rather than seconds. The
+#: model has no clock; what it has is order, and a beat between lines. The
+#: Director compiler's measured lever was exactly this separation — lines
+#: spread across events with something between them — and the paragraph
+#: layout gave it none: four lines in one breath, and it rendered the gist.
+def _cues(count: int) -> list[str]:
+    if count <= 1:
+        return [""] * count
+    if count == 2:
+        return ["Early on,", "A few seconds later,"]
+    return ["Early on,"] + ["After a short pause,"] * (count - 2) + ["Near the end,"]
+
+
+def compose(
+    prompt: str,
+    dialogue: Dialogue,
+    *,
+    add_speech_rule: bool = False,
+    layout: str = "paragraph",
+) -> str:
     """The customer's prompt, verbatim, then the lines as quoted speech.
 
     The customer's text is never rewritten or reordered — the result CONTAINS
@@ -264,13 +283,15 @@ def compose(prompt: str, dialogue: Dialogue, *, add_speech_rule: bool = False) -
         return prompt
     spoke: set[str] = set()
     sentences = []
-    for line in dialogue.lines:
+    cues = _cues(len(dialogue.lines)) if layout == "beats" else [""] * len(dialogue.lines)
+    for cue, line in zip(cues, dialogue.lines, strict=True):
         try:
             speaker = dialogue.speaker(line.speaker)
         except KeyError:
             continue
         verb = _speech_verb(line, speaker, spoke)
-        sentences.append(f'{speaker.description} {verb}, "{_spoken(line.text)}"')
+        core = f'{speaker.description} {verb}, "{_spoken(line.text)}"'
+        sentences.append(f"{cue} {core}" if cue else core)
     if not sentences:
         return prompt
     block = " ".join(_sentence(_capfirst(s)) for s in sentences)

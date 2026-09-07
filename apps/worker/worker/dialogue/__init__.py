@@ -154,10 +154,12 @@ async def add_auto_dialogue(
             )
             return job
 
+        layout = str(job.execution.get("auto_dialogue_layout") or settings.auto_dialogue_layout)
         enriched = compose(
             job.prompt.strip(),
             dialogue,
             add_speech_rule=not carries_soundscape_clause,
+            layout=layout.strip().lower(),
         )
         if enriched == job.prompt.strip():
             return job
@@ -171,6 +173,7 @@ async def add_auto_dialogue(
                 "words": dialogue.words,
                 "speakers": len(dialogue.speakers),
                 "language": request.language or "unstated",
+                "layout": layout,
             },
         )
         return replace(job, prompt=enriched)
