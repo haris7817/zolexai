@@ -60,6 +60,12 @@ ui:
   icon: sparkles
   thumb: "linear-gradient(140deg, #0C2632, #08151C)"
 
+# Hidden (7 Sep 2026): the client asked for their FAST 1080 graph to be Text
+# to Video itself, not a second tool beside it. The definition stays so the
+# adapter, its tests and the deploy overlay keep a stable id — and so the
+# tool can be shown again by flipping this line.
+hidden: true
+
 execution:
   # PRIVATE — stripped from every public API response.
   #

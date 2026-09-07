@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from worker.adapters.base import AdapterError, AdapterJob
-from worker.adapters.ltx_hd import WORKFLOW_ID, LtxHdAdapter, frames_for
+from worker.adapters.ltx_hd import SUPPORTED, WORKFLOW_ID, LtxHdAdapter, frames_for
 from worker.adapters.registry import get_adapter
 from worker.comfy.ltx_graphs import Fast1080Edits, compile_fast_1080, load_graph
 from worker.core.config import settings
@@ -55,12 +55,17 @@ def test_the_frame_count_is_the_graphs_own_arithmetic() -> None:
 # ── Isolation from the tools that were already there ───────────────────────
 
 
-def test_the_adapter_answers_for_its_own_workflow_and_no_other() -> None:
+def test_the_adapter_answers_for_text_to_video_and_the_hd_id_only() -> None:
+    """Text to Video itself (the client's ask, 7 Sep 2026) and the HD id kept
+    for a stable name. Nothing else: Image to Video and Extend stay on
+    ltx_comfy, and this graph's canvas would be wrong for them anyway."""
     adapter = get_adapter("ltx_hd")
     assert adapter.name == "ltx_hd"
-    assert adapter.supports(WORKFLOW_ID)
-    for other in ("text-to-video", "image-to-video", "extend-video",
-                  "character-replacement", "video-to-video", "music-video"):
+    assert SUPPORTED == {"text-to-video", WORKFLOW_ID}
+    for wanted in SUPPORTED:
+        assert adapter.supports(wanted), wanted
+    for other in ("image-to-video", "extend-video", "character-replacement",
+                  "video-to-video", "music-video", "music"):
         assert not adapter.supports(other), other
 
 
@@ -91,6 +96,8 @@ def test_the_definition_offers_only_the_lengths_that_were_benchmarked() -> None:
     assert 'supported_aspect_ratios: ["16:9"]' in text
     # Ships on the mock; the deployment overlay routes it.
     assert re.search(r"^  runtime: mock$", text, re.M)
+    # Hidden as a tool of its own: the graph is Text to Video now.
+    assert re.search(r"^hidden: true$", text, re.M)
 
 
 def test_the_definition_does_not_promise_extend() -> None:
@@ -143,6 +150,34 @@ def test_a_missing_length_is_refused(tmp_path: Path) -> None:
     adapter = LtxHdAdapter()
     with pytest.raises(AdapterError):
         adapter._seconds(_job(tmp_path, duration=None))
+
+
+def test_the_clients_negative_is_kept_unless_a_deployment_overrides_it(tmp_path: Path) -> None:
+    """None means the graph's own negative survives. Until 7 Sep the adapter
+    silently swapped in the first/last-frame negative — `negative_for` had
+    no entry for this workflow — which contradicted the parity claim for
+    that one widget."""
+    adapter = LtxHdAdapter()
+    assert adapter._negative(_job(tmp_path)) is None
+    overridden = _job(tmp_path)
+    overridden.execution["negative_prompt"] = "  blurry, low quality  "
+    assert adapter._negative(overridden) == "blurry, low quality"
+    overridden.execution["negative_prompt"] = "   "
+    assert adapter._negative(overridden) is None
+
+
+def test_a_portrait_or_square_request_is_refused_before_any_gpu_time(tmp_path: Path) -> None:
+    """The graph pins 16:9. Rendering 9:16 as landscape would be a silently
+    wrong video; reshaping the client's canvas would be redesigning their
+    workflow. So it refuses, clearly, and says which ratio to pick."""
+    adapter = LtxHdAdapter()
+    adapter._require_landscape(_job(tmp_path))                     # absent → 16:9
+    adapter._require_landscape(_job(tmp_path, aspect_ratio="16:9"))
+    for ratio in ("9:16", "1:1"):
+        with pytest.raises(AdapterError) as caught:
+            adapter._require_landscape(_job(tmp_path, aspect_ratio=ratio))
+        assert "16:9" in caught.value.user_message, ratio
+        assert caught.value.retriable is False
 
 
 def test_a_customer_seed_wins_and_is_otherwise_stable_per_job(tmp_path: Path) -> None:

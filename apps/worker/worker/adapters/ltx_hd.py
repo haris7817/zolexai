@@ -6,11 +6,16 @@ no detailer, one 8-step stage, generated at 1920x1088 and delivered at
 (`docs/internal/ltx25-highres-benchmark.md`) and byte-identical through this
 path against a direct ComfyUI run at every length.
 
-**Deliberately its own adapter.** It shares only the ComfyUI service object
-with `ltx_comfy`; nothing here can change what Text to Video, Image to Video
-or Extend Video render. Their graphs, their adapter and their routing are
-untouched, so this ships as an addition and rolls back by removing one line
-of YAML.
+**Its own adapter, and in client-test the engine behind Text to Video.**
+It shares only the ComfyUI service object with `ltx_comfy`. It first shipped
+as a separate "Text to Video HD" tool; the client's ask (7 Sep 2026) was for
+their graph to BE Text to Video, so the deploy overlay now routes
+`text-to-video` here in client-test and the HD tool is hidden. Image to Video
+and Extend Video stay on `ltx_comfy`, untouched.
+
+What the graph cannot serve, it refuses rather than approximates: it pins a
+16:9 canvas, so a 9:16 or 1:1 request gets a clear error before any GPU time
+rather than a landscape video it did not ask for.
 
 The graph exposes exactly what a job needs — the two prompt boxes, a duration
 in seconds from which it computes its own frame count, a seed, the output
@@ -36,7 +41,6 @@ from worker.comfy.ltx_graphs import (
     GraphError,
     compile_fast_1080,
 )
-from worker.comfy.ltx_prompts import negative_for
 from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.dialogue import add_auto_dialogue
@@ -47,6 +51,13 @@ from worker.providers.ltx_comfy import LtxComfyService
 logger = get_logger(__name__)
 
 WORKFLOW_ID = "text-to-video-hd"
+
+#: What this graph renders. Text to Video itself in client-test — the client
+#: asked for their FAST 1080 graph to BE Text to Video, not sit beside it —
+#: and the HD id, kept so the definition, its tests and anything in flight
+#: keep a stable name.
+SUPPORTED = frozenset({"text-to-video", WORKFLOW_ID})
+
 
 #: The graph's frame arithmetic, `1 + floor(fps*seconds/8)*8`, reproduced so a
 #: length can be checked before any GPU time is spent.
@@ -68,13 +79,14 @@ class LtxHdAdapter:
         return self._service
 
     def supports(self, workflow_id: str) -> bool:
-        return workflow_id == WORKFLOW_ID
+        return workflow_id in SUPPORTED
 
     async def run(self, job: AdapterJob, on_progress: ProgressCallback) -> AdapterResult:
         reporter = StageReporter(on_progress)
         await reporter.preparing()
 
         seconds = self._seconds(job)
+        self._require_landscape(job)
         frames = frames_for(seconds, settings.ltx_comfy_frame_rate)
         # Spoken lines, when this deployment asks for them and the prompt has
         # none. This graph writes its own soundtrack in one pass, which is
@@ -100,7 +112,7 @@ class LtxHdAdapter:
                 service.load("fast_1080"),
                 Fast1080Edits(
                     positive=job.prompt.strip(),
-                    negative=negative_for(WORKFLOW_ID, job.execution),
+                    negative=self._negative(job),
                     seconds=seconds,
                     seed=self._seed(job),
                     filename_prefix=f"zolexai/{job.job_id}/output",
@@ -220,6 +232,38 @@ class LtxHdAdapter:
             pass
         return abs(hash(job.job_id)) % (2**48)
 
+    @staticmethod
+    def _negative(job: AdapterJob) -> str | None:
+        """The client's own negative, unless a deployment overrides it.
+
+        None keeps what they wrote into the graph — a long, specific list this
+        adapter has no business replacing. Until 7 Sep 2026 it did:
+        `negative_for` had no entry for this workflow and fell back to the
+        first/last-frame negative, silently. The claim that the graph ran as
+        delivered was wrong for that one widget. It is not any more.
+        """
+        raw = job.execution.get("negative_prompt")
+        return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+    @staticmethod
+    def _require_landscape(job: AdapterJob) -> None:
+        """The graph pins its canvas at 1920x1088, delivered as 1920x1080.
+
+        Text to Video also offers 9:16 and 1:1. Rendering those as 16:9 would
+        be a silently wrong result; changing the graph's canvas and its crop
+        would be redesigning the client's workflow. The honest answer is a
+        clear refusal before any GPU time is spent.
+        """
+        ratio = str(job.parameters.get("aspect_ratio") or "16:9").strip()
+        if ratio != "16:9":
+            raise AdapterError(
+                "This workflow renders 16:9 (landscape) only. Please choose 16:9.",
+                internal_detail=(
+                    f"aspect {ratio!r} requested; the FAST 1080 graph is pinned to 16:9"
+                ),
+                retriable=False,
+            )
+
     async def _placeholder(self, job: AdapterJob) -> str:
         """A small grey PNG for the graph's unused image slot.
 
@@ -250,4 +294,4 @@ class LtxHdAdapter:
             ) from exc
 
 
-__all__ = ["LtxHdAdapter", "WORKFLOW_ID", "frames_for"]
+__all__ = ["SUPPORTED", "LtxHdAdapter", "WORKFLOW_ID", "frames_for"]

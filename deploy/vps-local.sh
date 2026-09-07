@@ -76,7 +76,8 @@ fi
 # nowhere else, which is the whole point.
 
 video_runtime() {
-  # The engine behind Text to Video, First/Last Frame Video and Extend Video.
+  # The engine behind First/Last Frame Video and Extend Video. Text to Video
+  # has its own (`text_to_video_runtime`, below).
   case "$PROFILE" in
     client-test) echo "ltx_comfy" ;;
     *) echo "ltx" ;;
@@ -118,13 +119,33 @@ block_music() {
 YAML
 }
 
+text_to_video_runtime() {
+  # Client-test: the client's own FAST 1080 graph IS Text to Video (their
+  # ask, 7 Sep 2026), through the ltx_hd adapter — 1920x1080 with sound,
+  # 16:9 only, and 30 s takes ~17 min. Elsewhere, the CLI runtime as before.
+  case "$PROFILE" in
+    client-test) echo "ltx_hd" ;;
+    *) echo "ltx" ;;
+  esac
+}
+
 block_text_to_video() {
   # No quality levels since 5 Sep 2026, so no `runtime_by_quality` — and no H3.
-  cat <<YAML
-  runtime: $(video_runtime)
+  # `prompt_structuring_v2` means something to the CLI and ltx_comfy runtimes
+  # only; ltx_hd drives the client's graph from the job's own text and would
+  # ignore it, so it is not written where it would mislead.
+  if [ "$PROFILE" = "client-test" ]; then
+    cat <<YAML
+  runtime: $(text_to_video_runtime)
+  timeout_seconds: 5400
+YAML
+  else
+    cat <<YAML
+  runtime: $(text_to_video_runtime)
   timeout_seconds: 5400
   prompt_structuring_v2: true
 YAML
+  fi
 }
 
 block_video_to_video() {
