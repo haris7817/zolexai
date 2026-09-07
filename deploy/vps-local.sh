@@ -144,6 +144,25 @@ block_character_replacement() {
 YAML
 }
 
+block_text_to_video_hd() {
+  # Text to Video HD (7 Sep 2026): the client's own FAST 1080 graph, its own
+  # adapter, sharing only the ComfyUI service with the other LTX tools. On the
+  # client-test profile only — production keeps the mock until the client has
+  # tried it.
+  case "$PROFILE" in
+    client-test) cat <<'YAML'
+  runtime: ltx_hd
+YAML
+      ;;
+    *) cat <<'YAML'
+  runtime: mock
+  output_content_type: video/mp4
+  output_kind: video
+YAML
+      ;;
+  esac
+}
+
 character_replacement_hidden() {
   case "$PROFILE" in
     client-test) echo "false" ;;
@@ -181,6 +200,12 @@ apply_one() {
 
 check_one() {
   local file="$DEFS/$1.yaml" bad=0
+  # Text to Video HD stays on the mock outside client-test, deliberately: the
+  # tool exists but nothing routes to a GPU until the client has tried it.
+  if [ "$1" = "text-to-video-hd" ] && [ "$PROFILE" != "client-test" ]; then
+    grep -q '^  runtime: mock$' "$file" || { echo "  $1: expected the mock outside client-test"; bad=1; }
+    return $bad
+  fi
   if grep -q '^  runtime: mock$' "$file"; then
     echo "  $1: still on the mock runtime"; bad=1
   fi
@@ -199,7 +224,7 @@ check_one() {
   return $bad
 }
 
-WORKFLOWS=(extend-video image-to-video music-video music text-to-video video-to-video character-replacement)
+WORKFLOWS=(extend-video image-to-video music-video music text-to-video video-to-video character-replacement text-to-video-hd)
 
 if [ -n "$CHECK_ONLY" ]; then
   echo "checking $DEFS/ against profile '$PROFILE' ..."

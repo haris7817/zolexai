@@ -856,7 +856,9 @@ class Fast1080Edits:
     """
 
     positive: str
-    negative: str
+    negative: str | None
+    """None keeps the negative prompt the client wrote into the graph, which
+    is the faithful default; a deployment can still override it."""
     seconds: float
     seed: int
     filename_prefix: str
@@ -883,7 +885,8 @@ def compile_fast_1080(
     flat = flatten(graph, catalogue)
     text = "PrimitiveStringMultiline"
     flat.set_value(flat.one_titled("Prompt (positive)", text), "value", edits.positive)
-    flat.set_value(flat.one_titled("Prompt (negative)", text), "value", edits.negative)
+    if edits.negative is not None:
+        flat.set_value(flat.one_titled("Prompt (negative)", text), "value", edits.negative)
     # Two nodes carry this title; the root one is the source and the copy
     # inside the subgraph reads it over a link.
     duration = flat.one_titled("determines frames", "PrimitiveFloat")

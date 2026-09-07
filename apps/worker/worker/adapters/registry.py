@@ -18,6 +18,7 @@ from worker.adapters.h3_comfy import H3ComfyAdapter
 from worker.adapters.harness import HarnessAdapter
 from worker.adapters.ltx import LtxAdapter
 from worker.adapters.ltx_comfy import LtxComfyAdapter
+from worker.adapters.ltx_hd import LtxHdAdapter
 from worker.adapters.mock import MockAdapter
 from worker.adapters.music import MusicAdapter
 
@@ -54,6 +55,12 @@ _ADAPTERS: dict[str, GenerationAdapter] = {
     # the CLI runtime untouched. Shares only the ComfyUI service object with
     # ltx_comfy. See adapters/character_replacement.py.
     "character_replacement": CharacterReplacementAdapter(),
+    # Text to Video HD (7 Sep 2026): the client's fourth graph, 1920x1080 at
+    # 8 or 15 s. Its own adapter on purpose — it shares only the ComfyUI
+    # service with `ltx_comfy`, so nothing it does can reach Text to Video,
+    # Image to Video or Extend Video. See adapters/ltx_hd.py and
+    # docs/internal/ltx25-highres-benchmark.md.
+    "ltx_hd": LtxHdAdapter(),
 }
 
 

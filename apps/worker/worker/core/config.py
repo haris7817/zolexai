@@ -761,6 +761,19 @@ class WorkerSettings(BaseSettings):
     measure against "the videos are taking longer" (client, 7 Sep 2026).
     `execution.transformer` overrides."""
 
+    ltx_hd_max_seconds: float = 15.0
+    """The longest Text to Video HD renders. Benchmarked 7 Sep 2026 on the
+    RTX PRO 6000: 8 s = 121 s, 15 s = 306 s, 30 s = 1051 s. Thirty seconds
+    works and is not hardware limited (58 % of the card, 84 % of the
+    container's memory ceiling), but it holds a node that serves one job at a
+    time for as long as eight 8 s renders, so the ladder stops at 15 until
+    there is capacity. Raise it here and add the length to the definition's
+    `supported_durations` together."""
+
+    ltx_hd_expected_wall_per_output_second: float = 21.0
+    """Progress pacing only. Measured 15.1 s of compute per second of video at
+    8 s and 20.4 at 15 s; the bar is a time estimate, not a promise."""
+
     ltx_comfy_input_dir: Path | None = None
     """ComfyUI's `input/` directory when the worker shares a filesystem with
     it. Optional: inputs travel over HTTP either way; this only enables

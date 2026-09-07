@@ -50,18 +50,22 @@ from worker.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-GraphName = Literal["text_to_video", "first_last_frame", "character_replacement"]
+GraphName = Literal["text_to_video", "first_last_frame", "character_replacement", "fast_1080"]
 
 #: Graph files in the frozen pack, and the sha256 each was delivered with.
 GRAPH_FILES: dict[GraphName, str] = {
     "text_to_video": "ltx25_text_to_video.json",
     "first_last_frame": "ltx25_first_last_frame.json",
     "character_replacement": "ltx25_character_replacement.json",
+    # The client's fourth graph (7 Sep 2026), kept where it arrived and
+    # never edited. Text to Video HD only.
+    "fast_1080": "client_original/LTX2.5_ACTUAL_WORKFLOW_ONLY_FAST_1080_8s_AUDIO.json",
 }
 GRAPH_SHA256: dict[GraphName, str] = {
     "text_to_video": "2dcd9661118c947cc1cae0e5aa59656b519387a8f8e86f8e4c06545bd07b914c",
     "first_last_frame": "1926bd6dd4f897b45eb8f9e20072066f90fd01678107287f6b6459921e4da967",
     "character_replacement": "2ea7547268f8742ba657fcf390800501e39ba7aff5d1736fa6b41ed988b1adc9",
+    "fast_1080": "19480e7432539bed3e478ef1ee998df906857cf5103e4104daa73989b1f6e712",
 }
 
 #: Weight files the pack loads, by ComfyUI models/ subfolder — the deep

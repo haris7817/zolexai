@@ -1,0 +1,81 @@
+# ZolexAI workflow definition — PUBLIC METADATA.
+#
+# These files are the single source of truth for what ZolexAI offers. The API
+# validates them at startup and serves them at GET /api/v1/workflows; the
+# frontend builds every tool surface from them; the worker dispatches on them.
+#
+# Anything provider-, model- or hardware-specific belongs under `execution:`,
+# which is stripped from every public response. See docs/decisions/0002.
+id: text-to-video-hd
+version: "1"
+name: Text to Video HD
+category: video
+output_type: video
+
+description: Describe a scene and generate it in full 1080p
+short_description: From prompt to motion, at 1080p
+marketing_description: >-
+  Describe a scene and watch it come to life in full 1920x1080, with sound.
+  Sharper and more detailed than the standard tool, and it takes longer to
+  make.
+
+prompt:
+  required: true
+  placeholder: "Describe the video you want to create…"
+  max_length: 20000
+
+# No uploaded assets — the prompt is the only input.
+inputs: []
+
+duration_mode: fixed
+# The two lengths benchmarked on the RTX PRO 6000 (7 Sep 2026): 8 s renders in
+# about 2 minutes, 15 s in about 5. Thirty seconds also works and is not
+# hardware limited, but it takes 17.5 minutes and holds a node that serves one
+# job at a time for as long as eight 8 s renders, so it is deliberately not
+# offered yet. Adding it is this list plus `ltx_hd_max_seconds`.
+supported_durations: ["8s", "15s"]
+# The graph pins its own canvas at 1920x1088 and delivers 1920x1080. There is
+# no aspect selector in it, so the product offers the one ratio it renders.
+supported_aspect_ratios: ["16:9"]
+supported_quality_levels: []
+
+settings:
+  quality: false
+  # The graph writes its own soundtrack; a customer may want a silent file.
+  sound: true
+  motion_strength: false
+  prompt_adherence: false
+  seed: true
+  prompt_modes: false
+
+capabilities:
+  download: true
+  # Extend continues a clip on the First/Last Frame graph, which renders a
+  # different canvas. Off until that pairing is measured.
+  extend: false
+  reuse_settings: true
+  variation: true
+
+ui:
+  icon: sparkles
+  thumb: "linear-gradient(140deg, #0C2632, #08151C)"
+
+execution:
+  # PRIVATE — stripped from every public API response.
+  #
+  # The committed value is the mock; the deployment overlay
+  # (deploy/vps-local.sh) writes `ltx_hd`, the adapter that runs the client's
+  # own FAST 1080 graph. Rolling this tool back is this one line.
+  runtime: mock
+
+  # 15 s measured at 306 s; the budget covers the ceiling with wide margin,
+  # including the model load on a cold node.
+  timeout_seconds: 1800
+
+  # ── Optional, per deployment ──────────────────────────────────────────
+  #
+  # negative_prompt: "…"  — replaces the negative prompt the CLIENT wrote into
+  #                         the graph. Unset keeps theirs, which is the
+  #                         faithful default: the graph ships with a long,
+  #                         carefully written negative and nothing here
+  #                         improves on it.
