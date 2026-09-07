@@ -102,6 +102,7 @@ from worker.media import (
     probe_media,
     verify_output,
 )
+from worker.media.skin import SkinStats, anchor_skin, skin_target, source_gate
 from worker.providers.ltx_comfy import LtxComfyService
 
 logger = get_logger(__name__)
@@ -210,6 +211,10 @@ class WindowRecord:
     """How the seed this window was given was brought back to the anchor
     (gain and offsets, and the seed's luminance before and after); None for
     window 0, for `photo` mode, and with anchoring off."""
+    skin_correction: dict[str, object] | None = None
+    """The skin-region re-anchoring of this window's seed (`worker.media.skin`):
+    what was measured, whether it was applied and why not; None when the
+    switch is off or there was no seed."""
 
 
 @dataclass
@@ -233,6 +238,9 @@ class ChainMetadata:
     later seed is matched to."""
     skin_clause: bool = False
     """Whether the hands clause was in every window's prompt."""
+    skin_target: dict[str, float] | None = None
+    """The first window's own skin level and chroma inside the source
+    silhouette — what every later seed's dark skin is lifted back to."""
 
     def write(self, path: Path) -> Path:
         path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
@@ -418,6 +426,10 @@ class CharacterReplacementAdapter:
         pending_correction: dict[str, float] | None = None
         skin_clause = CHARACTER_REPLACEMENT_SKIN if self.chain_skin_clause(job) else None
         metadata.skin_clause = skin_clause is not None
+        skin_anchoring = anchoring and self.anchors_skin(job)
+        skin: SkinStats | None = None
+        pending_skin: dict[str, object] | None = None
+        previous_clip: Path | None = None
 
         for window in windows:
             job.raise_if_cancelled()
@@ -462,12 +474,17 @@ class CharacterReplacementAdapter:
                     reference=image_name,
                     wall_seconds=round(wall, 1),
                     seed_correction=pending_correction,
+                    skin_correction=pending_skin,
                 )
             )
             pending_correction = None
+            pending_skin = None
             if window.index == 0 and anchoring:
                 anchor = await self._measure_colour(job, output, ANCHOR_FRAMES)
                 metadata.anchor = asdict(anchor)
+                if skin_anchoring:
+                    skin = await self._skin_target(job, output, clip, width, height)
+                    metadata.skin_target = asdict(skin) if skin is not None else None
             if window.index + 1 < total:
                 metadata.seams.append(round((window.start_frame + window.frames - 1) / fps, 4))
                 if mode == "previous_frame":
@@ -476,9 +493,17 @@ class CharacterReplacementAdapter:
                         frame, pending_correction = await self._anchor_seed(
                             job, frame, anchor, window.index + 1
                         )
+                    if skin is not None:
+                        # The seed is the last frame of THIS window; the
+                        # source frame it corresponds to is the last frame
+                        # of this window's cut clip.
+                        frame, pending_skin = await self._anchor_skin(
+                            job, frame, clip, window, skin, width, height
+                        )
                     image_name = await self._upload_still(
                         job, frame, f"reference{window.index + 1:02d}"
                     )
+            previous_clip = clip
 
         await reporter.stitching()
         assembled = job.workspace / "assembled.mp4"
@@ -676,6 +701,11 @@ class CharacterReplacementAdapter:
                     "total_cap_seconds": total_cap,
                 },
             )
+        chain = cls.chain_window_seconds(job)
+        if chain is not None and total > per_window:
+            # Only a source that chains today; a single-window source never
+            # sees this setting.
+            return plan_windows(total, min(chain, per_window))
         return plan_windows(total, per_window)
 
     @staticmethod
@@ -683,6 +713,24 @@ class CharacterReplacementAdapter:
         raw = job.execution.get("chain_skin_clause")
         if raw is None:
             return bool(settings.character_replacement_chain_skin_clause)
+        return str(raw).strip().lower() not in ("false", "no", "off", "0")
+
+    @staticmethod
+    def chain_window_seconds(job: AdapterJob) -> int | None:
+        raw = job.execution.get("chain_window_seconds")
+        if raw is None:
+            raw = settings.character_replacement_chain_window_seconds
+        try:
+            value = int(str(raw).strip()) if raw is not None and str(raw).strip() else None
+        except ValueError:
+            return None
+        return value if value is not None and value >= 1 else None
+
+    @staticmethod
+    def anchors_skin(job: AdapterJob) -> bool:
+        raw = job.execution.get("skin_anchor")
+        if raw is None:
+            return bool(settings.character_replacement_skin_anchor)
         return str(raw).strip().lower() not in ("false", "no", "off", "0")
 
     @staticmethod
@@ -986,6 +1034,79 @@ class CharacterReplacementAdapter:
                 internal_detail=f"seed anchoring failed for window {index}: {exc}",
             ) from exc
         return dest, correction
+
+    # ── Skin-region re-anchoring (worker.media.skin) ─────────────────────
+
+    async def _skin_target(
+        self, job: AdapterJob, rendered: Path, clip: Path, width: int, height: int
+    ) -> SkinStats | None:
+        try:
+            target = await cancellable(
+                job,
+                skin_target(rendered, clip, frames=ANCHOR_FRAMES, width=width, height=height),
+            )
+        except FfmpegError as exc:
+            logger.warning(
+                "character_replacement_skin_target_failed",
+                extra={"job_id": job.job_id, "detail": str(exc)[:300]},
+            )
+            return None
+        logger.info(
+            "character_replacement_skin_target",
+            extra={"job_id": job.job_id, **asdict(target)},
+        )
+        if target.cover <= 1e-4:
+            return None
+        return target
+
+    async def _anchor_skin(
+        self,
+        job: AdapterJob,
+        frame: Path,
+        clip: Path,
+        window: Window,
+        target: SkinStats,
+        width: int,
+        height: int,
+    ) -> tuple[Path, dict[str, object]]:
+        """The skin-region lift on a seed, gated by the source's silhouette at
+        the seam. A failure inside ffmpeg is logged and the seed passes
+        through: this is containment, never a reason to fail the job."""
+        index = window.index + 1
+        try:
+            gate = await cancellable(
+                job,
+                source_gate(
+                    clip,
+                    window.frames - 1,
+                    job.workspace / f"reference{index:02d}-gate.png",
+                    width=width,
+                    height=height,
+                ),
+            )
+            corrected, record = await cancellable(
+                job,
+                anchor_skin(
+                    frame,
+                    gate,
+                    frame.with_name(f"reference{index:02d}-skin.png"),
+                    target=target,
+                    width=width,
+                    work_dir=job.workspace,
+                    tag=f"reference{index:02d}",
+                ),
+            )
+        except FfmpegError as exc:
+            logger.warning(
+                "character_replacement_skin_failed",
+                extra={"job_id": job.job_id, "window": index, "detail": str(exc)[:300]},
+            )
+            return frame, {"applied": False, "reason": f"ffmpeg: {str(exc)[:120]}"}
+        logger.info(
+            "character_replacement_skin",
+            extra={"job_id": job.job_id, "window": index, **asdict(record)},
+        )
+        return corrected, asdict(record)
 
     async def _final_frame(self, job: AdapterJob, part: Path, index: int) -> Path:
         try:

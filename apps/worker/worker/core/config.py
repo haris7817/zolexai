@@ -793,6 +793,25 @@ class WorkerSettings(BaseSettings):
     window. Off until the A/B on the client's clip says it helps
     (`execution.chain_skin_clause` overrides per deployment)."""
 
+    character_replacement_skin_anchor: bool = False
+    """Skin-region re-anchoring of every chained seed (`worker.media.skin`,
+    7 Sep 2026): inside the source performer's skin silhouette at the seam,
+    skin that is dark AS A WHOLE against the first window's own skin level
+    is lifted back to it (bounded additive offsets) before the seed becomes
+    the next reference. Containment for "the hands get darker": stops the
+    compounding at each seam; the within-window slide is the clause's job.
+    Never touches a source within one window. Off until the A/B on the
+    client's clip (`execution.skin_anchor` overrides per deployment)."""
+
+    character_replacement_chain_window_seconds: int | None = None
+    """Window length for CHAINED sources only (None = `max_seconds`, as
+    today). Read only when a source already exceeds `max_seconds`, so a
+    source that ran as one window keeps running as one window whatever this
+    says; capped by `max_seconds` (the memory ceiling). Shorter windows bound
+    how far the hands can slide inside one window before the next seed is
+    re-anchored; the price is more seams. `execution.chain_window_seconds`
+    overrides."""
+
     character_replacement_expected_wall_per_output_second: float = 30.0
     """Progress pacing only. Measured 6 Sep 2026 on the RTX PRO 6000: an 8 s
     window took 164 s (20.5 s per second), a 10 s window 323 s (32)."""
