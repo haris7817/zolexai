@@ -173,7 +173,15 @@ the only free speed on the table.
 
 ---
 
-## Superseded in part, 8 Sep 2026: there *is* a free 1.45×
+## Superseded in part, 8 Sep 2026 — then reverted the same day
+
+*The measurement below stands; the deployment does not. The client judged
+the optimized videos worse and asked for the stock kernel and the ~17 min /
+30 s render back, so this document's original conclusion is once again what
+production does. Kept because the numbers are real and the option is one
+line away.*
+
+### What was measured: a 1.45–1.59× that no metric could fault
 
 This document's conclusion — "every faster path measured costs detail" — was
 true of everything tested on 7 Sep, all of which changed **what the model

@@ -2450,7 +2450,14 @@ every workflow back on the CLI runtime and hides Character Replacement;
 `supervisorctl stop zolexai-ltx-comfy`; drop the two runtimes from
 `RUNTIMES`. Nothing else moved.
 
-## 47. Deploy: SageAttention on the LTX ComfyUI (8 Sep 2026)
+## 47. SageAttention on the LTX ComfyUI — BUILT, NOT ENABLED (8 Sep 2026)
+
+**Status: off.** Enabled 8 Sep, reverted the same day at the client's
+request — they judged the output worse and chose the stock kernel and the
+~17 min / 30 s render. The package stays built on the node and the launcher
+stays able to turn it on, so this section is the record of how, not an
+instruction to do it. The deployed state is `--no-sage` in
+`/workspace/comfy_extra_args` and no extra flags on the launch line.
 
 The one optimization that survived measurement in the FAST 1080 speed work
 (`docs/internal/ltx25_speed_optimization_report.md`): a quantized attention

@@ -5,6 +5,27 @@
 `execution_start`→`execution_success`. Baseline and method:
 [`ltx25_baseline_report.md`](ltx25_baseline_report.md).*
 
+>  ## NOT DEPLOYED — reverted 8 Sep 2026 at the client's request
+>
+>  The optimization below was live for about four hours. The client judged
+>  the videos coming out of it worse and asked to go back to the stock
+>  kernel and the ~17 min / 30 s render. **That is the deployed state:
+>  ComfyUI runs its normal launch line, Text to Video renders natively at
+>  1920×1080, and 30 s takes ~17.3 minutes again.**
+>
+>  Every measurement here still stands and is kept so the work is not
+>  repeated from scratch. What it could not measure is what the client
+>  actually judged on: Sage is an *approximate* attention kernel, so at the
+>  same seed it renders the same shot but not the same bytes (SSIM 0.908 at
+>  30 s), and eyes on real footage are entitled to disagree with a metric.
+>
+>  Re-enabling is one line, if that decision ever changes:
+>  `echo --use-sage-attention > /workspace/comfy_extra_args && supervisorctl restart zolexai-ltx-comfy`
+>
+>  **Kept from this work:** automatic dialogue (unrelated, predates it) and
+>  9:16 / 1:1 support (the addendum at the end), both at the client's
+>  explicit request.
+
 **Brief.** Keep the client's workflow, keep its architecture, keep the
 resolution, keep the LoRAs and the detailer, change the transformer
 configuration, and get 30 s from ~17.5 min to 5–6 min without losing the
