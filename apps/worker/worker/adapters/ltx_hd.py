@@ -13,9 +13,14 @@ their graph to BE Text to Video, so the deploy overlay now routes
 `text-to-video` here in client-test and the HD tool is hidden. Image to Video
 and Extend Video stay on `ltx_comfy`, untouched.
 
-What the graph cannot serve, it refuses rather than approximates: it pins a
-16:9 canvas, so a 9:16 or 1:1 request gets a clear error before any GPU time
-rather than a landscape video it did not ask for.
+The graph has no aspect selector — it is written for 1920x1088 generated and
+1920x1080 delivered — so an orientation is those same two size widgets turned
+on their side (`ASPECTS`, client request 8 Sep 2026): portrait generates
+1088x1920 and delivers 1080x1920, and the 8 spare pixels come off the width
+instead of the height, which is the graph's own crop, mirrored. 16:9 leaves
+both widgets alone, so the landscape render is still the workflow exactly as
+delivered. A ratio with no mapping is refused before any GPU time rather than
+returned as a video the customer did not ask for.
 
 The graph exposes exactly what a job needs — the two prompt boxes, a duration
 in seconds from which it computes its own frame count, a seed, the output
@@ -65,6 +70,24 @@ def frames_for(seconds: float, fps: int = 24) -> int:
     return 1 + int(fps * seconds / 8) * 8
 
 
+#: What each offered aspect ratio means in this graph's two size widgets:
+#: (generation canvas, delivered size). The graph has no aspect selector — it
+#: is written for 1920x1088 generated, 1920x1080 delivered — so an
+#: orientation is those same two numbers turned on their side (client
+#: request, 8 Sep 2026). Generation sides stay on the model's 32 grid; the
+#: delivery drops the 8 spare pixels exactly as the graph already does for
+#: 16:9, on whichever side carries them.
+#:
+#: 16:9 maps to (None, None) on purpose: the graph's own widgets are left
+#: untouched, so the landscape render stays bit-for-bit the workflow as
+#: delivered and every earlier measurement still describes it.
+ASPECTS: dict[str, tuple[tuple[int, int] | None, tuple[int, int] | None]] = {
+    "16:9": (None, None),
+    "9:16": ((1088, 1920), (1080, 1920)),
+    "1:1": ((1088, 1088), (1080, 1080)),
+}
+
+
 class LtxHdAdapter:
     """One pass of the client's FAST 1080 graph."""
 
@@ -86,7 +109,7 @@ class LtxHdAdapter:
         await reporter.preparing()
 
         seconds = self._seconds(job)
-        self._require_landscape(job)
+        aspect = self._aspect(job)
         frames = frames_for(seconds, settings.ltx_comfy_frame_rate)
         # Spoken lines, when this deployment asks for them and the prompt has
         # none. This graph writes its own soundtrack in one pass, which is
@@ -118,7 +141,8 @@ class LtxHdAdapter:
                     filename_prefix=f"zolexai/{job.job_id}/output",
                     image=image,
                     condition_on_image=False,
-                    canvas=self._canvas(job),
+                    canvas=self._canvas(job, aspect),
+                    delivery=ASPECTS[aspect][1],
                 ),
                 catalogue,
             )
@@ -136,7 +160,8 @@ class LtxHdAdapter:
                 "seconds": seconds,
                 "frames": frames,
                 "nodes": len(api),
-                "canvas": self._canvas(job) or "native",
+                "aspect": aspect,
+                "canvas": self._canvas(job, aspect) or "native",
             },
         )
 
@@ -235,13 +260,22 @@ class LtxHdAdapter:
         return abs(hash(job.job_id)) % (2**48)
 
     @staticmethod
-    def _canvas(job: AdapterJob) -> tuple[int, int] | None:
+    def _canvas(job: AdapterJob, aspect: str = "16:9") -> tuple[int, int] | None:
         """The generation canvas: a job's `execution.canvas`, else the
-        deployment's `ltx_hd_canvas`, else the graph's own. "native" and an
-        empty value both mean the graph's own; "1280x736" means that."""
+        deployment's `ltx_hd_canvas`, else what the ratio asks for.
+
+        "native" and an empty value both mean "whatever this ratio needs",
+        which for 16:9 is the graph's own widget and so None. "1280x736"
+        means that size.
+
+        An override is a SIZE lever (the 7 Sep speed work), not an
+        orientation choice, and a deployment sets one string for every job.
+        So a landscape override on a portrait request is transposed rather
+        than sent as a frame the graph would centre-crop down its sides."""
         raw = str(job.execution.get("canvas") or settings.ltx_hd_canvas or "native").strip().lower()
+        wanted = ASPECTS[aspect][0]
         if raw in ("", "native"):
-            return None
+            return wanted
         try:
             width, height = (int(part) for part in raw.split("x", 1))
         except ValueError as exc:
@@ -250,6 +284,8 @@ class LtxHdAdapter:
                 internal_detail=f"ltx_hd canvas {raw!r} is not WxH",
                 retriable=False,
             ) from exc
+        if wanted is not None and wanted[1] > wanted[0] and width > height:
+            width, height = height, width
         return width, height
 
     @staticmethod
@@ -266,23 +302,26 @@ class LtxHdAdapter:
         return raw.strip() if isinstance(raw, str) and raw.strip() else None
 
     @staticmethod
-    def _require_landscape(job: AdapterJob) -> None:
-        """The graph pins its canvas at 1920x1088, delivered as 1920x1080.
+    def _aspect(job: AdapterJob) -> str:
+        """Which offered ratio this job wants, refusing any this graph has no
+        size mapping for, before any GPU time is spent.
 
-        Text to Video also offers 9:16 and 1:1. Rendering those as 16:9 would
-        be a silently wrong result; changing the graph's canvas and its crop
-        would be redesigning the client's workflow. The honest answer is a
-        clear refusal before any GPU time is spent.
+        Until 8 Sep 2026 this refused everything but 16:9, because the graph
+        has no aspect selector and rendering portrait as landscape would be a
+        silently wrong video. The client asked for portrait, so the two size
+        widgets now follow the ratio (`ASPECTS`) — which is the same pair of
+        numbers the graph already carries, not a redesign of it.
         """
         ratio = str(job.parameters.get("aspect_ratio") or "16:9").strip()
-        if ratio != "16:9":
+        if ratio not in ASPECTS:
             raise AdapterError(
-                "This workflow renders 16:9 (landscape) only. Please choose 16:9.",
+                f"This workflow renders {', '.join(ASPECTS)}. Please choose one of those.",
                 internal_detail=(
-                    f"aspect {ratio!r} requested; the FAST 1080 graph is pinned to 16:9"
+                    f"aspect {ratio!r} has no canvas mapping on the FAST 1080 graph"
                 ),
                 retriable=False,
             )
+        return ratio
 
     async def _placeholder(self, job: AdapterJob) -> str:
         """A small grey PNG for the graph's unused image slot.

@@ -92,8 +92,8 @@ def test_the_definition_offers_only_the_lengths_that_were_benchmarked() -> None:
     assert 'supported_durations: ["8s", "15s"]' in text
     # 30 s renders but is deliberately not offered; the ceiling agrees.
     assert settings.ltx_hd_max_seconds == 15.0
-    # The graph pins its canvas, so one ratio.
-    assert 'supported_aspect_ratios: ["16:9"]' in text
+    # All three offered ratios are real renders at the model's stride.
+    assert 'supported_aspect_ratios: ["16:9", "9:16", "1:1"]' in text
     # Ships on the mock; the deployment overlay routes it.
     assert re.search(r"^  runtime: mock$", text, re.M)
     # Hidden as a tool of its own: the graph is Text to Video now.
@@ -211,18 +211,73 @@ def test_the_clients_negative_is_kept_unless_a_deployment_overrides_it(tmp_path:
     assert adapter._negative(overridden) is None
 
 
-def test_a_portrait_or_square_request_is_refused_before_any_gpu_time(tmp_path: Path) -> None:
-    """The graph pins 16:9. Rendering 9:16 as landscape would be a silently
-    wrong video; reshaping the client's canvas would be redesigning their
-    workflow. So it refuses, clearly, and says which ratio to pick."""
+def test_the_offered_ratios_are_accepted_and_anything_else_is_refused(tmp_path: Path) -> None:
+    """Portrait and square became real renders on 8 Sep 2026 (client ask).
+    A ratio with no size mapping still refuses before any GPU time, because
+    returning a shape the customer did not choose is the thing to avoid."""
     adapter = LtxHdAdapter()
-    adapter._require_landscape(_job(tmp_path))                     # absent → 16:9
-    adapter._require_landscape(_job(tmp_path, aspect_ratio="16:9"))
-    for ratio in ("9:16", "1:1"):
-        with pytest.raises(AdapterError) as caught:
-            adapter._require_landscape(_job(tmp_path, aspect_ratio=ratio))
-        assert "16:9" in caught.value.user_message, ratio
-        assert caught.value.retriable is False
+    assert adapter._aspect(_job(tmp_path)) == "16:9"               # absent → 16:9
+    for ratio in ("16:9", "9:16", "1:1"):
+        assert adapter._aspect(_job(tmp_path, aspect_ratio=ratio)) == ratio
+    with pytest.raises(AdapterError) as caught:
+        adapter._aspect(_job(tmp_path, aspect_ratio="21:9"))
+    assert caught.value.retriable is False
+
+
+def test_portrait_turns_the_graphs_own_two_size_widgets_on_their_side() -> None:
+    """The whole of portrait support: generate 1088x1920, deliver 1080x1920.
+    The 8 spare pixels come off the width, mirroring what the graph already
+    does to the height at 16:9."""
+    catalogue = json.loads((Path(__file__).parent / "data/ltx_object_info.json").read_text())
+    for ratio, canvas, delivery in (
+        ("9:16", (1088, 1920), (1080, 1920)),
+        ("1:1", (1088, 1088), (1080, 1080)),
+    ):
+        api = compile_fast_1080(
+            load_graph(CLIENT_GRAPH),
+            Fast1080Edits(
+                positive="p", negative=None, seconds=8, seed=1,
+                filename_prefix="x", image="placeholder.png",
+                canvas=canvas, delivery=delivery,
+            ),
+            catalogue,
+        )
+        [latent] = [e for e in api.values() if e["class_type"] == "EmptyLTXVLatentVideo"]
+        assert (latent["inputs"]["width"], latent["inputs"]["height"]) == canvas, ratio
+        [scale] = [e for e in api.values() if e["class_type"] == "ImageScale"]
+        assert (scale["inputs"]["width"], scale["inputs"]["height"]) == delivery, ratio
+        assert scale["inputs"]["crop"] == "center", ratio
+
+
+def test_landscape_still_leaves_both_size_widgets_exactly_as_delivered() -> None:
+    """16:9 maps to (None, None), so every speed and quality measurement
+    taken before portrait existed still describes what landscape renders."""
+    from worker.adapters.ltx_hd import ASPECTS
+
+    assert ASPECTS["16:9"] == (None, None)
+    catalogue = json.loads((Path(__file__).parent / "data/ltx_object_info.json").read_text())
+    api = compile_fast_1080(
+        load_graph(CLIENT_GRAPH),
+        Fast1080Edits(positive="p", negative=None, seconds=8, seed=1,
+                      filename_prefix="x", image="placeholder.png"),
+        catalogue,
+    )
+    [latent] = [e for e in api.values() if e["class_type"] == "EmptyLTXVLatentVideo"]
+    assert (latent["inputs"]["width"], latent["inputs"]["height"]) == (1920, 1088)
+    [scale] = [e for e in api.values() if e["class_type"] == "ImageScale"]
+    assert (scale["inputs"]["width"], scale["inputs"]["height"]) == (1920, 1080)
+
+
+def test_a_landscape_speed_canvas_is_transposed_for_a_portrait_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deployment sets one canvas string for every job. It is a size lever,
+    not an orientation choice, so it follows the ratio instead of handing the
+    graph a landscape frame to crop down its sides."""
+    adapter = LtxHdAdapter()
+    monkeypatch.setattr(settings, "ltx_hd_canvas", "1280x736")
+    assert adapter._canvas(_job(tmp_path), "16:9") == (1280, 736)
+    assert adapter._canvas(_job(tmp_path), "9:16") == (736, 1280)
 
 
 def test_a_customer_seed_wins_and_is_otherwise_stable_per_job(tmp_path: Path) -> None:

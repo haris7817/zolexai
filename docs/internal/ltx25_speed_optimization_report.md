@@ -250,9 +250,8 @@ smaller share of the work — which is the same law as Phase 5, seen from the
 other end.
 
 **Production path, end to end.** A 5 s Text to Video job through the real
-adapter with the flag live: refused 9:16 before GPU time, kept the client's
-negative prompt, delivered 1920×1080 / 121 frames / 5.04 s with a 5.01 s
-soundtrack.
+adapter with the flag live: kept the client's negative prompt and delivered
+1920×1080 / 121 frames / 5.04 s with a 5.01 s soundtrack.
 
 **Rejected arms, for contrast** (15 s, same seed):
 
@@ -369,3 +368,57 @@ ComfyUI's own Comfy Kitchen int8 attention. It needs no build, it is already
 present on the node, and it measured within 3% of Sage (15 s: 218.4 s vs
 213.6 s; 30 s: 670.2 s vs 652.5 s) at the same quality (30 s SSIM 0.904,
 detail 1.07×, audio correlation 0.90). One word in the extra-args file.
+
+---
+
+## Addendum, 8 Sep 2026 — portrait and square (client request)
+
+The graph has no aspect selector: it generates 1920×1088 and its closing
+`ImageScale` delivers 1920×1080 with `crop=center`. Until now a 9:16 or 1:1
+request was refused, because rendering it as landscape would have been a
+silently wrong video.
+
+**An orientation is those same two widgets turned on their side** — not a
+redesign, and not a crop of a landscape frame. `ASPECTS` in
+`worker/adapters/ltx_hd.py`:
+
+| ratio | generated | delivered |
+| --- | --- | --- |
+| 16:9 | *(the graph's own)* 1920×1088 | 1920×1080 |
+| 9:16 | 1088×1920 | 1080×1920 |
+| 1:1 | 1088×1088 | 1080×1080 |
+
+Every generation side stays on the model's 32-pixel stride, and the 8 spare
+pixels come off the width instead of the height — the graph's own crop,
+mirrored. **16:9 maps to "change nothing"**, so the landscape render is still
+the workflow exactly as delivered and every measurement above still describes
+it. A ratio with no mapping is still refused before any GPU time.
+
+### Measured on the node
+
+Real 5 s jobs through the production adapter, one seed per render (an
+identical prompt+seed returns from ComfyUI's node cache in ~3 s and means
+nothing):
+
+| ratio | delivered | frames | audio | wall |
+| --- | --- | --- | --- | --- |
+| 16:9 | 1920×1080 | 121 | 5.01 s | 45.7 s, 45.7 s |
+| 9:16 | 1080×1920 | 121 | 5.01 s | **45.7 s, 45.7 s** |
+| 1:1 | 1080×1080 | 121 | 5.01 s | 43.3 s |
+
+**Portrait costs exactly what landscape costs** — same pixel count, same
+frame lattice — measured twice each, alternating, on an idle queue. (A first
+portrait run read 60.9 s; it had shared the card with a client job. Square is
+marginally cheaper: 1.18 MP against 2.09, mostly hidden by the fixed ~35 s of
+model load and decode at this length.)
+
+The portrait frame is natively composed — a full-height subject with correct
+headroom, not a landscape shot with its sides removed:
+`E:\Downloads\zolexai-speed-ab\portrait_9x16.png`.
+
+### Also seen, unprompted
+
+While this was being tested, two real client jobs ran on the node with the
+optimization live: a 15 s Text to Video finished in **212.3 s** (the
+pre-change baseline was 310.3 s) and a 30 s job with automatic dialogue ran
+at 72 s/step — exactly the benchmark figure. Production confirms the bench.

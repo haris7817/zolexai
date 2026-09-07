@@ -34,9 +34,12 @@ duration_mode: fixed
 # job at a time for as long as eight 8 s renders, so it is deliberately not
 # offered yet. Adding it is this list plus `ltx_hd_max_seconds`.
 supported_durations: ["8s", "15s"]
-# The graph pins its own canvas at 1920x1088 and delivers 1920x1080. There is
-# no aspect selector in it, so the product offers the one ratio it renders.
-supported_aspect_ratios: ["16:9"]
+# The graph has no aspect selector: it generates 1920x1088 and its closing
+# ImageScale delivers 1920x1080. An orientation is those two widgets turned on
+# their side (8 Sep 2026) — 9:16 generates 1088x1920 and delivers 1080x1920,
+# 1:1 generates 1088x1088 and delivers 1080x1080 — so all three are real
+# renders at the model's stride, not a crop of a landscape frame.
+supported_aspect_ratios: ["16:9", "9:16", "1:1"]
 supported_quality_levels: []
 
 settings:

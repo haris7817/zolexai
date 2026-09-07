@@ -910,12 +910,29 @@ class Fast1080Edits:
     satisfy the loader without turning image conditioning on."""
     canvas: tuple[int, int] | None = None
     """Generation canvas (width, height), or None for the graph's own
-    1920x1088. The graph already ends in an `ImageScale` to 1920x1080 with
+    1920x1088. The graph already ends in an `ImageScale` to `delivery` with
     `crop=center` — that is how it turns 1088 rows into 1080 — so a smaller
     canvas is upscaled and centre-cropped by the graph's own node, and the
     soundtrack never passes through it. A speed lever (user request, 7 Sep
     2026): 1280x736 is ~2.3x fewer pixels than native. Both sides must be
     multiples of 32, the model's spatial stride."""
+    delivery: tuple[int, int] | None = None
+    """Delivered size (width, height) — the graph's closing `ImageScale`, or
+    None for its own 1920x1080.
+
+    This and `canvas` together are how the graph renders an orientation it
+    was not written for (client request, 8 Sep 2026). The graph has no
+    aspect selector: it generates 1920x1088 and its last node scales and
+    centre-crops to 1920x1080. Portrait is those same two widgets turned on
+    their side — generate 1088x1920, deliver 1080x1920 — and the 8 spare
+    pixels are cropped off the width instead of the height, which is the
+    graph's own behaviour, mirrored. Nothing else in it is orientation-aware:
+    the sampler, the schedule, the transformer and both VAEs are untouched,
+    and the soundtrack never passes through `ImageScale`.
+
+    Setting this WITHOUT a matching `canvas` would ask the node to reshape a
+    landscape frame into a portrait one by cropping its sides, so the adapter
+    always sets the pair."""
 
 
 def compile_fast_1080(
@@ -948,6 +965,13 @@ def compile_fast_1080(
         latent = flat.one_of_type("EmptyLTXVLatentVideo")
         flat.set_value(latent, "width", int(width))
         flat.set_value(latent, "height", int(height))
+    if edits.delivery is not None:
+        width, height = edits.delivery
+        if width % 2 or height % 2 or width < 256 or height < 256:
+            raise GraphError(f"delivery {width}x{height} is not an even size of at least 256")
+        scale = flat.one_of_type("ImageScale")
+        flat.set_value(scale, "width", int(width))
+        flat.set_value(scale, "height", int(height))
     flat.prune_unreachable()
     return flat.to_api_prompt()
 
