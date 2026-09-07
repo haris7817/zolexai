@@ -752,6 +752,15 @@ class WorkerSettings(BaseSettings):
     no source claims the two are compatible. Off until the A/B says
     otherwise. `execution.bypass_detailer` overrides."""
 
+    ltx_comfy_transformer: str = ""
+    """Overrides the diffusion transformer the GENERATION graphs load. Empty
+    runs the pack's own `LTX-2.5-Distilled-Q8_0.gguf`. The node also carries
+    Lightricks' `ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors`
+    — the file the character graph already runs — and an nvfp4 build. A GGUF
+    is dequantized on every forward pass, so this is the first thing to
+    measure against "the videos are taking longer" (client, 7 Sep 2026).
+    `execution.transformer` overrides."""
+
     ltx_comfy_input_dir: Path | None = None
     """ComfyUI's `input/` directory when the worker shares a filesystem with
     it. Optional: inputs travel over HTTP either way; this only enables

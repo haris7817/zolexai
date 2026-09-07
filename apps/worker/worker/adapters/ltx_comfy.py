@@ -51,6 +51,7 @@ from worker.adapters.base import (
 )
 from worker.comfy.client import ComfyError, evict_comfy_vram
 from worker.comfy.ltx_graphs import (
+    LAST_MODEL_CHAIN,
     GenerationEdits,
     GraphError,
     aspect_label_for,
@@ -319,6 +320,7 @@ class LtxComfyAdapter:
             last_image=spec.last_image,
             disabled_loras=self.disabled_loras(job),
             bypass_detailer=self.bypasses_detailer(job),
+            transformer=self.transformer(job),
         )
         try:
             if spec.first_image is None:
@@ -327,6 +329,7 @@ class LtxComfyAdapter:
             else:
                 api = compile_first_last_frame(service.load("first_last_frame"), edits)
                 graph = "first_last_frame"
+            model_chain = dict(LAST_MODEL_CHAIN)
         except (GraphError, ComfyError) as exc:
             raise AdapterError(
                 "This tool is temporarily unavailable.",
@@ -367,6 +370,7 @@ class LtxComfyAdapter:
                     "seconds": spec.seconds,
                     "aspect": spec.aspect_label,
                     "nodes": len(api),
+                    **({"model_chain": model_chain} if model_chain else {}),
                 },
             )
             remaining = job.seconds_remaining
@@ -468,6 +472,14 @@ class LtxComfyAdapter:
         else:
             parts = [p.strip() for p in str(raw or "").split(",")]
         return tuple(p for p in parts if p)
+
+    @staticmethod
+    def transformer(job: AdapterJob) -> str | None:
+        raw = job.execution.get("transformer")
+        if raw is None:
+            raw = settings.ltx_comfy_transformer
+        name = str(raw or "").strip()
+        return name or None
 
     @staticmethod
     def bypasses_detailer(job: AdapterJob) -> bool:

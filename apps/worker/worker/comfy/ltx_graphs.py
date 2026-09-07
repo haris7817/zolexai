@@ -710,15 +710,42 @@ class GenerationEdits:
     bypass_detailer: bool = False
     """Bypasses the `ltx-2-19b-ic-lora-detailer` LoraLoaderModelOnly, so the
     model reaches both guiders directly — the client's second request."""
+    transformer: str | None = None
+    """Overrides the diffusion transformer file. None keeps the pack's own
+    (the community Q8_0 GGUF); Lightricks' int8 safetensors is what the
+    character graph already runs on this node."""
+
+
+#: Filled by the compilers with what the model-chain switches actually did,
+#: keyed by the id of the prompt they produced. The adapter logs it with the
+#: submission, so a render can be traced to the model chain that made it —
+#: without that, an A/B is unreadable a day later.
+LAST_MODEL_CHAIN: dict[str, Any] = {}
 
 
 def _apply_model_chain_edits(flat: FlatGraph, edits: GenerationEdits) -> dict[str, Any]:
-    """The client's model-chain switches, in one place for both graphs."""
+    """The client's model-chain switches, in one place for both graphs.
+
+    A fragment that matches nothing is reported as such rather than passing
+    silently: a typo in a deployment's `LTX_COMFY_DISABLED_LORAS` would
+    otherwise look exactly like a successful run.
+    """
     report: dict[str, Any] = {}
+    if edits.transformer:
+        report["transformer"] = edits.transformer
+        report["transformer_was"] = set_transformer(flat, edits.transformer)
     if edits.disabled_loras:
-        report["loras_off"] = disable_power_loras(flat, list(edits.disabled_loras))
+        off = disable_power_loras(flat, list(edits.disabled_loras))
+        report["loras_off"] = off
+        unmatched = [
+            f
+            for f in edits.disabled_loras
+            if not any(f.lower() in name.lower() for name in off)
+        ]
+        if unmatched:
+            report["loras_not_found"] = unmatched
     if edits.bypass_detailer:
-        report["detailer_off"] = bypass_lora_loader(flat, "detailer")
+        report["detailer_off"] = bypass_lora_loader(flat, "detailer") or "not found"
     return report
 
 
@@ -729,9 +756,12 @@ def compile_text_to_video(graph: dict[str, Any], edits: GenerationEdits) -> dict
     set_aspect(flat, edits.aspect_label)
     set_seeds(flat, SeedPlan(edits.seed_base))
     set_output_prefix(flat, edits.filename_prefix)
-    _apply_model_chain_edits(flat, edits)
+    report = _apply_model_chain_edits(flat, edits)
     flat.prune_unreachable()
-    return flat.to_api_prompt()
+    api = flat.to_api_prompt()
+    LAST_MODEL_CHAIN.clear()
+    LAST_MODEL_CHAIN.update(report)
+    return api
 
 
 def compile_first_last_frame(graph: dict[str, Any], edits: GenerationEdits) -> dict[str, Any]:
@@ -748,9 +778,12 @@ def compile_first_last_frame(graph: dict[str, Any], edits: GenerationEdits) -> d
         set_load_image(flat, "Load Image2", edits.last_image)
     else:
         drop_last_frame(flat)
-    _apply_model_chain_edits(flat, edits)
+    report = _apply_model_chain_edits(flat, edits)
     flat.prune_unreachable()
-    return flat.to_api_prompt()
+    api = flat.to_api_prompt()
+    LAST_MODEL_CHAIN.clear()
+    LAST_MODEL_CHAIN.update(report)
+    return api
 
 
 @dataclass(frozen=True)
@@ -794,6 +827,34 @@ def disable_power_loras(flat: FlatGraph, fragments: list[str]) -> list[str]:
                 node.widgets[key] = {**value, "on": False}
                 turned_off.append(name)
     return turned_off
+
+
+def set_transformer(flat: FlatGraph, unet_name: str) -> str:
+    """Swaps the diffusion transformer the generation graphs load.
+
+    The pack loads the community `LTX-2.5-Distilled-Q8_0.gguf` through
+    `UnetLoaderGGUF` in Text to Video and First/Last Frame, while the
+    character graph loads Lightricks' own int8 safetensors through the core
+    `UNETLoader` — two different transformers under two product names. The
+    client's ComfyUI operator asked for the official file (7 Sep 2026), and
+    a GGUF is dequantized on every forward pass, so this is also the first
+    thing to try for "the videos are taking longer".
+
+    A `.safetensors` name switches the node to core `UNETLoader` (adding its
+    `weight_dtype`); a `.gguf` name switches it back. Returns what it was.
+    """
+    loaders = [n for n in flat.nodes.values() if n.type in ("UnetLoaderGGUF", "UNETLoader")]
+    if len(loaders) != 1:
+        raise GraphError(f"expected exactly one transformer loader, found {len(loaders)}")
+    node = loaders[0]
+    was = str(node.widgets.get("unet_name", ""))
+    if unet_name.lower().endswith(".gguf"):
+        node.type = "UnetLoaderGGUF"
+        node.widgets = {"unet_name": unet_name}
+    else:
+        node.type = "UNETLoader"
+        node.widgets = {"unet_name": unet_name, "weight_dtype": "default"}
+    return was
 
 
 def bypass_lora_loader(flat: FlatGraph, name_fragment: str) -> str | None:
