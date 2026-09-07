@@ -82,6 +82,10 @@ asked for it, switchable per job so an A/B needs no redeploy, and applied to
 single-window jobs as well as chained ones — the darkening was measured
 *within* a window, not only across seams.
 
+**It was then measured, and it does nothing detectable** — see the section
+below. It stays on because it costs nothing either way and the client asked,
+but "adopted" here means carried, not proven.
+
 ### 3. Never feed generated video back in — NOT ADOPTED, AND THIS IS THE BIG ONE
 
 Their backend contract, twice, in their own words:
@@ -149,14 +153,50 @@ enabled on the client-test node on the strength of the graph alone.
   a smaller number, and moving to it is only meaningful alongside the
   non-recursive seed.
 
+## Measured: the exposure clause does nothing detectable
+
+Three pairs on the GPU, 7 Sep. Same source (the client's 8.6 s sample), same
+reference, same seed within a pair, `skin_hold` OFF in both arms so the
+prompt's own effect is what shows. Whole-frame mean luma (`signalstats`
+YAVG), drift = closing second minus opening second.
+
+| seed | without the clause | with the clause | difference |
+| --- | --- | --- | --- |
+| 20260907 | −2.05 | −0.65 | **+1.40** |
+| 771 | −0.91 | −1.28 | −0.37 |
+| 4242 | **+0.25** | +0.08 | −0.17 |
+
+**The clause has no measurable effect, and the first pair was noise.** The
+baseline drift alone swings from −2.05 to +0.25 across three seeds — one run
+brightens rather than darkens — so run-to-run variation is several times
+larger than anything the clause contributes. Its own differences change sign.
+
+Recording the first pair's +1.40 as a result would have been wrong, and it
+was nearly written up that way.
+
+**What this does NOT say.** The instrument is whole-frame luma over a single
+8.6-second window, and the reported fault is *skin* darkening across
+*chained* windows. Those are different measurements. This one says the clause
+does not move the frame average on a short single-pass render; it does not
+say the clause is useless where the complaint actually lives, and it does not
+say the darkening is not real — `skin_hold` was built because it is.
+
+**What follows.** The clause stays on: the client asked for it directly, it
+costs nothing measurable in either direction, and it is one environment line
+to disable. But it is not a fix and must not be described as one to them.
+The measurement that would settle it needs a skin-region reading across a
+multi-window chain, which is the same experiment the seed comparison below
+needs — and that is the one worth building the harness for.
+
 ## What to do next, in order
 
 1. **A/B the two seeds** on the GPU: `previous_frame` against `photo`, same
    source, same photo, same seed, `skin_hold` off in both so the raw
    mechanism is visible, measuring mean luma per window. This decides whether
    the recursion is worth its seam.
-2. **A/B the exposure clause** on and off, same way. It is on by default now;
-   the measurement should follow it rather than lead it.
+2. ~~A/B the exposure clause~~ — **done, null result, see above.** Redo it
+   only with a skin-region reading over a chained run; the whole-frame
+   single-window version has been shown not to resolve anything.
 3. **Only then** consider the transformer, against §"points the wrong way".
 4. **Scope the compositor** if the client wants their design proper — it is
    the gate on multi-person, on the non-recursive seed without a seam, and on
