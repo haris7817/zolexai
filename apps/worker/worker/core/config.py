@@ -734,6 +734,24 @@ class WorkerSettings(BaseSettings):
     models stay warm between LTX jobs and are evicted only when another
     engine needs the card (`evict_comfy_vram`)."""
 
+    ltx_comfy_disabled_loras: str = ""
+    """Comma-separated file-name fragments to switch OFF in the pack's
+    `Power Lora Loader (rgthree)` (7 Sep 2026, the client's ComfyUI operator:
+    the Text to Video and First/Last Frame graphs mix LTX 2.3 adapters —
+    `LTX-2.3-OmniNFT-RL-Lora_bf16` @0.4 and `ltx2.3-transition` @0.8 — with
+    LTX 2.5 core files, and they suspect colour, adherence and speed).
+    Empty runs the pack exactly as delivered. rgthree's loader applies an
+    entry only when its `on` flag is true, so this is the same switch a
+    ComfyUI operator would flick; the node stays, the adapter is never
+    loaded. `execution.disabled_loras` overrides per workflow."""
+
+    ltx_comfy_bypass_detailer: bool = False
+    """Bypasses `ltx-2-19b-ic-lora-detailer` in the generation graphs, so the
+    model reaches both `LTXVDualCFGGuider` nodes directly (the same client
+    request). It is an LTX-2 19B adapter loaded on the 2.5 22B transformer;
+    no source claims the two are compatible. Off until the A/B says
+    otherwise. `execution.bypass_detailer` overrides."""
+
     ltx_comfy_input_dir: Path | None = None
     """ComfyUI's `input/` directory when the worker shares a filesystem with
     it. Optional: inputs travel over HTTP either way; this only enables

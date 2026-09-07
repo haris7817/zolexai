@@ -703,6 +703,23 @@ class GenerationEdits:
     """Filename inside ComfyUI's input directory; graph 02 only."""
     last_image: str | None = None
     """Graph 02 only. None bypasses the last-frame conditioning."""
+    disabled_loras: tuple[str, ...] = ()
+    """File-name fragments to switch off in the Power Lora Loader. Empty
+    runs the pack as delivered. The client's ComfyUI operator asked for the
+    two LTX 2.3 adapters to be turned off here (7 Sep 2026)."""
+    bypass_detailer: bool = False
+    """Bypasses the `ltx-2-19b-ic-lora-detailer` LoraLoaderModelOnly, so the
+    model reaches both guiders directly — the client's second request."""
+
+
+def _apply_model_chain_edits(flat: FlatGraph, edits: GenerationEdits) -> dict[str, Any]:
+    """The client's model-chain switches, in one place for both graphs."""
+    report: dict[str, Any] = {}
+    if edits.disabled_loras:
+        report["loras_off"] = disable_power_loras(flat, list(edits.disabled_loras))
+    if edits.bypass_detailer:
+        report["detailer_off"] = bypass_lora_loader(flat, "detailer")
+    return report
 
 
 def compile_text_to_video(graph: dict[str, Any], edits: GenerationEdits) -> dict[str, Any]:
@@ -712,6 +729,7 @@ def compile_text_to_video(graph: dict[str, Any], edits: GenerationEdits) -> dict
     set_aspect(flat, edits.aspect_label)
     set_seeds(flat, SeedPlan(edits.seed_base))
     set_output_prefix(flat, edits.filename_prefix)
+    _apply_model_chain_edits(flat, edits)
     flat.prune_unreachable()
     return flat.to_api_prompt()
 
@@ -730,6 +748,7 @@ def compile_first_last_frame(graph: dict[str, Any], edits: GenerationEdits) -> d
         set_load_image(flat, "Load Image2", edits.last_image)
     else:
         drop_last_frame(flat)
+    _apply_model_chain_edits(flat, edits)
     flat.prune_unreachable()
     return flat.to_api_prompt()
 
@@ -753,6 +772,40 @@ class ReplacementEdits:
     lora_strength: float | None = None
     """Overrides the Ripple LoRA's `strength_model` (graph 03's single
     `LoraLoaderModelOnly`). None keeps the graph's own value — 1.35 as shipped."""
+
+
+def disable_power_loras(flat: FlatGraph, fragments: list[str]) -> list[str]:
+    """Switches off entries of the `Power Lora Loader (rgthree)` whose file
+    name contains one of `fragments`. Returns what was switched off.
+
+    rgthree's own loader reads each `lora_N` entry and applies it only when
+    `on` is true and a strength is non-zero (`power_lora_loader.py`, read on
+    the node 7 Sep 2026), so `on: false` is exactly the switch the client's
+    ComfyUI operator would flick — the node stays in the graph, the adapter
+    is never loaded, and nothing else about the model chain moves.
+    """
+    turned_off: list[str] = []
+    for node in flat.of_type("Power Lora Loader (rgthree)"):
+        for key, value in list(node.widgets.items()):
+            if not key.lower().startswith("lora_") or not isinstance(value, dict):
+                continue
+            name = str(value.get("lora", ""))
+            if value.get("on") and any(f.lower() in name.lower() for f in fragments if f):
+                node.widgets[key] = {**value, "on": False}
+                turned_off.append(name)
+    return turned_off
+
+
+def bypass_lora_loader(flat: FlatGraph, name_fragment: str) -> str | None:
+    """Bypasses the `LoraLoaderModelOnly` whose file name contains
+    `name_fragment`, rewiring its consumers to its own model input — what
+    ComfyUI's own bypass does. Returns the file name, or None if absent."""
+    for node in flat.of_type("LoraLoaderModelOnly"):
+        name = str(node.widgets.get("lora_name", ""))
+        if name_fragment.lower() in name.lower():
+            flat.bypass(node.id)
+            return name
+    return None
 
 
 def set_lora_strength(flat: FlatGraph, name_fragment: str, strength: float) -> None:

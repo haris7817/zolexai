@@ -317,6 +317,8 @@ class LtxComfyAdapter:
             filename_prefix=f"zolexai/{job.job_id}/{output.stem}",
             first_image=spec.first_image,
             last_image=spec.last_image,
+            disabled_loras=self.disabled_loras(job),
+            bypass_detailer=self.bypasses_detailer(job),
         )
         try:
             if spec.first_image is None:
@@ -454,6 +456,25 @@ class LtxComfyAdapter:
                 retriable=False,
             )
         return seconds
+
+    @staticmethod
+    def disabled_loras(job: AdapterJob) -> tuple[str, ...]:
+        """File-name fragments to switch off in the Power Lora Loader."""
+        raw = job.execution.get("disabled_loras")
+        if raw is None:
+            raw = settings.ltx_comfy_disabled_loras
+        if isinstance(raw, (list, tuple)):
+            parts = [str(x).strip() for x in raw]
+        else:
+            parts = [p.strip() for p in str(raw or "").split(",")]
+        return tuple(p for p in parts if p)
+
+    @staticmethod
+    def bypasses_detailer(job: AdapterJob) -> bool:
+        raw = job.execution.get("bypass_detailer")
+        if raw is None:
+            return bool(settings.ltx_comfy_bypass_detailer)
+        return str(raw).strip().lower() not in ("false", "no", "off", "0")
 
     @staticmethod
     def per_pass_seconds(job: AdapterJob) -> float:
