@@ -334,7 +334,84 @@ stays off (not needed on the evidence). A residual remains — the hands at
 32 s are still a shade under the face — and the shorter-window lever is
 the next thing to try if the client still sees it.
 
-## 10. Rollback
+## 10. The skin hold, and what the client's advisor sent (7 Sep 2026)
+
+**The second report.** The client re-ran the same clip (`1702032c`) with a
+prompt that only says "preserve the exact skin tone … never becomes darker
+or lighter" and nothing about the character, and sent an outside analysis of
+the result. Its readings of our behaviour were right in outline: the video
+is four generated sections starting at 0/8.04/16.04/24.04 s, and the
+character is regenerated at each. Its readings of the graph were mixed: the
+2.3 LoRAs and the 19B detailer it wants disabled are in the Text to Video
+and First/Last Frame graphs, NOT in the character replacement graph, which
+loads only the Ripple LoRA at 1.35 (`ltx25_character_replacement.json`,
+node 1312); `taeltx2_3` is preview-only in all three, and ComfyUI runs
+with `--preview-method none` on the node, so it decodes nothing we deliver.
+Its central instruction — re-anchor every section from the SOURCE frame
+with the master character image instead of the previous output — is what
+`chain_reference: photo` already does, and it costs the continuity the
+client asked for (a pose snap at every seam, since the graph's one
+reference picture IS the first frame it renders). Its Ripple 1.45/1.50
+suggestion is now a setting (below).
+
+**Measured on that job.** Under the source performer's own skin silhouette,
+the delivered skin runs 109 / 106 / 103 / 105 by 8 s band against a source
+that runs 117 / 116 / 125 / 118 and a reference photo at 130; the
+per-band hand numbers are 109 / 95 / 89 / 91 (against 113 / 114 / 107 /
+108 on the descriptive prompt). The worker log shows the seed lifts fired
+at all three seams (+36, +52, +48 Y). So the seed pass works and the slide
+is INSIDE each window — from Y ≈ 136 in the first second of window 0 to
+≈ 100 at its last frame — which also makes the seams read as steps.
+
+**What was built.** `worker/media/skin_hold.py`: every delivered frame of a
+chained window is measured under the same source-silhouette gate and the
+same local-skin-mean ramp as the seed pass, and each pixel is lifted by ITS
+OWN deficit to the first window's skin level, capped. A lit face gets
+nothing by construction; a dark hand gets what it lacks. The per-frame
+target follows the source performer's own skin under the very pixels being
+lifted (ratio clamped 0.8–1.15, smoothed ±24 frames), so a shadow the
+source shows stays a shadow. The gate's plausibility is a smoothed weight
+on the cap, not a per-frame on/off. The seed for the next window is then
+taken from the HELD frames, so the seam frame and the seed carry the same
+skin.
+
+*Why per pixel.* A per-frame scalar through the mask — the seed pass's own
+primitive — was built first and refuted before it shipped: on a synthetic
+pair differing only by a dark-hands box, `anchor_skin` lifted an already
+shaded strip of face from 153 to 180 with the hands present and left it at
+153 without them, a 27 Y swing on identical pixels, which in video would
+pump the face in step with the gestures. The per-pixel deficit gives the
+same strip 164 either way.
+
+*Range trap.* New mask planes use `extractplanes=y`, not `format=gray`:
+measured on ffmpeg 9 AND on the node's 6.1, `format=gray` after `geq`
+range-expands (100 → 98, 12 → 0, 250 → 255), which would silently discard
+small lifts. The shipped seed chain is unchanged (its masks are 0/255).
+
+**Cost.** The measure pass builds its planes at half the canvas: 8 s per
+193-frame window on the node against 28 s at full size (`ffmpeg` 6.1,
+Threadripper 9965WX). Both passes together are under a minute per window
+against 164–323 s of GPU time.
+
+**Also fixed: the ComfyUI kills.** `supervisord` shows four SIGKILLs of
+`zolexai-ltx-comfy` in two days (6 Sep 02:09, 6 Sep 12:29, 6 Sep 23:45, 7
+Sep 02:32); the container's cgroup reports `oom_kill 4` against a 241 GiB
+limit, and the 02:32 one killed the client's own job mid-render (it retried
+and finished, 623 s of GPU time wasted). The idle server was measured at
+91.7 GB resident and dropped to 21.1 GB on `POST /free {"free_memory":
+true}` with the models still warm. `ltx_comfy_free_cache_after_job`
+(default on) makes that call after every LTX job; `ltx_comfy_free_after_job`
+(which also unloads models) is unchanged.
+
+**Settings added.**
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `character_replacement_skin_hold` / `execution.skin_hold` | true | the per-frame hold on every chained window's delivered frames |
+| `character_replacement_ripple_strength` / `execution.ripple_strength` | none | the Ripple LoRA's `strength_model` (the graph's own 1.35 when unset); the client's advisor suggests 1.45–1.50 |
+| `ltx_comfy_free_cache_after_job` | true | drop ComfyUI's execution cache after every LTX job, models left warm |
+
+## 11. Rollback
 
 The previous behaviour (cut to 10 s) is `git checkout <this commit>^ --
 apps/worker/worker/adapters/character_replacement.py apps/worker/worker/core/config.py

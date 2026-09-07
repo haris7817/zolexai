@@ -734,6 +734,15 @@ class WorkerSettings(BaseSettings):
     models stay warm between LTX jobs and are evicted only when another
     engine needs the card (`evict_comfy_vram`)."""
 
+    ltx_comfy_free_cache_after_job: bool = True
+    """Drop the LTX ComfyUI's execution cache after every job, models left
+    warm (`POST /free {"free_memory": true}`). The cache of decoded frames and
+    latents grows about 10 GB per prompt; the container's cgroup killed the
+    server four times in two days at its 241 GiB limit (7 Sep 2026), each
+    kill re-running a customer's job from scratch. Measured: the idle server
+    went from 91.7 GB to 21.1 GB on this call. Ignored when
+    `ltx_comfy_free_after_job` already unloads everything."""
+
     ltx_comfy_input_dir: Path | None = None
     """ComfyUI's `input/` directory when the worker shares a filesystem with
     it. Optional: inputs travel over HTTP either way; this only enables
@@ -806,6 +815,26 @@ class WorkerSettings(BaseSettings):
     Never touches a source within one window. On since the A/B of 7 Sep 2026
     (see `character_replacement_chain_skin_clause`); `execution.skin_anchor`
     overrides per deployment."""
+
+    character_replacement_skin_hold: bool = True
+    """Per-frame skin hold on every window of a CHAINED character
+    replacement (`worker.media.skin_hold`, 7 Sep 2026). The seed pass puts
+    each seed back at the first window's skin level, but the skin slides
+    again inside the next window (measured on the client's clip: Y ≈ 136 in
+    the first second to ≈ 100 by the end of an 8 s window, whatever the
+    prompt), so the seams read as brightness steps. The hold measures every
+    delivered frame under the same silhouette gate and ramp and lifts dark
+    skin back to the first window's own level with a smoothly varying,
+    bounded offset, following the source performer's own skin level so real
+    shadows stay. The GPU renders and the seeds are unchanged; a source
+    within one window is untouched. `execution.skin_hold` overrides."""
+
+    character_replacement_ripple_strength: float | None = None
+    """Overrides the Ripple LoRA's `strength_model` in the client's graph
+    (1.35 as shipped; the client's advisor suggests 1.45-1.50 when the edit
+    does not carry strongly enough). None runs the graph as delivered. A
+    per-deployment lever for the A/B, never a silent default change;
+    `execution.ripple_strength` overrides."""
 
     character_replacement_chain_window_seconds: int | None = None
     """Window length for CHAINED sources only (None = `max_seconds`, as

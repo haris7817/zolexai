@@ -103,6 +103,13 @@ from worker.media import (
     verify_output,
 )
 from worker.media.skin import SkinStats, anchor_skin, skin_target, source_gate
+from worker.media.skin_hold import (
+    HoldTarget,
+    hold_apply_args,
+    measure_window,
+    plan_hold,
+    source_skin_level,
+)
 from worker.providers.ltx_comfy import LtxComfyService
 
 logger = get_logger(__name__)
@@ -116,6 +123,13 @@ _MIN_SOURCE_SECONDS = 1.0
 #: Frames a chained window repeats at its start — its reference picture,
 #: rendered again at index 0 by the graph. Dropped at the seam.
 SEAM_OVERLAP_FRAMES = 1
+
+#: Every part of a chain goes through these encoder settings so the join is
+#: a stream copy and no window differs from its neighbours in grain — held
+#: or not. (The quality was the encoder's default until the hold shipped;
+#: at that default a held window would have been visibly cleaner than an
+#: unheld one in the same delivery.)
+PART_ENCODE = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]
 
 #: The first window's frames the colour anchor is read from: after the
 #: graph's four-frame handoff from the photo, one second of its own
@@ -215,6 +229,10 @@ class WindowRecord:
     """The skin-region re-anchoring of this window's seed (`worker.media.skin`):
     what was measured, whether it was applied and why not; None when the
     switch is off or there was no seed."""
+    skin_hold: dict[str, object] | None = None
+    """The per-frame skin hold on this window's delivered frames
+    (`worker.media.skin_hold`): frames held, the offsets, refusals by
+    reason, or why it could not run; None with the switch off."""
 
 
 @dataclass
@@ -241,6 +259,11 @@ class ChainMetadata:
     skin_target: dict[str, float] | None = None
     """The first window's own skin level and chroma inside the source
     silhouette — what every later seed's dark skin is lifted back to."""
+    skin_hold: bool = False
+    """Whether every window's delivered frames went through the skin hold."""
+    skin_source_y: float | None = None
+    """The source performer's own skin luminance over the target frames —
+    the level the per-frame hold target follows."""
 
     def write(self, path: Path) -> Path:
         path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
@@ -308,10 +331,14 @@ class CharacterReplacementAdapter:
                 return await self._run_single(
                     job, reporter, source, reference, info, windows[0].seconds, width, height
                 )
-            return await self._run_chain(job, reporter, source, reference, info, windows, width, height)
+            return await self._run_chain(
+                job, reporter, source, reference, info, windows, width, height
+            )
         finally:
             if settings.ltx_comfy_free_after_job:
                 await self.service().free_memory()
+            elif settings.ltx_comfy_free_cache_after_job:
+                await self.service().free_memory(unload_models=False)
 
     # ── One window: the source as uploaded ───────────────────────────────
 
@@ -340,6 +367,7 @@ class CharacterReplacementAdapter:
             height=height,
             seed_base=self.seed_base(job),
             filename_prefix=f"zolexai/{job.job_id}/output",
+            lora_strength=self.ripple_strength(job),
         )
         # The graph renders round((fps·s − 1)/8)·8 + 1 frames, capped by the
         # frames the resampled source actually has; the sample (8 s) is 193
@@ -427,13 +455,19 @@ class CharacterReplacementAdapter:
         skin_clause = CHARACTER_REPLACEMENT_SKIN if self.chain_skin_clause(job) else None
         metadata.skin_clause = skin_clause is not None
         skin_anchoring = anchoring and self.anchors_skin(job)
+        holding = self.holds_skin(job)
+        metadata.skin_hold = holding
         skin: SkinStats | None = None
+        source_y: float | None = None
         pending_skin: dict[str, object] | None = None
-        previous_clip: Path | None = None
+        clips: list[Path] = []
+        prepared: list[bool] = []
+        lora_strength = self.ripple_strength(job)
 
         for window in windows:
             job.raise_if_cancelled()
             clip = await self._cut_window(job, staged, info, window)
+            clips.append(clip)
             video_name = await self._upload_clip(clip)
             edits = ReplacementEdits(
                 positive=character_replacement_prompt(job.prompt, skin=skin_clause),
@@ -445,6 +479,7 @@ class CharacterReplacementAdapter:
                 height=height,
                 seed_base=None if seed is None else seed + window.index,
                 filename_prefix=f"zolexai/{job.job_id}/window{window.index:02d}",
+                lora_strength=lora_strength,
             )
             output = job.workspace / f"window-{window.index:04d}.mp4"
             start_seconds = window.start_frame / fps
@@ -464,7 +499,27 @@ class CharacterReplacementAdapter:
                 expected_seconds=window.frames / fps,
                 log_extra={"window": window.index, "of": total, "start_frame": window.start_frame},
             )
-            parts.append(output)
+            if window.index == 0:
+                if anchoring:
+                    anchor = await self._measure_colour(job, output, ANCHOR_FRAMES)
+                    metadata.anchor = asdict(anchor)
+                if skin_anchoring or holding:
+                    skin = await self._skin_target(job, output, clip, width, height)
+                    metadata.skin_target = asdict(skin) if skin is not None else None
+                if holding and skin is not None:
+                    source_y = await self._source_skin_level(job, clip, width, height)
+                    metadata.skin_source_y = source_y
+            # The hold runs on the rendered window before its last frame
+            # becomes the next seed, so the seam frame and the seed carry
+            # the same skin. A held window is already its own prepared part.
+            held: Path | None = None
+            hold_record: dict[str, object] | None = None
+            if holding and skin is not None and source_y is not None:
+                held, hold_record = await self._hold_window(
+                    job, output, clip, window, HoldTarget.of(skin, source_y), width, height
+                )
+            parts.append(held if held is not None else output)
+            prepared.append(held is not None)
             metadata.windows.append(
                 WindowRecord(
                     index=window.index,
@@ -475,25 +530,27 @@ class CharacterReplacementAdapter:
                     wall_seconds=round(wall, 1),
                     seed_correction=pending_correction,
                     skin_correction=pending_skin,
+                    skin_hold=hold_record,
                 )
             )
             pending_correction = None
             pending_skin = None
-            if window.index == 0 and anchoring:
-                anchor = await self._measure_colour(job, output, ANCHOR_FRAMES)
-                metadata.anchor = asdict(anchor)
-                if skin_anchoring:
-                    skin = await self._skin_target(job, output, clip, width, height)
-                    metadata.skin_target = asdict(skin) if skin is not None else None
             if window.index + 1 < total:
                 metadata.seams.append(round((window.start_frame + window.frames - 1) / fps, 4))
                 if mode == "previous_frame":
-                    frame = await self._final_frame(job, output, window.index + 1)
+                    frame = await self._final_frame(
+                        job, held if held is not None else output, window.index + 1
+                    )
                     if anchor is not None:
                         frame, pending_correction = await self._anchor_seed(
                             job, frame, anchor, window.index + 1
                         )
-                    if skin is not None:
+                    if held is not None:
+                        pending_skin = {
+                            "applied": False,
+                            "reason": "seed taken from the held frames",
+                        }
+                    elif skin is not None and skin_anchoring:
                         # The seed is the last frame of THIS window; the
                         # source frame it corresponds to is the last frame
                         # of this window's cut clip.
@@ -503,13 +560,12 @@ class CharacterReplacementAdapter:
                     image_name = await self._upload_still(
                         job, frame, f"reference{window.index + 1:02d}"
                     )
-            previous_clip = clip
 
         await reporter.stitching()
         assembled = job.workspace / "assembled.mp4"
         trimmed = [
-            await self._prepare_part(job, part, window)
-            for part, window in zip(parts, windows, strict=True)
+            part if ready else await self._prepare_part(job, part, window)
+            for part, window, ready in zip(parts, windows, prepared, strict=True)
         ]
         try:
             await cancellable(job, concat_segments(trimmed, assembled))
@@ -521,7 +577,9 @@ class CharacterReplacementAdapter:
 
         await reporter.muxing("Adding your video's sound…")
         output = job.workspace / "output.mp4"
-        await self._lay_source_audio(job, assembled, staged, info, output, metadata.promised_seconds)
+        await self._lay_source_audio(
+            job, assembled, staged, info, output, metadata.promised_seconds
+        )
         try:
             result_info = await verify_output(
                 output,
@@ -727,6 +785,26 @@ class CharacterReplacementAdapter:
         return value if value is not None and value >= 1 else None
 
     @staticmethod
+    def holds_skin(job: AdapterJob) -> bool:
+        raw = job.execution.get("skin_hold")
+        if raw is None:
+            return bool(settings.character_replacement_skin_hold)
+        return str(raw).strip().lower() not in ("false", "no", "off", "0")
+
+    @staticmethod
+    def ripple_strength(job: AdapterJob) -> float | None:
+        raw = job.execution.get("ripple_strength")
+        if raw is None:
+            raw = settings.character_replacement_ripple_strength
+        if raw is None or not str(raw).strip():
+            return None
+        try:
+            value = float(str(raw).strip())
+        except ValueError:
+            return None
+        return value if value > 0 else None
+
+    @staticmethod
     def anchors_skin(job: AdapterJob) -> bool:
         raw = job.execution.get("skin_anchor")
         if raw is None:
@@ -742,9 +820,14 @@ class CharacterReplacementAdapter:
 
     @staticmethod
     def reference_mode(job: AdapterJob) -> str:
-        raw = str(
-            job.execution.get("chain_reference") or settings.character_replacement_chain_reference
-        ).strip().lower()
+        raw = (
+            str(
+                job.execution.get("chain_reference")
+                or settings.character_replacement_chain_reference
+            )
+            .strip()
+            .lower()
+        )
         return raw if raw in ("previous_frame", "photo") else "previous_frame"
 
     @staticmethod
@@ -1121,6 +1204,26 @@ class CharacterReplacementAdapter:
                 internal_detail=f"window {index - 1} produced an unreadable file: {exc}",
             ) from exc
 
+    async def _source_skin_level(
+        self, job: AdapterJob, clip: Path, width: int, height: int
+    ) -> float | None:
+        try:
+            level = await cancellable(
+                job,
+                source_skin_level(clip, frames=ANCHOR_FRAMES, width=width, height=height),
+            )
+        except FfmpegError as exc:
+            logger.warning(
+                "character_replacement_skin_source_failed",
+                extra={"job_id": job.job_id, "detail": str(exc)[:300]},
+            )
+            return None
+        logger.info(
+            "character_replacement_skin_source",
+            extra={"job_id": job.job_id, "y_mean": round(level, 2)},
+        )
+        return level
+
     async def _prepare_part(self, job: AdapterJob, part: Path, window: Window) -> Path:
         """Drops the seam frame, keeps exactly the frames this window contributes.
 
@@ -1140,12 +1243,7 @@ class CharacterReplacementAdapter:
             str(window.kept_frames),
             "-fps_mode",
             "cfr",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-pix_fmt",
-            "yuv420p",
+            *PART_ENCODE,
             str(dest),
             "-y",
         ]
@@ -1157,6 +1255,81 @@ class CharacterReplacementAdapter:
                 internal_detail=f"window {window.index} could not be prepared: {exc}",
             ) from exc
         return dest
+
+    async def _hold_window(
+        self,
+        job: AdapterJob,
+        output: Path,
+        clip: Path,
+        window: Window,
+        target: HoldTarget,
+        width: int,
+        height: int,
+    ) -> tuple[Path | None, dict[str, object]]:
+        """The skin hold on one rendered window (`worker.media.skin_hold`).
+
+        Returns the window's prepared part (seam frame dropped, held frames)
+        and the record; (None, record) when nothing was lifted or the hold
+        could not run — the window is then prepared as always. Containment,
+        never a reason to fail the job.
+        """
+        started = time.monotonic()
+        dest = job.workspace / f"part-{window.index:04d}.mp4"
+        skip = 0 if window.index == 0 else SEAM_OVERLAP_FRAMES
+        try:
+            readings, planes = await cancellable(
+                job,
+                measure_window(
+                    output,
+                    clip,
+                    target,
+                    width=width,
+                    height=height,
+                    work_dir=job.workspace,
+                    tag=f"window{window.index:02d}",
+                ),
+            )
+            plan = plan_hold(readings, target, first_window=window.index == 0)
+            record: dict[str, object] = {**plan.summary(), "measured_frames": len(readings)}
+            applied = False
+            if len(readings) != window.frames:
+                record.update(
+                    applied=False,
+                    reason=f"measured {len(readings)} frames, expected {window.frames}",
+                )
+            elif not plan.active:
+                record.update(applied=False, reason="nothing to hold")
+            else:
+                await cancellable(
+                    job,
+                    ffmpeg(
+                        hold_apply_args(
+                            output,
+                            planes,
+                            plan,
+                            dest,
+                            width=width,
+                            height=height,
+                            skip=skip,
+                            kept_frames=window.kept_frames,
+                            encode=PART_ENCODE,
+                        )
+                    ),
+                )
+                record["reason"] = "applied"
+                applied = True
+        except FfmpegError as exc:
+            logger.warning(
+                "character_replacement_skin_hold_failed",
+                extra={"job_id": job.job_id, "window": window.index, "detail": str(exc)[:300]},
+            )
+            return None, {"applied": False, "reason": f"ffmpeg: {str(exc)[:120]}"}
+        record["wall_seconds"] = round(time.monotonic() - started, 1)
+        logger.info(
+            "character_replacement_skin_hold",
+            extra={"job_id": job.job_id, "window": window.index, **record},
+        )
+        return (dest if applied else None), record
 
     async def _lay_source_audio(
         self,

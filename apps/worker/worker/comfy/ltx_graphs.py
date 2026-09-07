@@ -750,6 +750,24 @@ class ReplacementEdits:
     seed_base: int | None
     """None runs the graph's own fixed seeds — the ZIP as shipped."""
     filename_prefix: str
+    lora_strength: float | None = None
+    """Overrides the Ripple LoRA's `strength_model` (graph 03's single
+    `LoraLoaderModelOnly`). None keeps the graph's own value — 1.35 as shipped."""
+
+
+def set_lora_strength(flat: FlatGraph, name_fragment: str, strength: float) -> None:
+    """`strength_model` of the one `LoraLoaderModelOnly` whose file name
+    contains `name_fragment`; anything but exactly one is a graph error."""
+    loaders = [
+        n
+        for n in flat.of_type("LoraLoaderModelOnly")
+        if name_fragment.lower() in str(n.widgets.get("lora_name", "")).lower()
+    ]
+    if len(loaders) != 1:
+        raise GraphError(
+            f"expected exactly one LoraLoaderModelOnly for '{name_fragment}', found {len(loaders)}"
+        )
+    loaders[0].widgets["strength_model"] = float(strength)
 
 
 def compile_character_replacement(graph: dict[str, Any], edits: ReplacementEdits) -> dict[str, Any]:
@@ -762,6 +780,8 @@ def compile_character_replacement(graph: dict[str, Any], edits: ReplacementEdits
     set_int_constant(flat, "Set Height", edits.height)
     set_seeds(flat, SeedPlan(edits.seed_base) if edits.seed_base is not None else None)
     set_output_prefix(flat, edits.filename_prefix)
+    if edits.lora_strength is not None:
+        set_lora_strength(flat, "Ripple", edits.lora_strength)
     flat.prune_unreachable()
     return flat.to_api_prompt()
 

@@ -46,12 +46,18 @@ def tools_available() -> bool:
     )
 
 
-async def _run(executable: str, args: list[str], *, timeout: float) -> tuple[bytes, str]:
+async def _run(
+    executable: str, args: list[str], *, timeout: float, cwd: Path | None = None
+) -> tuple[bytes, str]:
     """Runs a tool to completion. Returns (stdout, tail of stderr).
 
     On timeout or cancellation the child is killed rather than left behind — an
     orphaned ffmpeg holds file handles in the workspace we are about to delete,
     and on a GPU node it would hold VRAM too.
+
+    `cwd` is for filter options that name files (`metadata=print:file=`): a
+    path with a drive letter cannot ride inside a filter option, a name
+    relative to the working directory can.
     """
     try:
         process = await asyncio.create_subprocess_exec(
@@ -59,6 +65,7 @@ async def _run(executable: str, args: list[str], *, timeout: float) -> tuple[byt
             *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd) if cwd is not None else None,
         )
     except FileNotFoundError as exc:
         raise FfmpegError(f"{executable} is not installed or not on PATH") from exc
@@ -90,7 +97,7 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
         logger.warning("media_tool_kill_timeout", extra={"pid": process.pid})
 
 
-async def ffmpeg(args: list[str], *, timeout: float = 600.0) -> str:
+async def ffmpeg(args: list[str], *, timeout: float = 600.0, cwd: Path | None = None) -> str:
     """Runs ffmpeg with the given arguments. Returns the stderr tail.
 
     `-nostdin` matters: without it ffmpeg can consume the worker's stdin and
@@ -100,6 +107,7 @@ async def ffmpeg(args: list[str], *, timeout: float = 600.0) -> str:
         settings.ffmpeg_path,
         ["-hide_banner", "-nostdin", "-loglevel", "error", "-y", *args],
         timeout=timeout,
+        cwd=cwd,
     )
     return stderr
 

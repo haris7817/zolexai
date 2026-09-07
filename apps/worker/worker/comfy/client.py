@@ -246,18 +246,28 @@ class ComfyClient:
             body = resp.json()
         return body.get(prompt_id)
 
-    async def free_memory(self) -> None:
-        """Asks ComfyUI to unload models and release VRAM.
+    async def free_memory(self, *, unload_models: bool = True) -> None:
+        """Asks ComfyUI to drop its execution cache and, by default, unload models.
 
-        On a co-tenanted GPU node this is what lets an LTX or ACE-Step job run
-        after an H3 one: ComfyUI otherwise keeps ~52 GB resident between jobs,
-        and 52 (idle ComfyUI) + 24 (ACE-Step) + an LTX pass does not fit the
-        card. The next H3 job pays a model reload (~40-60 s) — measured, and
-        cheap against an OOM'd customer job.
+        On a co-tenanted GPU node unloading is what lets an LTX or ACE-Step job
+        run after an H3 one: ComfyUI otherwise keeps ~52 GB resident between
+        jobs, and 52 (idle ComfyUI) + 24 (ACE-Step) + an LTX pass does not fit
+        the card. The next H3 job pays a model reload (~40-60 s) — measured,
+        and cheap against an OOM'd customer job.
+
+        `unload_models=False` frees only the cache — host RAM, not the card.
+        Measured 7 Sep 2026 on the LTX ComfyUI: the cache of decoded frames
+        and latents grows ~10 GB per prompt and the container's cgroup killed
+        the server four times in two days at its 241 GiB limit (each kill
+        re-ran a customer's job from scratch); `free_memory` alone took the
+        idle server from 91.7 GB to 21.1 GB with the models still warm.
         """
         try:
             async with self._client() as client:
-                await client.post("/free", json={"unload_models": True, "free_memory": True})
+                await client.post(
+                    "/free", json={"unload_models": unload_models, "free_memory": True}
+                )
+            logger.info("comfy_freed", extra={"unload_models": unload_models})
         except Exception:  # noqa: BLE001 - best effort; health will catch worse
             logger.warning("comfy_free_failed", exc_info=True)
 

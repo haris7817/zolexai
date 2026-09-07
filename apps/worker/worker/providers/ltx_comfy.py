@@ -314,8 +314,8 @@ class LtxComfyService:
             timeout=settings.ltx_comfy_transfer_timeout,
         )
 
-    async def free_memory(self) -> None:
-        await self.client.free_memory()
+    async def free_memory(self, *, unload_models: bool = True) -> None:
+        await self.client.free_memory(unload_models=unload_models)
 
 
 def wall_clock() -> float:

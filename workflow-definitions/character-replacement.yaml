@@ -108,6 +108,14 @@ execution:
   # chain_window_seconds: 5 — window length for sources that chain anyway
   #                           (default: max_seconds); never touches a source
   #                           within one window.
+  # skin_hold: true         — per-frame skin hold on every chained window's
+  #                           delivered frames (7 Sep 2026): dark skin is
+  #                           lifted back to the first window's own level
+  #                           inside the source's silhouette, smoothly over
+  #                           time; renders and seeds unchanged (default on).
+  # ripple_strength: 1.45   — the Ripple LoRA's strength_model for the run
+  #                           (default: the graph's own 1.35). A lever for
+  #                           the A/B the client's advisor asked for.
   # negative_prompt: "…"    — overrides the house negative prompt (default:
   #                           derived from the client's own graph).
 
