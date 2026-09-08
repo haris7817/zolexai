@@ -66,7 +66,20 @@ def spoken_language_sentence(language: str | None) -> str:
 #: with no words invents them or reads the caption instead. That distinction
 #: is the client's backend rule of 28 Aug 2026, and it is stricter than the
 #: verb list this replaced.
-_QUOTED_RE = re.compile(r"[\"“‘'][^\"”’']{3,}[\"”’']")
+#:
+#: The single-quote branch is guarded, and the guard is load-bearing (measured
+#: on a live job, 9 Sep 2026). A straight apostrophe is also a possessive, so
+#: an unguarded class matched from the first "captain's" to the second one
+#: and read sixty words of scene description as a spoken line. What followed
+#: was the exact fault this regex exists to prevent: `soundscape_clause` took
+#: its supplied-dialogue branch and told the model someone says those words.
+#: The lookarounds require an opening quote not to sit inside a word and a
+#: closing quote not to be followed by one, which is what separates
+#: 'Get out now' from captain's.
+_QUOTED_RE = re.compile(
+    r"[\"“][^\"”]{3,}[\"”]"
+    r"|(?<!\w)[‘'][^’']{3,}[’'](?!\w)"
+)
 
 
 def supplied_dialogue(prompt: str) -> bool:

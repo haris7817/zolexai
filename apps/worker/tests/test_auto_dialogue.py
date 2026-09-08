@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from worker.adapters.base import AdapterJob
+from worker.adapters.base import AdapterError, AdapterJob
 from worker.core.config import settings
 from worker.dialogue import add_auto_dialogue, enabled_for
 from worker.dialogue.decide import (
@@ -39,7 +39,6 @@ from worker.dialogue.provider import (
     parse,
     system_prompt,
 )
-from worker.adapters.base import AdapterError
 from worker.longform.language import soundscape_clause, supplied_dialogue
 
 SCENE = "A taxi driver picks up a passenger outside a rain-soaked station at night"
@@ -228,6 +227,33 @@ def test_the_lines_become_quoted_speech_the_soundtrack_rule_recognises() -> None
     clause = soundscape_clause(enriched, {}, {})
     assert "No one speaks" not in clause
     assert "spoken a single time" in clause
+
+
+def test_a_possessive_is_not_a_spoken_line() -> None:
+    """Measured on a live job, 9 Sep 2026.
+
+    A straight apostrophe is also a possessive, and the unguarded character
+    class matched from the first "captain's" to the second — reading sixty
+    words of scene description as quoted speech. The consequence was the exact
+    fault this regex exists to prevent: `soundscape_clause` took its
+    supplied-dialogue branch and told the model someone says those words, on a
+    prompt where nobody speaks at all. It also made Auto Dialogue skip every
+    such job as `dialogue_already_present`.
+
+    Rare before the LTX 2.5 rewrite and common after it, because a rewritten
+    prompt is longer, more literary, and full of possessives.
+    """
+    possessives = (
+        "The camera pushes in toward the captain's face, capturing the salt "
+        "spray on his skin and the distant cry of the captain's crew."
+    )
+    assert supplied_dialogue(possessives) is False
+    assert supplied_dialogue("It's the captain's ship and it's getting late") is False
+
+    # A real single-quoted line still counts: the guard is about where the
+    # mark sits, not about which mark it is.
+    assert supplied_dialogue("He turns and says 'Get out now' before leaving") is True
+    assert supplied_dialogue('She says, "Where to tonight?"') is True
 
 
 def test_a_line_that_ends_in_punctuation_is_not_given_a_second_stop() -> None:
