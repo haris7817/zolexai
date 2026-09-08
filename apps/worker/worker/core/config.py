@@ -876,6 +876,17 @@ class WorkerSettings(BaseSettings):
     overrides per job. Needs the two SeedVR2 weight files on the node.
     """
 
+    ltx_hd_delivery: str = "1080p"
+    """
+    The frame the FAST 1080 path delivers: "1080p" (1920x1080 / 1080x1920 /
+    1080x1080, via the graph's own closing node) or "4k" (3840x2160 /
+    2160x3840 / 2160x2160, via one lanczos resize in ffmpeg with NVENC, the
+    soundtrack copied through — the client's own package method). Client
+    request, 8 Sep 2026: 4K "in the same way we do 1920x1080". Measured
+    2.3 s for a 10 s clip; the file is ~3x the 1080p size.
+    `execution.delivery` overrides per job.
+    """
+
     ltx_hd_canvas: str = "native"
     """
     Generation canvas for the FAST 1080 graph: "native" (the graph's own

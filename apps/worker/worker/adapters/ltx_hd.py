@@ -110,6 +110,14 @@ DRAFT_CANVAS: dict[str, tuple[int, int]] = {
     "1:1": (960, 960),
 }
 
+#: The 4K frame per ratio (client request, 8 Sep 2026), reached from the
+#: generated frame by one lanczos resize in ffmpeg — see `_upscale_4k`.
+DELIVERY_4K: dict[str, tuple[int, int]] = {
+    "16:9": (3840, 2160),
+    "9:16": (2160, 3840),
+    "1:1": (2160, 2160),
+}
+
 
 class LtxHdAdapter:
     """One pass of the client's FAST 1080 graph."""
@@ -134,12 +142,15 @@ class LtxHdAdapter:
         seconds = self._seconds(job)
         aspect = self._aspect(job)
         ai_upscale = self._ai_upscale(job)
+        four_k = self._delivery_tier(job) == "4k"
         canvas = self._canvas(job, aspect)
         # Delivered size: the ratio's 1080p frame. With the AI upscaler on,
         # the graph's own lanczos node is parked at the canvas size (an
-        # identity resize) and SeedVR2 does the enlarging afterwards.
+        # identity resize) and SeedVR2 does the enlarging afterwards. With 4K
+        # on, the same parking, and ffmpeg does the enlarging afterwards —
+        # once, from the generated frame, never from an already-resized one.
         delivered = ASPECTS[aspect][1] or (1920, 1080)
-        delivery = canvas if (ai_upscale and canvas) else ASPECTS[aspect][1]
+        delivery = canvas if ((ai_upscale or four_k) and canvas) else ASPECTS[aspect][1]
         frames = frames_for(seconds, settings.ltx_comfy_frame_rate)
         # Spoken lines, when this deployment asks for them and the prompt has
         # none. This graph writes its own soundtrack in one pass, which is
@@ -227,6 +238,9 @@ class LtxHdAdapter:
         if ai_upscale and canvas:
             await reporter.generating(GENERATE_TO - 1, "Upscaling your video…")
             output = await self._upscale(job, service, output, canvas, delivered)
+        if four_k:
+            await reporter.generating(GENERATE_TO - 1, "Upscaling your video to 4K…")
+            output = await self._upscale_4k(job, output, DELIVERY_4K[aspect])
 
         wall = time.monotonic() - started
         try:
@@ -361,6 +375,66 @@ class LtxHdAdapter:
                 retriable=False,
             )
         return ratio
+
+    @staticmethod
+    def _delivery_tier(job: AdapterJob) -> str:
+        """"1080p" (the ratio's frame from `ASPECTS`) or "4k" (`DELIVERY_4K`).
+
+        `execution.delivery` on the job, else the deployment's
+        `ltx_hd_delivery`. Client request, 8 Sep 2026: 4K "in the same way we
+        do 1920x1080" — a lanczos resize, no model. Anything unrecognised is
+        1080p, so a typo cannot silently quadruple every file."""
+        raw = str(job.execution.get("delivery") or settings.ltx_hd_delivery or "1080p")
+        return "4k" if raw.strip().lower() in ("4k", "2160p", "uhd") else "1080p"
+
+    async def _upscale_4k(self, job: AdapterJob, clip: Path, target: tuple[int, int]) -> Path:
+        """Lanczos to 4K with ffmpeg, the way the client's own package does
+        1080p (`upscale_to_1080` in `integration_example.py`): scale to cover,
+        centre-crop to the exact frame, NVENC, and the soundtrack copied
+        through untouched (`-c:a copy`).
+
+        Done here rather than in the graph's `ImageScale` on purpose: a 4K
+        frame batch of 721 frames is ~72 GB as a tensor inside ComfyUI plus a
+        CPU encode, where ffmpeg streams it and NVENC does it in seconds —
+        measured 2.3 s for a 10 s clip (8 Sep 2026). H.264 rather than HEVC
+        because browsers play it; the file is ~2.5x larger for that.
+        """
+        width, height = target
+        out = job.workspace / "output_4k.mp4"
+        scale = (
+            f"scale=w={width}:h={height}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={width}:{height}"
+        )
+        common = ["-i", str(clip), "-vf", scale, "-pix_fmt", "yuv420p", "-c:a", "copy",
+                  "-movflags", "+faststart"]
+        try:
+            try:
+                await cancellable(
+                    job,
+                    ffmpeg([*common, "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", str(out)],
+                           timeout=settings.ltx_comfy_transfer_timeout),
+                )
+            except FfmpegError as exc:
+                # No NVENC on this box: the CPU encoder, slower and identical.
+                logger.warning(
+                    "ltx_hd_4k_nvenc_unavailable",
+                    extra={"job_id": job.job_id, "detail": str(exc)[-300:]},
+                )
+                await cancellable(
+                    job,
+                    ffmpeg([*common, "-c:v", "libx264", "-preset", "fast", "-crf", "18", str(out)],
+                           timeout=settings.ltx_comfy_generation_timeout),
+                )
+        except FfmpegError as exc:
+            raise AdapterError(
+                "The finished video could not be upscaled to 4K.",
+                internal_detail=str(exc)[-600:],
+            ) from exc
+        logger.info(
+            "ltx_hd_upscaled_4k",
+            extra={"job_id": job.job_id, "target": f"{width}x{height}"},
+        )
+        return out
 
     @staticmethod
     def _ai_upscale(job: AdapterJob) -> bool:

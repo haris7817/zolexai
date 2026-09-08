@@ -312,6 +312,29 @@ def test_the_720p_canvas_reaches_the_latent_while_the_delivery_stays_1080p() -> 
     assert video["inputs"]["audio"][0] != scale["inputs"]["image"][0]
 
 
+def test_4k_is_a_delivery_tier_reached_by_one_resize_from_the_generated_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Client request (8 Sep 2026): 4K "in the same way we do 1920x1080".
+    The graph's closing node is parked at the canvas (an identity resize)
+    and ffmpeg does one lanczos scale-to-cover + centre-crop to the exact 4K
+    frame per ratio, soundtrack copied through."""
+    from worker.adapters.ltx_hd import DELIVERY_4K
+
+    adapter = LtxHdAdapter()
+    assert adapter._delivery_tier(_job(tmp_path)) == "1080p"
+    monkeypatch.setattr(settings, "ltx_hd_delivery", "4k")
+    assert adapter._delivery_tier(_job(tmp_path)) == "4k"
+    job = _job(tmp_path)
+    job.execution["delivery"] = "1080p"
+    assert adapter._delivery_tier(job) == "1080p"            # the job wins
+    job.execution["delivery"] = "definitely-not-a-tier"
+    assert adapter._delivery_tier(job) == "1080p"            # a typo cannot 4K everything
+    assert DELIVERY_4K == {"16:9": (3840, 2160), "9:16": (2160, 3840), "1:1": (2160, 2160)}
+    for width, height in DELIVERY_4K.values():
+        assert width % 2 == 0 and height % 2 == 0
+
+
 def test_a_landscape_speed_canvas_is_transposed_for_a_portrait_job(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
