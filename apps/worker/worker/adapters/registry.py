@@ -21,6 +21,7 @@ from worker.adapters.ltx_comfy import LtxComfyAdapter
 from worker.adapters.ltx_hd import LtxHdAdapter
 from worker.adapters.mock import MockAdapter
 from worker.adapters.music import MusicAdapter
+from worker.adapters.music_video import MusicVideoAdapter
 
 _ADAPTERS: dict[str, GenerationAdapter] = {
     "mock": MockAdapter(),
@@ -61,6 +62,13 @@ _ADAPTERS: dict[str, GenerationAdapter] = {
     # Image to Video or Extend Video. See adapters/ltx_hd.py and
     # docs/internal/ltx25-highres-benchmark.md.
     "ltx_hd": LtxHdAdapter(),
+    # Music Video on the client's own music-video worker package (v1.8.0,
+    # 8 Sep 2026): shot-planned, lyric-driven, up to five performers with
+    # reference pictures, 4K delivery. Its own adapter beside the CLI
+    # runtime, which keeps serving `music-video` wherever a deployment still
+    # says `runtime: ltx` — that is the rollback. See adapters/music_video.py
+    # and worker/musicvideo/.
+    "music_video": MusicVideoAdapter(),
 }
 
 

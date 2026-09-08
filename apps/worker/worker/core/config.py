@@ -915,6 +915,106 @@ class WorkerSettings(BaseSettings):
     """Progress pacing only. Measured 15.1 s of compute per second of video at
     8 s and 20.4 at 15 s; the bar is a time estimate, not a promise."""
 
+    # ── Music Video on the client's music-video worker (v1.8.0, 8 Sep 2026) ──
+    #
+    # The `music_video` runtime runs the client's own orchestrator package
+    # (vendored as `zolex_music_worker`) and points every backend it leaves
+    # to the deployer at this node's services. See worker/musicvideo/.
+
+    music_video_render_backend: Literal["command", "ltx", "mock"] = "command"
+    """How each shot is rendered. `command` (default) is this repository's
+    `scripts/mv_render.py`: it frees ComfyUI's VRAM — the anchor stage left
+    Qwen-Image-Edit warm there — and then launches the official
+    `ltx_pipelines.a2vid_two_stage` CLI with this node's model files and
+    the platform's own audio-tier flags. `ltx` is the package's built-in
+    direct adapter, the same CLI without the eviction. `mock` draws a moving
+    slate from the anchor and is for the pipeline smoke only."""
+
+    music_video_render_command: str = ""
+    """JSON argv replacing `scripts/mv_render.py` for the `command` backend
+    (a warm render service, the package's recommended path at scale), with
+    the package's placeholders (`{request_json}`, `{output}`, …)."""
+
+    music_video_negative_prompt: str = (
+        "identity drift, face change, deformed hands, extra fingers, extra limbs, "
+        "duplicate person, cropped head, cropped feet, flicker, exposure pulsing, "
+        "sudden darkness, captions, text, logo, watermark"
+    )
+    """The package's own negative prompt, sent by the render command."""
+
+    music_video_a2v_guidance_scale: float | None = None
+    """`--a2v-guidance-scale` for the render command; None keeps the
+    pipeline's default (3.0). LTX's help: higher may improve lip-sync."""
+
+    music_video_anchor_backend: Literal["command", "reference", "mock"] = "command"
+    """Where each shot's starting still comes from. `command` renders it on
+    this node's ComfyUI with Qwen-Image-Edit (`scripts/mv_anchor.py`,
+    worker/comfy/qwen_edit.py) — the performer's real face composed into the
+    shot. `reference` is the package's development fallback: the customer's
+    photo fitted to the frame, no composition. `mock` is a slate."""
+
+    music_video_ltx_extra_args: str = ""
+    """Extra official CLI flags for the direct render backend, as a JSON
+    array. The node's offload setting (`ltx_unquantized_offload`) is added
+    automatically unless an `--offload` is given here."""
+
+    music_video_inference_steps: int = 24
+    """Stage-1 denoising steps per shot — the package's default, and the one
+    lever that moves wall time. `execution.inference_steps` overrides per
+    deployment. The platform's own audio tier runs 15 (a user-approved
+    quality trade, 27 Aug 2026)."""
+
+    music_video_shot_target_seconds: float = 4.5
+    music_video_shot_min_seconds: float = 2.0
+    music_video_shot_max_seconds: float = 5.0
+    """The shot ladder. Target and minimum are the package's own; the maximum
+    is 5.0 rather than their 7.0 because a shot up to 120 frames renders in
+    the package's minimum 121-frame window, and 121 is a MEASURED decoder
+    landing on this card while the counts between 121 and 193 are not (see
+    `_A2VID.measured_landings` in adapters/ltx.py). Every shot therefore
+    costs the same 5.04-second pass. `execution.shot_*_seconds` override."""
+
+    music_video_max_source_seconds: int = 300
+    """The package's ceiling: five minutes of song."""
+
+    music_video_max_attempts: int = 3
+    """Render attempts per shot before the job fails (the package retries a
+    shot that fails its technical QA with a new seed)."""
+
+    music_video_command_timeout: int = 7200
+    """Wall-clock ceiling for any one external command the package runs."""
+
+    music_video_transcription_backend: Literal["faster_whisper", "disabled"] = "faster_whisper"
+    """Lyric transcription for a prompt that asks to follow the lyrics.
+    faster-whisper runs inside the worker process on this node's GPU;
+    `disabled` makes such a prompt fail early with the package's own
+    message instead of rendering an unrelated mood video."""
+
+    music_video_whisper_model: str = "large-v3"
+    """faster-whisper model name, or an absolute directory."""
+    music_video_whisper_device: str = "cuda"
+    music_video_whisper_compute_type: str = "float16"
+    music_video_whisper_download_root: Path | None = None
+    """Where faster-whisper keeps its weights (3.1 GB for large-v3). Set on
+    the node so a worker restart never downloads."""
+
+    music_video_upscale_backend: Literal["cuda", "cpu"] = "cuda"
+    """The 4K finishing pass: FFmpeg `scale_cuda` + NVENC (verified on the
+    node 8 Sep 2026), or libx264 on the CPU for a machine without them."""
+    music_video_upscale_cq: int = 18
+    music_video_upscale_timeout: int = 1800
+
+    music_video_lyric_mode: Literal["automatic", "always", "off"] = "automatic"
+    """When lyrics are transcribed: `automatic` only for a prompt that says
+    so ("according to the lyrics"), `always` for every song, `off` never.
+    `execution.lyric_mode` overrides."""
+
+    music_video_anchor_steps: int = 4
+    """Sampling steps per anchor still — 4 with the Lightning LoRA."""
+    music_video_anchor_lightning: bool = True
+    """Use the Lightning 4-step LoRA (seconds per still) rather than the
+    base 20-step schedule (a minute per still)."""
+
     ltx_comfy_input_dir: Path | None = None
     """ComfyUI's `input/` directory when the worker shares a filesystem with
     it. Optional: inputs travel over HTTP either way; this only enables

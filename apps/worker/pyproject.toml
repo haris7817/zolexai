@@ -23,13 +23,25 @@ dev = [
     "pytest-asyncio>=0.24,<2.0",
     "ruff>=0.8,<1.0",
 ]
+# The client's music-video worker (v1.8.0, vendored verbatim under
+# `zolex_music_worker/`) needs numpy and Pillow for its song analysis and
+# anchor handling, and faster-whisper for lyric transcription. Installed only
+# on a node that serves the `music_video` runtime; the adapter imports the
+# package lazily, so a node without these still starts.
+music-video = [
+    "numpy>=1.26,<3",
+    "Pillow>=10,<13",
+    "faster-whisper>=1.1,<2",
+    "nvidia-cublas-cu12; sys_platform == 'linux'",
+    "nvidia-cudnn-cu12; sys_platform == 'linux'",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["worker*"]
+include = ["worker*", "zolex_music_worker*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

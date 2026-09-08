@@ -86,6 +86,10 @@ def test_routing_comes_from_the_workflow_definition() -> None:
         "ltx_hd",
         "mock",
         "music",
+        # Music Video on the client's music-video worker package (8 Sep
+        # 2026). Its own adapter beside the CLI runtime, which stays the
+        # rollback for the same workflow.
+        "music_video",
     ]
 
 
