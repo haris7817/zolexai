@@ -2610,12 +2610,27 @@ cd /workspace/zolexai/apps/worker && UV_LINK_MODE=copy uv pip install --python .
 ```
 RUNTIMES=ltx,ltx_comfy,character_replacement,ltx_hd,music_video
 MUSIC_VIDEO_WHISPER_DOWNLOAD_ROOT=/workspace/models/faster-whisper
+MUSIC_VIDEO_RENDER_ENGINE=comfy    # the client's fast profile, 8-step distilled
+LTX_UNQUANTIZED_OFFLOAD=none       # only matters on the `cli` engine
 # defaults, written out for reference — see worker/core/config.py:
-# MUSIC_VIDEO_RENDER_BACKEND=command     scripts/mv_render.py → a2vid_two_stage per shot
-# MUSIC_VIDEO_ANCHOR_BACKEND=command     scripts/mv_anchor.py → Qwen-Image-Edit on ComfyUI
-# MUSIC_VIDEO_INFERENCE_STEPS=24         the package's own default
-# MUSIC_VIDEO_TRANSCRIPTION_BACKEND=faster_whisper
-# MUSIC_VIDEO_UPSCALE_BACKEND=cuda
+# MUSIC_VIDEO_RENDER_BACKEND=command     scripts/mv_render.py, either engine
+# MUSIC_VIDEO_ANCHOR_BACKEND=command     scripts/mv_anchor.py → Qwen-Image-Edit
+# MUSIC_VIDEO_ANCHOR_SCALE=0.75          generate the still smaller, resize up
+# MUSIC_VIDEO_SHOT_MIN/TARGET/MAX_SECONDS=5/8/10   the client's ladder
+# MUSIC_VIDEO_MAX_ATTEMPTS=2
+# MUSIC_VIDEO_UPSCALE_BACKEND=command    NOT `cuda` — see §49.5
+```
+
+**`MUSIC_VIDEO_RENDER_ENGINE` is the speed switch.** `comfy` submits
+Lightricks' distilled 8-step audio-to-video graph to the warm ComfyUI:
+24.2 s per 121-frame shot, and a 3-minute song end to end in 21.7 min on an
+idle card. `cli` is the package's own per-shot process, 96 s a shot and
+about 70 min for the same song, and is the rollback. Both condition on the
+song identically. A manual shell does NOT load `.env.gpu-worker`, so check
+the switch against the running process, not a fresh python:
+
+```bash
+tr '\0' '\n' < /proc/$(supervisorctl pid zolexai-worker)/environ | grep MUSIC_VIDEO
 ```
 
 Then `supervisorctl restart zolexai-worker` when the queue is idle.
@@ -2652,6 +2667,21 @@ against live traffic — it takes the whole card.
   `LD_LIBRARY_PATH` for them: it leaks into the LTX render subprocess and
   its text encoder then fails with `CUDNN_STATUS_SUBLIBRARY_LOADING_FAILED`
   — `scripts/mv_render.py` scrubs site-packages entries from the path.
-- **ComfyUI keeps Qwen warm (~29 GB) after the anchor stage.** The render
-  command frees it before every shot; the package's own direct LTX backend
-  would not, and the audio tier would then OOM behind it.
+- **ComfyUI keeps Qwen warm (~29 GB) after the anchor stage.** On the `cli`
+  engine the render command frees it before every shot. On `comfy` it frees
+  ONCE, before the first shot of a format, marked by `<format>/.comfy-freed`
+  — freeing per shot would throw away the resident LTX that makes that
+  engine fast.
+- **Never set `MUSIC_VIDEO_UPSCALE_BACKEND=cuda`.** The package's own 4K
+  path truncates a long job: its assembly writes AAC with `-shortest`, so
+  the audio ends inside the picture, and its 4K remux uses `-shortest`
+  again and drops the frames past it — four on a 3-minute song, enough for
+  the package's own delivery QA to refuse the job. `command` runs
+  `scripts/mv_upscale.py`, which states the frame count, turns off
+  B-frames and lengthens the master's audio first. Engine-independent
+  defect; reported to the client.
+- **Benchmarks share the ComfyUI queue with live customer jobs.** A clean
+  window gave 24.2 / 38.4 / 48 s repeatable to 2 s; the same runs during 15
+  customer jobs swung to 60 and 220 s. Check
+  `curl -s 127.0.0.1:8189/queue` and the worker log before believing a
+  number.
