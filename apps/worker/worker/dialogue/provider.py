@@ -83,10 +83,32 @@ class DialogueProvider(Protocol):
 class DialogueRequest:
     """One ask: this prompt, this long, in this language."""
 
-    def __init__(self, *, prompt: str, seconds: float, language: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        prompt: str,
+        seconds: float,
+        language: str = "",
+        system: str = "",
+        user: str = "",
+    ) -> None:
         self.prompt = prompt.strip()
         self.seconds = float(seconds)
         self.language = language.strip()
+        # A caller may hand over the exact instruction to send — the client's
+        # native-dialogue format (`worker/dialogue/native.py`) writes its own
+        # — and the providers then carry it unchanged. Empty means this
+        # module's own `system_prompt` / `user_prompt`.
+        self.system = system
+        self.user = user
+
+    @property
+    def system_text(self) -> str:
+        return self.system or system_prompt(self)
+
+    @property
+    def user_text(self) -> str:
+        return self.user or user_prompt(self)
 
     @property
     def words(self) -> int:
@@ -199,8 +221,8 @@ class CerebrasDialogueProvider:
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": system_prompt(request)},
-                {"role": "user", "content": user_prompt(request)},
+                {"role": "system", "content": request.system_text},
+                {"role": "user", "content": request.user_text},
             ],
             "max_completion_tokens": settings.auto_dialogue_max_tokens,
             "temperature": settings.auto_dialogue_temperature,
@@ -263,8 +285,8 @@ class GemmaDialogueProvider:
         payload = json.dumps(
             {
                 "gemma_root": str(settings.director_gemma_root),
-                "system_prompt": system_prompt(request),
-                "user_prompt": user_prompt(request),
+                "system_prompt": request.system_text,
+                "user_prompt": request.user_text,
                 "sample": False,
                 "seed": 0,
                 "max_new_tokens": 700,

@@ -62,9 +62,84 @@ from worker.dialogue.provider import (
     default_providers,
     parse,
 )
+from worker.dialogue import native
 from worker.longform.language import spoken_language_name
 
 logger = get_logger(__name__)
+
+
+async def _write_native(
+    job: AdapterJob,
+    seconds: float,
+    chain: list[DialogueProvider],
+    language: str,
+) -> AdapterJob:
+    """The client's native-dialogue format (their package's second revision,
+    8 Sep 2026): one screenplay prompt, validated by their rules, for one
+    native LTX audio-video pass. See `worker/dialogue/native.py`.
+
+    Same posture as the older layouts: every failure falls open to the
+    customer's own prompt, and a scene with nobody to speak is an answer.
+    """
+    language = language or "English"
+    request = DialogueRequest(
+        prompt=job.prompt.strip(),
+        seconds=seconds,
+        language=language,
+        system=native.system_prompt(seconds),
+        user=native.user_prompt(job.prompt, seconds, language),
+    )
+    for provider in chain:
+        name = getattr(provider, "name", type(provider).__name__)
+        try:
+            raw = await provider.write(request)
+            if raw.get("has_speaker") is False:
+                logger.info(
+                    "auto_dialogue_no_speaker", extra={"job_id": job.job_id, "provider": name}
+                )
+                return job
+            plan = native.validate_script(raw, seconds)
+        except DialogueUnavailable as exc:
+            logger.info(
+                "auto_dialogue_provider_unavailable",
+                extra={"job_id": job.job_id, "provider": name, "detail": str(exc)},
+            )
+            continue
+        except (DialogueRejected, native.NativeDialogueRejected) as exc:
+            logger.warning(
+                "auto_dialogue_provider_rejected",
+                extra={"job_id": job.job_id, "provider": name, "detail": str(exc)},
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001 — fail open, always
+            logger.warning(
+                "auto_dialogue_provider_failed",
+                extra={"job_id": job.job_id, "provider": name, "error": type(exc).__name__},
+            )
+            continue
+
+        enriched = native.compose_native_prompt(plan, language)
+        logger.info(
+            "auto_dialogue_written",
+            extra={
+                "job_id": job.job_id,
+                "provider": name,
+                "seconds": seconds,
+                "lines": len(plan.turns),
+                "words": plan.total_words,
+                "speakers": len(plan.speakers),
+                "language": language,
+                "layout": "native",
+                "original_prompt_chars": len(job.prompt),
+            },
+        )
+        return replace(job, prompt=enriched)
+
+    logger.info(
+        "auto_dialogue_skipped",
+        extra={"job_id": job.job_id, "reason": "every_provider_failed"},
+    )
+    return job
 
 
 def enabled_for(job: AdapterJob) -> bool:
@@ -108,11 +183,7 @@ async def add_auto_dialogue(
         )
         return job
 
-    request = DialogueRequest(
-        prompt=job.prompt.strip(),
-        seconds=seconds,
-        language=spoken_language_name(job.parameters, job.execution),
-    )
+    language = spoken_language_name(job.parameters, job.execution)
     chain = providers if providers is not None else default_providers()
     if not chain:
         logger.info(
@@ -121,6 +192,12 @@ async def add_auto_dialogue(
         )
         return job
 
+    layout = str(job.execution.get("auto_dialogue_layout") or settings.auto_dialogue_layout)
+    layout = layout.strip().lower()
+    if layout == "native":
+        return await _write_native(job, seconds, chain, language)
+
+    request = DialogueRequest(prompt=job.prompt.strip(), seconds=seconds, language=language)
     for provider in chain:
         name = getattr(provider, "name", type(provider).__name__)
         try:
@@ -154,12 +231,11 @@ async def add_auto_dialogue(
             )
             return job
 
-        layout = str(job.execution.get("auto_dialogue_layout") or settings.auto_dialogue_layout)
         enriched = compose(
             job.prompt.strip(),
             dialogue,
             add_speech_rule=not carries_soundscape_clause,
-            layout=layout.strip().lower(),
+            layout=layout,
         )
         if enriched == job.prompt.strip():
             return job

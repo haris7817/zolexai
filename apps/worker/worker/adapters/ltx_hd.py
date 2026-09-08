@@ -31,6 +31,7 @@ location, and an optional conditioning picture — and the compiler
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from worker.adapters.base import (
     AdapterError,
@@ -46,6 +47,7 @@ from worker.comfy.ltx_graphs import (
     GraphError,
     compile_fast_1080,
 )
+from worker.comfy.seedvr2 import compile_upscale
 from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.dialogue import add_auto_dialogue
@@ -131,6 +133,13 @@ class LtxHdAdapter:
 
         seconds = self._seconds(job)
         aspect = self._aspect(job)
+        ai_upscale = self._ai_upscale(job)
+        canvas = self._canvas(job, aspect)
+        # Delivered size: the ratio's 1080p frame. With the AI upscaler on,
+        # the graph's own lanczos node is parked at the canvas size (an
+        # identity resize) and SeedVR2 does the enlarging afterwards.
+        delivered = ASPECTS[aspect][1] or (1920, 1080)
+        delivery = canvas if (ai_upscale and canvas) else ASPECTS[aspect][1]
         frames = frames_for(seconds, settings.ltx_comfy_frame_rate)
         # Spoken lines, when this deployment asks for them and the prompt has
         # none. This graph writes its own soundtrack in one pass, which is
@@ -162,8 +171,8 @@ class LtxHdAdapter:
                     filename_prefix=f"zolexai/{job.job_id}/output",
                     image=image,
                     condition_on_image=False,
-                    canvas=self._canvas(job, aspect),
-                    delivery=ASPECTS[aspect][1],
+                    canvas=canvas,
+                    delivery=delivery,
                 ),
                 catalogue,
             )
@@ -182,7 +191,8 @@ class LtxHdAdapter:
                 "frames": frames,
                 "nodes": len(api),
                 "aspect": aspect,
-                "canvas": self._canvas(job, aspect) or "native",
+                "canvas": canvas or "native",
+                "ai_upscale": ai_upscale,
             },
         )
 
@@ -213,6 +223,10 @@ class LtxHdAdapter:
         finally:
             if settings.ltx_comfy_free_after_job:
                 await service.free_memory()
+
+        if ai_upscale and canvas:
+            await reporter.generating(GENERATE_TO - 1, "Upscaling your video…")
+            output = await self._upscale(job, service, output, canvas, delivered)
 
         wall = time.monotonic() - started
         try:
@@ -347,6 +361,72 @@ class LtxHdAdapter:
                 retriable=False,
             )
         return ratio
+
+    @staticmethod
+    def _ai_upscale(job: AdapterJob) -> bool:
+        """Whether the finished clip goes through SeedVR2 on its way to 1080p.
+
+        `execution.upscaler` on the job, else the deployment's
+        `ltx_hd_upscaler`: "seedvr2" turns it on; "lanczos" (the graph's own
+        closing node) or anything else leaves it off. Only meaningful with a
+        generation canvas smaller than the delivery — at native there is
+        nothing to enlarge."""
+        raw = str(job.execution.get("upscaler") or settings.ltx_hd_upscaler or "lanczos")
+        return raw.strip().lower() == "seedvr2"
+
+    async def _upscale(
+        self,
+        job: AdapterJob,
+        service: LtxComfyService,
+        clip: Path,
+        source: tuple[int, int],
+        target: tuple[int, int],
+    ) -> Path:
+        """SeedVR2 on the finished clip: a second, separate ComfyUI prompt.
+
+        Separate on purpose. The client's graph stays exactly as delivered
+        (the upscaler is not spliced into it), the generation can be kept as
+        a fallback, and a failure here is reported as an upscale failure
+        rather than a generation failure. The soundtrack rides through
+        `GetVideoComponents` → `CreateVideo` untouched.
+        """
+        try:
+            name = await service.upload(clip, name=f"zolex_{job.job_id}_720p.mp4")
+        except ComfyError as exc:
+            raise AdapterError(
+                exc.user_message, internal_detail=exc.internal_detail, retriable=exc.retriable
+            ) from exc
+        api = compile_upscale(
+            input_file=name,
+            source=source,
+            target=target,
+            filename_prefix=f"zolexai/{job.job_id}/upscaled",
+            seed=self._seed(job),
+        )
+        upscaled = job.workspace / "output_upscaled.mp4"
+        try:
+            prompt_id = await service.generate(api, client_id=f"zolex-{job.job_id}-upscale")
+            timeout = settings.ltx_comfy_generation_timeout
+            remaining = job.seconds_remaining
+            if remaining is not None:
+                timeout = max(1.0, min(timeout, remaining))
+            history = await service.progress(job, prompt_id, timeout_seconds=timeout)
+            await service.collect(history, upscaled)
+        except ComfyError as exc:
+            raise AdapterError(
+                "The finished video could not be upscaled.",
+                internal_detail=exc.internal_detail,
+                retriable=exc.retriable,
+            ) from exc
+        finally:
+            if settings.ltx_comfy_free_after_job:
+                await service.free_memory()
+        logger.info(
+            "ltx_hd_upscaled",
+            extra={"job_id": job.job_id, "prompt_id": prompt_id,
+                   "source": f"{source[0]}x{source[1]}", "target": f"{target[0]}x{target[1]}"},
+        )
+        return upscaled
 
     async def _placeholder(self, job: AdapterJob) -> str:
         """A small grey PNG for the graph's unused image slot.

@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from worker.adapters.base import AdapterJob
+from worker.core.config import settings
 from worker.dialogue import add_auto_dialogue, enabled_for
 from worker.dialogue.decide import (
     AUTO_DIALOGUE_WORKFLOWS,
@@ -43,14 +44,18 @@ from worker.longform.language import soundscape_clause, supplied_dialogue
 SCENE = "A taxi driver picks up a passenger outside a rain-soaked station at night"
 
 
-def _job(prompt: str = SCENE, workflow: str = "text-to-video", **parameters) -> AdapterJob:
+def _job(
+    prompt: str = SCENE, workflow: str = "text-to-video", layout: str = "paragraph", **parameters
+) -> AdapterJob:
+    # `layout` pins the composition path per test: the older tests describe
+    # the paragraph/beats layouts and keep them; the native tests opt in.
     return AdapterJob(
         job_id="dialogue-job",
         workflow_id=workflow,
         workflow_version="1",
         prompt=prompt,
         parameters={"duration": "15s", **parameters},
-        execution={"runtime": "ltx_comfy"},
+        execution={"runtime": "ltx_comfy", "auto_dialogue_layout": layout},
         workspace=Path("."),
     )
 
@@ -85,6 +90,7 @@ class _Writer:
 
     async def write(self, request: DialogueRequest) -> dict:
         self.calls += 1
+        self.seen_system = request.system_text
         if self._raises is not None:
             raise self._raises
         return self._answer
@@ -392,4 +398,131 @@ async def test_a_skipped_job_never_reaches_a_writer() -> None:
     writer = _Writer()
     job = await add_auto_dialogue(_job(auto_dialogue=False), 15.0, providers=[writer])
     assert writer.calls == 0
+    assert job.prompt == SCENE
+
+
+# ── The client's native format (second revision, 8 Sep 2026) ───────────────
+
+
+def _native_answer(seconds: int = 30, words: int | None = None) -> dict:
+    """A script shaped like the client's own test fixture: two speakers, a
+    connected exchange, the word count landing inside their range."""
+    from worker.dialogue.native import word_range
+
+    low, high = word_range(seconds)
+    total = words if words is not None else (low + high) // 2
+    pool = (
+        "I used to rush through nights like this without noticing anything around me "
+        "but the rain makes the whole city feel quieter tonight that little cafe still "
+        "looks warm and inviting yet I think this peaceful walk is exactly what I needed "
+        "maybe peace begins when we finally stop running and simply breathe and listen "
+        "to the sound of the wet street and the hum of the late trams going home"
+    ).split()
+    chosen = pool[:total]
+    half = len(chosen) // 2
+    return {
+        "visual_prompt": "A taxi driver picks up a passenger outside a rain-soaked station at night, in three connected shots.",
+        "ambience": "Rain, idling engine and distant traffic continue across every cut.",
+        "speakers": [
+            {"speaker_id": "person_a", "visual_identity": "the taxi driver in a grey cap",
+             "voice_description": "middle-aged low gravelly voice with an unhurried local accent"},
+            {"speaker_id": "person_b", "visual_identity": "the passenger in a wet dark coat",
+             "voice_description": "younger light clear voice with a quick careful pace"},
+            {"speaker_id": "person_c", "visual_identity": "a station guard who never speaks",
+             "voice_description": "deep flat voice"},
+        ],
+        "dialogue_turns": [
+            {"speaker_id": "person_a", "text": " ".join(chosen[:half])},
+            {"speaker_id": "person_b", "text": " ".join(chosen[half:])},
+        ],
+    }
+
+
+def test_the_native_format_locks_each_voice_once_with_no_cues_or_clocks() -> None:
+    from worker.dialogue.native import compose_native_prompt, validate_script
+
+    plan = validate_script(_native_answer(30), 30)
+    prompt = compose_native_prompt(plan, "English")
+    # one stable voice per speaker, stated exactly once
+    assert prompt.count("middle-aged low gravelly voice") == 1
+    assert prompt.count("younger light clear voice") == 1
+    # turns are says/replies — no prose cue, no manner, no timestamp
+    assert 'person_a says, "' in prompt and 'person_b replies, "' in prompt
+    for banned in ("After a short pause", "Early on", "Near the end", "says in a"):
+        assert banned not in prompt
+    import re as _re
+    assert not _re.search(r"\d+\.\d+-\d+\.\d+s", prompt)
+    # pacing is one sentence about brief pauses; ambience sits UNDER the voices
+    assert "no longer than 250 milliseconds" in prompt
+    assert "continuous underneath the voices" in prompt
+    assert "the only sounds are the ones the scene itself makes" not in prompt
+    assert "The spoken language is English." in prompt
+
+
+def test_the_native_validator_enforces_the_clients_rules() -> None:
+    import pytest as _pytest
+
+    from worker.dialogue.native import NativeDialogueRejected, validate_script
+
+    # the 30 s range is 48–68 words; ~40 is the client's rejected render
+    with _pytest.raises(NativeDialogueRejected):
+        validate_script(_native_answer(30, words=40), 30)
+    with _pytest.raises(NativeDialogueRejected):
+        validate_script(_native_answer(30, words=80), 30)
+    # a line under three words
+    short = _native_answer(30)
+    short["dialogue_turns"].append({"speaker_id": "person_a", "text": "Best day"})
+    with _pytest.raises(NativeDialogueRejected):
+        validate_script(short, 30)
+    # a repeated line
+    twice = _native_answer(30)
+    twice["dialogue_turns"].append(dict(twice["dialogue_turns"][0]))
+    with _pytest.raises(NativeDialogueRejected):
+        validate_script(twice, 30)
+    # a speaker the scene never declared (the client's Squidward)
+    ghost = _native_answer(30)
+    ghost["dialogue_turns"][1]["speaker_id"] = "person_z"
+    with _pytest.raises(NativeDialogueRejected):
+        validate_script(ghost, 30)
+    # a declared speaker who never speaks is dropped rather than described
+    plan = validate_script(_native_answer(30), 30)
+    assert [s.speaker_id for s in plan.speakers] == ["person_a", "person_b"]
+
+
+def test_the_word_range_follows_the_clients_table_and_extends_between_rows() -> None:
+    from worker.dialogue.native import word_range
+
+    assert word_range(8) == (12, 18)
+    assert word_range(10) == (16, 22)
+    assert word_range(15) == (24, 34)
+    assert word_range(30) == (48, 68)
+    # between rows, the table's own slope (1.6–2.27 words per second)
+    low, high = word_range(20)
+    assert (low, high) == (32, 45)
+
+
+async def test_the_native_layout_replaces_the_prompt_with_the_validated_screenplay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The client's design rewrites the customer's text into `visual_prompt`
+    (their instruction: keep the story, strip duration/resolution/aspect
+    labels) — that is what fixes "vertical video (16:9)" and a shot list that
+    stops at 10 s, both of which came from the customer's own prompt."""
+    monkeypatch.setattr(settings, "auto_dialogue_layout", "native")
+    writer = _Writer(answer=_native_answer(30))
+    job = await add_auto_dialogue(_job(auto_dialogue=True, duration="30s", layout="native"), 30.0, providers=[writer])
+    assert writer.calls == 1
+    assert job.prompt.startswith("A taxi driver picks up a passenger")
+    assert 'person_a says, "' in job.prompt
+    assert "After a short pause" not in job.prompt
+    # the writer was handed the client's instruction, with the 30 s range
+    assert "Total spoken words must be 48-68" in writer.seen_system
+
+
+async def test_a_native_script_the_validator_refuses_falls_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "auto_dialogue_layout", "native")
+    bad = _Writer(answer=_native_answer(30, words=40))
+    job = await add_auto_dialogue(_job(auto_dialogue=True, duration="30s", layout="native"), 30.0, providers=[bad])
     assert job.prompt == SCENE

@@ -958,6 +958,14 @@ def compile_fast_1080(
         flat.set_value(flat.one_of_type("LoadImage"), "image", edits.image)
     # `use image input` — the graph inverts it into `bypass_i2v`.
     flat.set_value(flat.one_of_type("PrimitiveBoolean"), "value", bool(edits.condition_on_image))
+    # The client's package (README step 6, 8 Sep 2026): "Disable the second
+    # prompt-enhancer switch at 5014:5556; otherwise it may rewrite the
+    # approved dialogue." As delivered it is already false — the enhancer is
+    # gated behind an LTX API key the graph does not carry — and it is
+    # pinned here so a future export cannot quietly turn it on.
+    enhancer_switch = flat.nodes.get("5014:5556")
+    if enhancer_switch is not None and enhancer_switch.type == "ComfySwitchNode":
+        flat.set_value(enhancer_switch, "switch", False)
     if edits.canvas is not None:
         width, height = edits.canvas
         if width % 32 or height % 32 or width < 256 or height < 256:

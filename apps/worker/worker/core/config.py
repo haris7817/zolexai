@@ -606,11 +606,20 @@ class WorkerSettings(BaseSettings):
     when somebody does. See `worker/dialogue/__init__.py`.
     """
 
-    auto_dialogue_layout: str = "paragraph"
+    auto_dialogue_layout: str = "native"
     """
-    How written lines are laid into the prompt: "paragraph" (all lines in
-    one block) or "beats" (each line led by a cue — "Early on", "After a
-    short pause", "Near the end").
+    How written lines are laid into the prompt: "native" (the client's
+    second-revision format, `worker/dialogue/native.py` — the writer returns
+    a screenplay with one stable voice per visible speaker and a
+    per-duration word range, composed as `says`/`replies` turns with no cues
+    and no timing labels), "paragraph" (all lines in one block) or "beats"
+    (each line led by a prose cue).
+
+    "native" became the default on 8 Sep 2026 after the client reviewed a
+    "beats" render: "After a short pause" was spoken aloud, gaps of 1.3–3 s
+    sat between lines, a manner on a speaker's first line read as the voice
+    changing, a speaker who never appeared spoke, and 40 words was too few
+    for 30 seconds. Their validator rejects every one of those; this is it.
 
     The first real render (7 Sep 2026) took four lines in one paragraph and
     delivered the gist of them: one verbatim, three paraphrased, one phrase
@@ -854,6 +863,18 @@ class WorkerSettings(BaseSettings):
     is dequantized on every forward pass, so this is the first thing to
     measure against "the videos are taking longer" (client, 7 Sep 2026).
     `execution.transformer` overrides."""
+
+    ltx_hd_upscaler: str = "lanczos"
+    """
+    How a 720p-canvas render reaches 1080p: "lanczos" (the client graph's
+    own closing `ImageScale` — a resize, and what the client's own package
+    specifies: "upscale afterward with FFmpeg ... lanczos") or "seedvr2" (a
+    second ComfyUI prompt running SeedVR2, the temporal AI upscaler ComfyUI
+    supports natively; `worker/comfy/seedvr2.py`). Their review also asked
+    for "a temporal AI upscaler", so both exist; the default is the one in
+    their package until the other is measured. `execution.upscaler`
+    overrides per job. Needs the two SeedVR2 weight files on the node.
+    """
 
     ltx_hd_canvas: str = "native"
     """
