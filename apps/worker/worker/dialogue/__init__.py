@@ -91,31 +91,51 @@ async def _write_native(
     )
     for provider in chain:
         name = getattr(provider, "name", type(provider).__name__)
-        try:
-            raw = await provider.write(request)
-            if raw.get("has_speaker") is False:
+        plan = None
+        attempt_request = request
+        # The client's validator is strict on purpose, and a writer's first
+        # answer misses it more often than not on exactly one thing — three
+        # words over the range, a turn written as a string. Measured 8 Sep
+        # 2026: the hosted writer returned 37 words for a 24–34 range and the
+        # job fell open to a silent video. One corrective retry, naming the
+        # rule that failed, costs two seconds and turns that into a pass.
+        for attempt in (1, 2):
+            try:
+                raw = await provider.write(attempt_request)
+                if raw.get("has_speaker") is False:
+                    logger.info(
+                        "auto_dialogue_no_speaker", extra={"job_id": job.job_id, "provider": name}
+                    )
+                    return job
+                plan = native.validate_script(raw, seconds)
+                break
+            except DialogueUnavailable as exc:
                 logger.info(
-                    "auto_dialogue_no_speaker", extra={"job_id": job.job_id, "provider": name}
+                    "auto_dialogue_provider_unavailable",
+                    extra={"job_id": job.job_id, "provider": name, "detail": str(exc)},
                 )
-                return job
-            plan = native.validate_script(raw, seconds)
-        except DialogueUnavailable as exc:
-            logger.info(
-                "auto_dialogue_provider_unavailable",
-                extra={"job_id": job.job_id, "provider": name, "detail": str(exc)},
-            )
-            continue
-        except (DialogueRejected, native.NativeDialogueRejected) as exc:
-            logger.warning(
-                "auto_dialogue_provider_rejected",
-                extra={"job_id": job.job_id, "provider": name, "detail": str(exc)},
-            )
-            continue
-        except Exception as exc:  # noqa: BLE001 — fail open, always
-            logger.warning(
-                "auto_dialogue_provider_failed",
-                extra={"job_id": job.job_id, "provider": name, "error": type(exc).__name__},
-            )
+                break
+            except (DialogueRejected, native.NativeDialogueRejected) as exc:
+                logger.warning(
+                    "auto_dialogue_provider_rejected",
+                    extra={"job_id": job.job_id, "provider": name, "attempt": attempt,
+                           "detail": str(exc)},
+                )
+                attempt_request = DialogueRequest(
+                    prompt=request.prompt, seconds=seconds, language=language,
+                    system=request.system,
+                    user=native.user_prompt(job.prompt, seconds, language)
+                    + f"\n\nYour previous script was rejected: {exc}. "
+                    "Fix exactly that and return the complete JSON again.",
+                )
+                continue
+            except Exception as exc:  # noqa: BLE001 — fail open, always
+                logger.warning(
+                    "auto_dialogue_provider_failed",
+                    extra={"job_id": job.job_id, "provider": name, "error": type(exc).__name__},
+                )
+                break
+        if plan is None:
             continue
 
         enriched = native.compose_native_prompt(plan, language)

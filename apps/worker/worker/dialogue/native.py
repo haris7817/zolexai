@@ -221,8 +221,9 @@ def system_prompt(seconds: float, *, max_speakers: int = MAX_SPEAKERS) -> str:
         "line. No isolated catchphrases, filler, repeated ideas, narration labels, "
         "timing labels, quotation marks inside text, or invented new characters. "
         "Only characters who are visible on screen may speak. "
-        f"Total spoken words must be {low}-{high}, and every line must be at least "
-        f"{MIN_WORDS_PER_LINE} words. If the scene has no visible human or human-like "
+        f"Total spoken words must be {low}-{high} inclusive — aim for about "
+        f"{(low + high) // 2} and count them before answering — and every line must be "
+        f"at least {MIN_WORDS_PER_LINE} words. If the scene has no visible human or human-like "
         "character who could plausibly speak, return {\"has_speaker\": false}."
     )
 

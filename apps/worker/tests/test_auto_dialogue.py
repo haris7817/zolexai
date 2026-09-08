@@ -519,6 +519,33 @@ async def test_the_native_layout_replaces_the_prompt_with_the_validated_screenpl
     assert "Total spoken words must be 48-68" in writer.seen_system
 
 
+async def test_a_writer_that_misses_the_range_once_is_told_what_to_fix_and_retried() -> None:
+    """Measured 8 Sep 2026: the hosted writer returned 37 words for a 24–34
+    range and the job fell open to a silent video. One retry, naming the
+    rule, is what turns that into a pass."""
+
+    class _Sequence:
+        name = "sequence"
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.users: list[str] = []
+
+        async def write(self, request: DialogueRequest) -> dict:
+            self.calls += 1
+            self.users.append(request.user_text)
+            return _native_answer(30, words=80) if self.calls == 1 else _native_answer(30)
+
+    writer = _Sequence()
+    job = await add_auto_dialogue(
+        _job(auto_dialogue=True, duration="30s", layout="native"), 30.0, providers=[writer]
+    )
+    assert writer.calls == 2
+    assert "Your previous script was rejected" in writer.users[1]
+    assert "48-68" in writer.users[1]
+    assert 'person_a says, "' in job.prompt
+
+
 async def test_a_native_script_the_validator_refuses_falls_open(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
