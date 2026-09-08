@@ -121,8 +121,10 @@ def strip_format_labels(text: str) -> str:
     """The visual prompt without duration / resolution / aspect / orientation
     words, tidied so no doubled spaces or dangling punctuation remain."""
     out = _FORMAT_LABELS.sub(" ", text)
-    out = re.sub(r"\s+([,.;:])", r"\1", out)
     out = re.sub(r"\(\s*\)", "", out)
+    out = re.sub(r"\s+([,.;:])", r"\1", out)
+    # two labels that sat next to each other leave ",," or ",." behind
+    out = re.sub(r"[,;:]+(?=\s*[,.;:])", "", out)
     out = re.sub(r"\s{2,}", " ", out).strip(" ,;")
     return out
 
