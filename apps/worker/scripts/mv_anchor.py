@@ -120,10 +120,16 @@ async def _render(request: dict, output: Path) -> None:
     full_prompt = _reference_clause(performer_ids, len(request.get("references") or []), sheet)
     full_prompt += prompt
     seed = zlib.crc32(f"{output}:{prompt}".encode()) & 0x7FFFFFFF
+    # The still is conditioning, not delivered pixels, and the graph encodes
+    # it down to the first stage's canvas anyway — so it may be generated
+    # smaller and resized up to the size the package validates.
+    scale = max(0.25, min(1.0, float(settings.music_video_anchor_scale)))
+    gen_width = max(256, int(round(width * scale / 16)) * 16)
+    gen_height = max(256, int(round(height * scale / 16)) * 16)
     api = compile_anchor(
         prompt=full_prompt,
-        width=width,
-        height=height,
+        width=gen_width,
+        height=gen_height,
         seed=seed,
         filename_prefix=f"zolexai/mv-anchors/{output.stem}",
         references=uploads,
@@ -173,6 +179,7 @@ async def _render(request: dict, output: Path) -> None:
         "rendered",
         role=role,
         size=f"{width}x{height}",
+        generated=f"{gen_width}x{gen_height}",
         references=len(uploads),
         sheet=sheet,
         seconds=round(time.monotonic() - started, 1),

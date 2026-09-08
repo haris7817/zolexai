@@ -158,3 +158,78 @@ target needs ~12 warm render lanes.
 - Whisper on sung vocals is the package's chosen transcriber; the earlier
   finding stands that it can mislabel a language on a heavy mix. Pasted
   lyrics always win.
+
+---
+
+## Making it faster (8 Sep 2026)
+
+The 720p-generate-then-upscale trick that fixed Text to Video is already in
+the package: every shot renders at 1280x704 and one Lanczos pass makes the
+4K master. That lever was spent before we arrived. What was left was the
+engine.
+
+**The finding.** Lightricks ship the same audio-to-video job as a ComfyUI
+workflow on the distilled path,
+`example_workflows/2.5/LTX-2.5_A2V_Two_Stage_Distilled.json`: 8 steps on
+the identical sigma schedule the client's FAST 1080 graph uses, then the 2x
+latent upscale and a 3-step refine. The song is encoded by the audio VAE,
+given an all-zero noise mask and concatenated with the video latent — the
+same `frozen=True, noise_scale=0.0` the CLI pipeline sets, so the picture is
+still generated against the real audio. Every node and weight it needs was
+already installed here. It is flattened into `worker/comfy/ltx_a2v.py` and
+reached by `MUSIC_VIDEO_RENDER_ENGINE=comfy`.
+
+**Per shot**, same anchor, same second of the song, warm, distinct prompt
+each time so nothing is served from ComfyUI's cache:
+
+| frames | video | CLI, 24 steps | ComfyUI, 8 steps |
+| ---: | ---: | ---: | ---: |
+| 121 | 5.04 s | 96 s | **24.2 s** |
+| 193 | 8.04 s | — | 38.4 s |
+| 241 | 10.04 s | — | 48-50 s |
+
+Repeatable to two seconds. Cost is linear in frames at about 0.21 s per
+frame with no meaningful per-shot fixed cost, so **longer shots do not
+help** — a hypothesis worth testing and worth discarding. Single-stage at
+the delivered size was also tried and is slower, 32.4 s against 24.2.
+
+**End to end, a 3-minute song**, 41 shots at the package's own pacing, on
+an idle card:
+
+| stage | wall |
+| --- | ---: |
+| decode, transcription, plan | 8 s |
+| 41 anchor stills | 218 s |
+| 41 shots | 998 s |
+| assemble, 4K, delivery QA | 77 s |
+| **total** | **1300 s, 21.7 min** |
+
+Against about 70 minutes on the CLI engine. A second run at 7-second shot
+pacing took 27.2 minutes, but a customer job shared the card for two
+minutes of it and the per-shot median rose with the contention, so that
+number measures the neighbour, not the pacing.
+
+**A defect in the package, found and worked around.** Its assembly writes
+the working master with `-c:a aac … -shortest`, which truncates the AAC to
+the last whole 1024-sample frame inside the video: on this job the audio
+came out 16 samples short of the picture. Its 4K stage then remuxes with
+`-shortest` again and drops every video frame ending past the audio — four
+of them, three being an encoder reorder group — and its own delivery QA
+correctly refused the result at 4,315 frames against 4,319. A 40-second job
+lands on a boundary and passes, which is why it only shows at length, and
+it is engine-independent: the CLI path would fail the same way. The
+deployment now supplies `scripts/mv_upscale.py` through the command adapter
+their README documents, which states the frame count instead of using
+`-shortest`, disables B-frames, and extends the master's audio by a quarter
+second of silence from the same lossless source the package used. Delivery
+QA then passes at exactly 4,319 frames with the audio at 0.9997 correlation
+to the master WAV. **This should go back to the client as a bug report.**
+
+**Where the remaining time is.** The model is 958 s of the 1300 — 5.3x
+real time at 8 steps, which is the distilled schedule's floor. Anchors at
+0.75 generation scale save about 75 s. That puts one card at roughly 20
+minutes for a 3-minute song, and there is no further room on it. Fifteen
+minutes needs a second GPU, which is what the package was built for and
+what its own performance note says: render lanes with
+`ZOLEX_RENDER_CONCURRENCY` and `ZOLEX_RENDER_GPU_IDS`. Two cards put the
+render block at about 480 s and the job near 14 minutes.

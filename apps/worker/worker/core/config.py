@@ -1055,6 +1055,20 @@ class WorkerSettings(BaseSettings):
 
     music_video_anchor_steps: int = 4
     """Sampling steps per anchor still — 4 with the Lightning LoRA."""
+
+    music_video_anchor_scale: float = 0.75
+    """Fraction of the shot's size an anchor is GENERATED at, before being
+    resized to the size the package asked for.
+
+    An anchor is a conditioning frame, not delivered pixels: the graph
+    VAE-encodes it to 640x352 for the first stage and to the working size
+    for the refine, so generating it at the full 1280x704 buys detail that
+    is immediately thrown away in stage one. Measured 8 Sep 2026, the anchor
+    stage is 218 s of a 1300 s three-minute job — the largest block that is
+    not the model. Three two-performer anchors took 10.1 s each at full size
+    and 6.6 s at 0.75, and both hold the faces and the wardrobe; 0.6 costs
+    the same 6.6 s, so below 0.75 there is nothing left to win. 1.0 keeps
+    the full size."""
     music_video_anchor_lightning: bool = True
     """Use the Lightning 4-step LoRA (seconds per still) rather than the
     base 20-step schedule (a minute per still)."""
