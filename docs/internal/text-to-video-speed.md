@@ -248,3 +248,39 @@ figure from 7 Sep did not convey:
 So: portraits, close-ups and shallow-DOF scenes hold up well; wide landscapes
 and detailed textures lose the most. Rollback is one setting —
 `LTX_HD_CANVAS=native` on the GPU worker, then restart it.
+
+---
+
+## Measured 8 Sep 2026: SeedVR2, the temporal AI upscaler — built, not enabled
+
+The client's review of the 720p path: "the 1080 conversion uses ordinary
+Lanczos scaling, not a temporal AI upscaler". Their own package, sent the
+same day, specifies FFmpeg Lanczos with `-c:a copy` — which is what the
+graph's closing node already does, inside ComfyUI, with the audio never
+touching the resize. Both things are true, so both exist: the Lanczos path
+is the default, and SeedVR2 (ByteDance, ICLR 2026; ComfyUI supports it
+natively) is wired as `LTX_HD_UPSCALER=seedvr2` — a second ComfyUI prompt
+after generation, the client's graph untouched, the soundtrack carried
+through `GetVideoComponents → CreateVideo` (`worker/comfy/seedvr2.py`).
+
+Same 10 s, 1280×704, 241-frame clip through every arm:
+
+| arm | time | peak VRAM | delivered |
+| --- | --- | --- | --- |
+| Lanczos (the graph's own node) | ~1–2 s | — | 1920×1080, audio |
+| SeedVR2 3B int8, tiled VAE 512, temporal chunks (ComfyUI's template) | 246.6 s | 60.1 GB | 1920×1080, 241 f, audio bit-identical |
+| SeedVR2, tiled VAE 1024, no chunks | 284.5 s | 60.0 GB | same |
+| **SeedVR2, untiled VAE, temporal chunks** | **207.6 s** | 65.3 GB | same |
+
+Sampling is 16 s of that; the rest is the VAE at 1080p. It scales with
+frames, so for a 30 s clip the stage alone is ~10 minutes on top of the
+4.2-minute generation — **back to ~15 minutes total, which is the number the
+720p path exists to escape.** At 10 s it is 65 s + 208 s ≈ 4.5 min.
+
+What it buys, on the same clip against Lanczos: detail 6.5× (Laplacian 80 →
+524), audio correlation 0.999 at 0 ms, and to the eye genuinely restored
+structure — continuous rope lines, defined hull edges, legible lettering,
+real water texture — with colour a touch warmer (saturation 61 → 72).
+
+**Decision: available, off.** It is the right tool for a "premium" pass on a
+short clip and the wrong tool for the 30 s budget. One setting turns it on.

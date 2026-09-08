@@ -53,6 +53,7 @@ def compile_upscale(
     tile_overlap: int = 128,
     temporal_size: int = 64,
     temporal_overlap: int = 8,
+    tiled_vae: bool = True,
 ) -> dict[str, Any]:
     """The API prompt: load `input_file` from ComfyUI's input folder, upscale,
     deliver `target` with the original soundtrack under `filename_prefix`.
@@ -81,14 +82,18 @@ def compile_upscale(
             "class_type": "UNETLoader",
             "inputs": {"unet_name": diffusion_model, "weight_dtype": "default"},
         },
-        "enc": {
-            "class_type": "VAEEncodeTiled",
-            "inputs": {
-                "pixels": ["pre", 0], "vae": ["vae", 0],
-                "tile_size": tile, "overlap": tile_overlap,
-                "temporal_size": temporal_size, "temporal_overlap": temporal_overlap,
-            },
-        },
+        "enc": (
+            {
+                "class_type": "VAEEncodeTiled",
+                "inputs": {
+                    "pixels": ["pre", 0], "vae": ["vae", 0],
+                    "tile_size": tile, "overlap": tile_overlap,
+                    "temporal_size": temporal_size, "temporal_overlap": temporal_overlap,
+                },
+            }
+            if tiled_vae
+            else {"class_type": "VAEEncode", "inputs": {"pixels": ["pre", 0], "vae": ["vae", 0]}}
+        ),
     }
     if temporal_chunks:
         api["chunk"] = {
@@ -119,14 +124,18 @@ def compile_upscale(
     else:
         decoded_from = ["sample", 0]
     api.update({
-        "dec": {
-            "class_type": "VAEDecodeTiled",
-            "inputs": {
-                "samples": decoded_from, "vae": ["vae", 0],
-                "tile_size": tile, "overlap": tile_overlap,
-                "temporal_size": temporal_size, "temporal_overlap": temporal_overlap,
-            },
-        },
+        "dec": (
+            {
+                "class_type": "VAEDecodeTiled",
+                "inputs": {
+                    "samples": decoded_from, "vae": ["vae", 0],
+                    "tile_size": tile, "overlap": tile_overlap,
+                    "temporal_size": temporal_size, "temporal_overlap": temporal_overlap,
+                },
+            }
+            if tiled_vae
+            else {"class_type": "VAEDecode", "inputs": {"samples": decoded_from, "vae": ["vae", 0]}}
+        ),
         "post": {
             "class_type": "SeedVR2PostProcessing",
             "inputs": {

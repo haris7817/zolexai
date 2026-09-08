@@ -99,7 +99,8 @@ async def _write_native(
         # 2026: the hosted writer returned 37 words for a 24–34 range and the
         # job fell open to a silent video. One corrective retry, naming the
         # rule that failed, costs two seconds and turns that into a pass.
-        for attempt in (1, 2):
+        low, high = native.word_range(seconds)
+        for attempt in (1, 2, 3):
             try:
                 raw = await provider.write(attempt_request)
                 if raw.get("has_speaker") is False:
@@ -126,7 +127,8 @@ async def _write_native(
                     system=request.system,
                     user=native.user_prompt(job.prompt, seconds, language)
                     + f"\n\nYour previous script was rejected: {exc}. "
-                    "Fix exactly that and return the complete JSON again.",
+                    f"Fix exactly that — aim for {(low + high) // 2} spoken words in total, "
+                    f"between {low} and {high} — and return the complete JSON again.",
                 )
                 continue
             except Exception as exc:  # noqa: BLE001 — fail open, always

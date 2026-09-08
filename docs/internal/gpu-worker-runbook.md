@@ -2543,3 +2543,25 @@ The flag is **server-wide**: every graph on this ComfyUI gets the kernel,
 including Character Replacement, Image to Video and Extend. It was validated
 on FAST 1080 and side-checked on the pack Text to Video graph. If a future
 graph shows an artefact, roll back with the line above before investigating.
+
+## 48. Deploy: native dialogue format + optional SeedVR2 (8 Sep 2026)
+
+Worker-side only, both. `git archive HEAD apps/worker | ssh … tar -x`, then
+restart the worker when the queue is idle.
+
+```
+AUTO_DIALOGUE_ENABLED=true
+AUTO_DIALOGUE_LAYOUT=native     # the client's second-revision format (default in code too)
+LTX_HD_CANVAS=720p              # 1280x704 / 704x1280 / 960x960, upscaled in-graph
+LTX_HD_UPSCALER=lanczos         # or seedvr2 — measured ~21 s per second of video; off
+```
+
+SeedVR2 weights, if ever enabled (already on `ltx-6000-2`):
+`models/diffusion_models/seedvr2_3b_int8_convrot.safetensors` (3.46 GB) and
+`models/vae/seedvr2_ema_vae_fp16.safetensors` (0.5 GB), from
+`huggingface.co/Comfy-Org/SeedVR2`.
+
+Trap, hit twice today: **two deploy scripts that each wait for an idle
+queue will restart the worker at the same moment**, and supervisor reports
+`abnormal termination` for the one that lost. It recovers (autorestart), but
+run one deploy at a time.

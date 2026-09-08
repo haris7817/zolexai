@@ -235,3 +235,58 @@ and they are the thing the client hears. Clips:
 * Their 10-second layout (5 + 5). Our HD ladder is 8 and 15, both single-pass,
   where sectioning would be slower *and* restart the audio at the seam — the
   precise defect their pack exists to prevent.
+
+---
+
+## Second revision — the client's native format (8 Sep 2026)
+
+The client reviewed a "beats" render (test video 50920) and sent a second
+package, `native_dialogue.py`. Their findings, each now a rule in
+`worker/dialogue/native.py`:
+
+| what they saw | the rule |
+| --- | --- |
+| "After a short pause" spoken aloud, repeatedly | no cues and **no timing labels** at all; turns are `says` then `replies` |
+| gaps of 1.3–3 s between lines | one sentence: "only brief natural pauses no longer than 250 milliseconds" |
+| voice label changing on every line | **one** stable voice description per speaker, stated once, never on a line |
+| Squidward spoke but never appeared | only declared, visible speakers; a declared speaker who never speaks is dropped |
+| ~40 words for 30 s | their table: 8 s 12–18, 10 s 16–22, 15 s 24–34, **30 s 48–68**; every line ≥ 3 words; no repeats |
+| the prompt licensed scene sound *between* lines | ambience is stated once as continuous **under** the voices; the old "for the rest of the video the only sounds…" sentence is gone from this path |
+| "vertical video (16:9)", shot list ending at 10 s | **in the customer's own prompt** — the writer rewrites the story into `visual_prompt` and strips duration / resolution / aspect labels (their design) |
+
+The writer returns their schema (`visual_prompt`, `ambience`, `speakers`,
+`dialogue_turns`) through the same provider chain (Cerebras, then local
+Gemma); the composed prompt is their `compose_native_ltx_prompt`, shape for
+shape; the compiler pins the graph's second prompt-enhancer switch
+(`5014:5556`) off, their README step 6. `AUTO_DIALOGUE_LAYOUT=native` is the
+default; `paragraph` and `beats` remain selectable.
+
+### One thing the package does not do, added
+
+Their validator is strict on purpose, and a writer's first answer misses it
+more often than not on exactly one thing. Measured: the hosted writer
+returned **37 words for a 24–34 range**, the local one returned turns as
+strings, and the job fell open to a silent video. One corrective retry per
+writer, quoting the rejection, plus a target word count in the instruction:
+**3 of 3 passes at 30 s** afterwards (61, 50, 58 words; 5 lines each).
+
+### Measured on the node — a 15 s render, transcribed
+
+Prompt: two friends at a night café. Writer (Cerebras) produced 24 words in
+two turns, one voice lock each. Whisper on the delivered soundtrack:
+
+| | |
+| --- | --- |
+| line 1 | **exact**, 0.0–6.0 s |
+| line 2 | 91% (an apostrophe), 7.6–12.7 s |
+| cue words spoken | none |
+| repeats | none |
+| gap between speakers | **1.5 s** (the client measured 1.3–3.0 s before) |
+| tail | 12.7–15.0 s ambience only |
+
+Honest reading: the format works on the model — verbatim lines, no cues,
+one voice each, tighter turn-taking. The 250 ms rule is a wish the model
+only approximates, and the writer sat at the floor of its word range, which
+is why the "aim for the middle" instruction exists now. The client's own
+package uses this exact sentence and the same model, so this is its ceiling
+too.
