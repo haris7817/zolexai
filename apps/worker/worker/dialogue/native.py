@@ -101,9 +101,35 @@ def _normalised(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
 
 
+#: Labels the client's instruction tells the writer to drop from the visual
+#: prompt — duration, resolution, aspect, orientation. The writer mostly
+#: does (measured: "16:9", "15-second" and a timestamped shot list all went),
+#: but kept "vertical video" as a style word on a job the customer had set to
+#: 16:9. The orientation is the customer's aspect choice, not the prompt's,
+#: so these are stripped deterministically as well.
+_FORMAT_LABELS = re.compile(
+    r"\(?\b\d{1,2}:\d{1,2}\b\)?"                              # 16:9, (9:16)
+    r"|\b\d{1,3}[- ]?seconds?\b|\b\d{1,3}\s?s\b(?=[ ,.;])"    # 15-second, 30 seconds, 15s
+    r"|\b(?:4k|8k|1080p|720p|2160p|\d{3,4}\s?[x×]\s?\d{3,4})\b"
+    r"|\b(?:vertical|horizontal|portrait|landscape|widescreen|square)\b(?:[ -]?(?:format|video|orientation|aspect))?"
+    r"|\baspect[- ]ratio\b",
+    re.IGNORECASE,
+)
+
+
+def strip_format_labels(text: str) -> str:
+    """The visual prompt without duration / resolution / aspect / orientation
+    words, tidied so no doubled spaces or dangling punctuation remain."""
+    out = _FORMAT_LABELS.sub(" ", text)
+    out = re.sub(r"\s+([,.;:])", r"\1", out)
+    out = re.sub(r"\(\s*\)", "", out)
+    out = re.sub(r"\s{2,}", " ", out).strip(" ,;")
+    return out
+
+
 def validate_script(raw: dict[str, Any], seconds: float, *, max_speakers: int = MAX_SPEAKERS) -> NativePlan:
     """`validate_script` from the client's package, rule for rule."""
-    visual_prompt = clean_text(raw.get("visual_prompt"))
+    visual_prompt = strip_format_labels(clean_text(raw.get("visual_prompt")))
     ambience = clean_text(raw.get("ambience"))
     raw_speakers = raw.get("speakers")
     raw_turns = raw.get("dialogue_turns")

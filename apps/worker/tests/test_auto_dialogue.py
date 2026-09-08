@@ -497,6 +497,25 @@ def test_the_native_validator_enforces_the_clients_rules() -> None:
     assert [s.speaker_id for s in plan.speakers] == ["person_a", "person_b"]
 
 
+def test_format_labels_are_stripped_from_the_visual_prompt_whatever_the_writer_kept() -> None:
+    """The client's review: "vertical video (16:9)" contradicting itself, and
+    a shot list ending at 10 s — both in the customer's text. The writer is
+    told to drop such labels and mostly does, but kept "vertical video" as a
+    style word on a 16:9 job. Orientation is the customer's aspect choice,
+    so the labels go deterministically too."""
+    from worker.dialogue.native import strip_format_labels, validate_script
+
+    assert strip_format_labels(
+        "Create a hyper-realistic cinematic 15-second vertical video (16:9) of a race at night."
+    ) == "Create a hyper-realistic cinematic of a race at night."
+    assert strip_format_labels("A 4K 1920x1080 landscape shot, 30 seconds, aspect ratio 9:16.") == "A shot."
+    # words that only look like labels survive
+    assert strip_format_labels("The 3 friends walk 2 blocks.") == "The 3 friends walk 2 blocks."
+    answer = _native_answer(30)
+    answer["visual_prompt"] = "Hyper-realistic cinematic vertical video in downtown Los Angeles at night."
+    assert validate_script(answer, 30).visual_prompt == "Hyper-realistic cinematic in downtown Los Angeles at night."
+
+
 def test_the_word_range_follows_the_clients_table_and_extends_between_rows() -> None:
     from worker.dialogue.native import word_range
 
