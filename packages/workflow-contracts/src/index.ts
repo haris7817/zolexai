@@ -130,6 +130,10 @@ export const workflowSchema = z.object({
     // A sound on/off control, shown only at the Best quality level — that
     // engine generates native audio, Fast does not. Defaulted likewise.
     sound: z.boolean().default(false),
+    // Music Video's band (the client's music-video worker, 8 Sep 2026): a
+    // role and a description beside each `performer_N` picture input, sent
+    // as the `performers` parameter. Defaulted likewise.
+    performers: z.boolean().default(false),
   }),
 
   capabilities: z.object({

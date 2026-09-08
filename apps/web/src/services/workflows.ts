@@ -2,6 +2,7 @@ import {
   workflowListSchema,
   workflowSchema,
   type Workflow,
+  type WorkflowInput,
 } from "@zolexai/workflow-contracts";
 import { apiFetch } from "@/lib/api/client";
 
@@ -90,6 +91,23 @@ export function durationsForQuality(
  */
 export function showsSound(workflow: Workflow): boolean {
   return workflow.settings.sound;
+}
+
+/**
+ * The slot number of a band member's picture input (`performer_3` → 3), or
+ * null for any other role. The convention is the definition's, shared with
+ * the API's validation and the worker: the number pairs the picture with
+ * the same slot in the `performers` parameter.
+ */
+export function performerSlot(role: string): number | null {
+  const match = /^performer_([1-9])$/.exec(role);
+  return match ? Number(match[1]) : null;
+}
+
+/** The picture inputs that take a band member, on workflows that offer one. */
+export function performerInputs(workflow: Workflow): WorkflowInput[] {
+  if (!workflow.settings.performers) return [];
+  return workflow.inputs.filter((input) => performerSlot(input.role) !== null);
 }
 
 /**

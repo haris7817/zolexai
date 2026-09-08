@@ -28,8 +28,18 @@ export interface CreateGenerationInput {
     /** Only ever sent as "director" — Standard mode is expressed by absence. */
     prompt_mode?: string;
     dialogue_language?: string;
+    /** The band, on workflows declaring `settings.performers`: one entry per
+     *  member, paired with the `performer_{slot}` picture input. Sent only
+     *  when at least one member is given. */
+    performers?: PerformerInput[];
   };
   inputs?: Record<string, string>;
+}
+
+export interface PerformerInput {
+  slot: number;
+  role: string;
+  description?: string;
 }
 
 const generationPageSchema = pageSchema(generationJobSchema);

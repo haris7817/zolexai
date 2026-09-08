@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Workflow } from "@zolexai/workflow-contracts";
-import type { CreateGenerationInput } from "@/services/generations";
+import type { CreateGenerationInput, PerformerInput } from "@/services/generations";
+import { performerInputs, performerSlot } from "@/services/workflows";
 
 /**
  * ===========================================================================
@@ -60,10 +61,42 @@ export interface GenerationFormValues {
   dialogueLanguage: string | null;
   /** role → asset id. null while an optional input is unfilled. */
   inputs: Record<string, string | null>;
+  /** picture input role (`performer_N`) → that band member's role and
+   *  description. Empty on workflows without `settings.performers`. */
+  performers: Record<string, PerformerFormValue>;
+}
+
+export interface PerformerFormValue {
+  role: string;
+  description: string;
 }
 
 /** The two ways a prompt can be read, on workflows that offer the choice. */
 export const PROMPT_MODES = ["standard", "director"] as const;
+
+/**
+ * Roles a band member can be given (the client's music-video worker,
+ * 8 Sep 2026). The worker turns recognised instrument roles into instrument
+ * actions in every scene — a drummer plays, a guitarist plays — instead of
+ * telling everyone to sing. Free text on the wire; this is the offered list.
+ */
+export const PERFORMER_ROLES = [
+  { value: "performer", label: "Performer" },
+  { value: "lead_vocalist", label: "Lead vocalist" },
+  { value: "vocalist", label: "Vocalist" },
+  { value: "rapper", label: "Rapper" },
+  { value: "guitarist", label: "Guitarist" },
+  { value: "bassist", label: "Bassist" },
+  { value: "keyboardist", label: "Keyboardist" },
+  { value: "drummer", label: "Drummer" },
+  { value: "dj", label: "DJ" },
+  { value: "dancer", label: "Dancer" },
+] as const;
+
+/** Matches the API's PerformerSpec.description max_length. */
+export const PERFORMER_DESCRIPTION_MAX_LENGTH = 300;
+
+const DEFAULT_PERFORMER: PerformerFormValue = { role: "performer", description: "" };
 
 /**
  * Languages Director mode will write dialogue in. "auto" follows the idea's
@@ -229,6 +262,25 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
           }
         }
       }),
+
+    // The band. Same stale-state discipline as the rest: on a workflow
+    // without the control anything but the empty resting state means values
+    // survived a workflow switch.
+    performers: z
+      .record(
+        z.string(),
+        z.object({
+          role: z.string().max(48),
+          description: z
+            .string()
+            .max(PERFORMER_DESCRIPTION_MAX_LENGTH, "Keep each description under 300 characters."),
+        }),
+      )
+      .superRefine((value, ctx) => {
+        if (!workflow.settings.performers && Object.keys(value).length > 0) {
+          ctx.addIssue({ code: "custom", message: "Not available for this tool." });
+        }
+      }),
   }).superRefine((values, ctx) => {
     // The Fast/Best round: a quality level may narrow the duration ladder
     // (Best sells 5-30s, not 60s). The panel filters its chips and snaps the
@@ -266,6 +318,9 @@ export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
     promptMode: workflow.settings.prompt_modes ? PROMPT_MODES[0] : null,
     dialogueLanguage: workflow.settings.prompt_modes ? DIALOGUE_LANGUAGES[0] : null,
     inputs: Object.fromEntries(workflow.inputs.map((input) => [input.role, null])),
+    performers: Object.fromEntries(
+      performerInputs(workflow).map((input) => [input.role, { ...DEFAULT_PERFORMER }]),
+    ),
   };
 }
 
@@ -396,6 +451,26 @@ export function toCreateInput(
     if (assetId) inputs[role] = assetId;
   }
 
+  // A band member exists when their slot has a picture, a description, or a
+  // role other than the plain default — an untouched empty slot is not a
+  // member, so a solo upload with four empty slots sends one performer.
+  const performers: PerformerInput[] = [];
+  if (workflow.settings.performers) {
+    for (const input of performerInputs(workflow)) {
+      const slot = performerSlot(input.role);
+      const member = values.performers?.[input.role] ?? DEFAULT_PERFORMER;
+      const description = member.description.trim();
+      const named = member.role !== DEFAULT_PERFORMER.role || description.length > 0;
+      if (slot !== null && (inputs[input.role] || named)) {
+        performers.push({
+          slot,
+          role: member.role,
+          ...(description ? { description } : {}),
+        });
+      }
+    }
+  }
+
   return {
     workflow_id: workflow.id,
     prompt: values.prompt.trim(),
@@ -439,6 +514,10 @@ export function toCreateInput(
       values.dialogueLanguage
         ? { dialogue_language: values.dialogueLanguage }
         : {}),
+      // No band is expressed by ABSENCE, so a request from a client that
+      // has never heard of performers is byte-identical to one with five
+      // empty slots.
+      ...(performers.length ? { performers } : {}),
     },
     ...(Object.keys(inputs).length ? { inputs } : {}),
   };
@@ -468,9 +547,26 @@ export function valuesFromJob(
       .map((input) => [input.role, input.asset_id]),
   );
 
+  // The band travels back the same way: every entry whose slot this
+  // workflow still declares lands beside its restored picture.
+  const performers = { ...defaults.performers };
+  if (workflow.settings.performers && Array.isArray(parameters.performers)) {
+    for (const item of parameters.performers as unknown[]) {
+      if (!item || typeof item !== "object") continue;
+      const entry = item as { slot?: unknown; role?: unknown; description?: unknown };
+      const role = `performer_${entry.slot}`;
+      if (!(role in performers)) continue;
+      performers[role] = {
+        role: typeof entry.role === "string" && entry.role ? entry.role : DEFAULT_PERFORMER.role,
+        description: typeof entry.description === "string" ? entry.description : "",
+      };
+    }
+  }
+
   return {
     ...defaults,
     inputs: { ...defaults.inputs, ...restored },
+    performers,
     prompt,
     duration: pick(parameters.duration, workflow.supported_durations, defaults.duration),
     aspectRatio: pick(

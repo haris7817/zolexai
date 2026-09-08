@@ -13,11 +13,14 @@ import {
   SegmentedControl,
   RangeField,
   SelectField,
+  TextField,
   ToggleField,
 } from "@/components/ui/Controls";
 import {
   DIALOGUE_LANGUAGES,
   LYRIC_LANGUAGES,
+  PERFORMER_DESCRIPTION_MAX_LENGTH,
+  PERFORMER_ROLES,
   type GenerationFormValues,
 } from "@/features/generation/form";
 import {
@@ -25,6 +28,7 @@ import {
   durationLabel,
   durationsForQuality,
   hasAdvancedSettings,
+  performerSlot,
   qualityLabel,
   showsAspectRatio,
   showsQuality,
@@ -119,30 +123,70 @@ export function GenerationSettingsPanel({
         />
 
         {/* ── Media inputs — one per declared role ─────────────────── */}
-        {workflow.inputs.map((input) => (
-          <div key={input.role}>
-            <SectionLabel>
-              {input.label}
-              {!input.required ? (
-                <span className="text-zx-text-muted ml-[6px] font-semibold normal-case">
-                  optional
-                </span>
+        {workflow.inputs.map((input) => {
+          // A band member's picture (Music Video, `settings.performers`)
+          // carries a role and a description beneath it. The slot comes
+          // from the role name, never from the workflow id.
+          const bandSlot = workflow.settings.performers ? performerSlot(input.role) : null;
+          return (
+            <div key={input.role}>
+              <SectionLabel>
+                {input.label}
+                {!input.required ? (
+                  <span className="text-zx-text-muted ml-[6px] font-semibold normal-case">
+                    optional
+                  </span>
+                ) : null}
+              </SectionLabel>
+              <Controller
+                control={form.control}
+                name={`inputs.${input.role}` as const}
+                render={({ field }) => (
+                  <Dropzone
+                    input={input}
+                    value={(field.value as string | null) ?? null}
+                    onChange={field.onChange}
+                    className={bandSlot !== null ? "mb-[10px]" : "mb-6"}
+                  />
+                )}
+              />
+              {bandSlot !== null ? (
+                <div className="tablet:grid-cols-2 mb-6 grid grid-cols-1 gap-[10px]">
+                  <Controller
+                    control={form.control}
+                    name={`performers.${input.role}.role` as const}
+                    render={({ field }) => (
+                      <SelectField
+                        aria-label={`${input.label} role`}
+                        value={(field.value as string | undefined) ?? "performer"}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      >
+                        {PERFORMER_ROLES.map((role) => (
+                          <option key={role.value} value={role.value}>
+                            {role.label}
+                          </option>
+                        ))}
+                      </SelectField>
+                    )}
+                  />
+                  <Controller
+                    control={form.control}
+                    name={`performers.${input.role}.description` as const}
+                    render={({ field }) => (
+                      <TextField
+                        aria-label={`${input.label} description`}
+                        placeholder="Keep the same — e.g. white linen shirt, silver chain"
+                        maxLength={PERFORMER_DESCRIPTION_MAX_LENGTH}
+                        value={(field.value as string | undefined) ?? ""}
+                        onChange={field.onChange}
+                      />
+                    )}
+                  />
+                </div>
               ) : null}
-            </SectionLabel>
-            <Controller
-              control={form.control}
-              name={`inputs.${input.role}` as const}
-              render={({ field }) => (
-                <Dropzone
-                  input={input}
-                  value={(field.value as string | null) ?? null}
-                  onChange={field.onChange}
-                  className="mb-6"
-                />
-              )}
-            />
-          </div>
-        ))}
+            </div>
+          );
+        })}
 
         {/* ── Prompt mode — rendered only when the workflow declares it.
             Standard submits exactly what the pre-feature form submitted;
@@ -258,7 +302,9 @@ export function GenerationSettingsPanel({
               id="zx-lyrics"
               {...form.register("lyrics")}
               placeholder={
-                "Paste your own lyrics in any language — or leave this empty and we'll write them from your prompt."
+                workflow.output_type === "video"
+                  ? "Paste the song's lyrics (plain lines, LRC or SRT) so every scene follows them — or leave this empty and we'll transcribe them from the track."
+                  : "Paste your own lyrics in any language — or leave this empty and we'll write them from your prompt."
               }
               rows={4}
               aria-invalid={Boolean(errors.lyrics)}
@@ -295,8 +341,9 @@ export function GenerationSettingsPanel({
               )}
             />
             <p className="text-zx-text-muted mb-6 text-[11.5px] leading-[1.5]">
-              Applies when we write the lyrics for you. Your own pasted lyrics
-              can be in any language.
+              {workflow.output_type === "video"
+                ? "Tells us what language to listen for when we transcribe the track. Your own pasted lyrics can be in any language."
+                : "Applies when we write the lyrics for you. Your own pasted lyrics can be in any language."}
             </p>
           </>
         ) : null}
