@@ -99,7 +99,7 @@ each, every one rendered in the package's minimum 121-frame window).
 | 9 shots on a2vid, 24 steps, offload cpu (`run1`) | 120 s each; 1,085 s |
 | assembly + 4K (3840×2160, NVENC) + QA | 31 s |
 | **total, run1** | **1,183 s (19.7 min) — 30× real time** |
-| 9 shots with the transformer resident (`LTX_UNQUANTIZED_OFFLOAD=none`, `run2`) | 96 s each (one outlier at 172 s) |
+| 9 shots with the transformer resident (`LTX_UNQUANTIZED_OFFLOAD=none`, `run2`) | 96 s each on an idle card; 172 s and 200 s for the two shots that overlapped a customer's Text to Video job on ComfyUI (the card at 87 GB), so run2's 1,247 s total is not a clean number |
 
 Where a shot's time goes (offload cpu / none): 24-step stage 1 at 640×352
 = 70 s / 53 s (2.9 → 2.25 s per step — weight streaming from host RAM is
