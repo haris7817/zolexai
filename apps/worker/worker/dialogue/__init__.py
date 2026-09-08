@@ -48,6 +48,7 @@ from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.dialogue.decide import (
     AUTO_DIALOGUE_WORKFLOWS,
+    NONHUMAN_VOICE_CLAUSE,
     Dialogue,
     Line,
     Speaker,
@@ -83,6 +84,11 @@ HONOURED_REFUSALS = frozenset(
         "forbidden_by_prompt",
         "dialogue_already_present",
         "too_short_to_speak",
+        # A scene of animals and machines is an ANSWER, not a failure: the
+        # right video is the one with no dialogue in it. Failing a job because
+        # the customer ticked the switch over a dinosaur would be refusing to
+        # make the video they asked for.
+        "no_eligible_speaker",
     }
 )
 
@@ -280,6 +286,17 @@ async def add_auto_dialogue(
         )
         if strict and reason not in HONOURED_REFUSALS:
             raise _unwritten(job, reason)
+        if reason == "no_eligible_speaker":
+            # Saying nobody speaks is not enough on its own: an animal with a
+            # mouth and no instruction gets one anyway. `soundscape_clause`
+            # covers the silence; this covers what happens instead.
+            # `_sentence`'s rule, because a customer's prompt often ends
+            # without a stop and "...and roars The animals" reads as one
+            # sentence the model has to untangle.
+            lead = job.prompt.rstrip()
+            if lead and lead[-1] not in '.!?"':
+                lead += "."
+            return replace(job, prompt=f"{lead} {NONHUMAN_VOICE_CLAUSE}")
         return job
 
     language = spoken_language_name(job.parameters, job.execution)
@@ -376,6 +393,7 @@ async def add_auto_dialogue(
 __all__ = [
     "AUTO_DIALOGUE_WORKFLOWS",
     "HONOURED_REFUSALS",
+    "NONHUMAN_VOICE_CLAUSE",
     "Dialogue",
     "Line",
     "Speaker",

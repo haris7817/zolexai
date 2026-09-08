@@ -29,6 +29,7 @@ from worker.dialogue.decide import (
     Speaker,
     compose,
     line_target,
+    no_eligible_speaker,
     skip_reason,
     word_budget,
 )
@@ -227,6 +228,76 @@ def test_the_lines_become_quoted_speech_the_soundtrack_rule_recognises() -> None
     clause = soundscape_clause(enriched, {}, {})
     assert "No one speaks" not in clause
     assert "spoken a single time" in clause
+
+
+# ── Who is allowed to speak ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("prompt", "blocked"),
+    [
+        ("A massive Tyrannosaurus Rex emerges from the jungle and roars", True),
+        ("A lion stalks through tall grass at dawn", True),
+        ("A red sports car drifts around a corner", True),
+        # A human in the scene can speak, even with an animal beside them.
+        ("A woman walks her dog through the park", False),
+        ("Two women talk on a park bench", False),
+        ("A chef plates a dish in a busy kitchen", False),
+        # Explicit permission, in the shapes a customer actually writes.
+        ("A talking dog says hello to the postman", False),
+        ("The dinosaur says it is hungry", False),
+        ("An anthropomorphic fox in a waistcoat", False),
+    ],
+)
+def test_only_a_scene_with_somebody_human_gets_dialogue(prompt: str, blocked: bool) -> None:
+    """Client report, 9 Sep 2026: a Tyrannosaurus was given "This valley
+    belongs to me alone. None shall challenge my reign."
+
+    Nothing had gone wrong mechanically. The writer was asked for one to four
+    visible speaking characters, and a dinosaur is visible. The pack's own
+    instruction — return `has_speaker: false` when nobody human could speak —
+    is advice to a language model, and advice is not a gate.
+    """
+    assert no_eligible_speaker(_job(prompt)) is blocked
+
+
+def test_the_gate_runs_before_the_writer_is_ever_called() -> None:
+    """The ordering the client asked for. A writer that is asked "who speaks
+    here?" about a dinosaur will answer, so it is not asked."""
+    writer = _Writer()
+    job = _job("A massive Tyrannosaurus Rex emerges from the jungle and roars")
+    assert skip_reason(job, 15.0, enabled=True) == "no_eligible_speaker"
+    assert writer.calls == 0
+
+
+async def test_a_creature_scene_is_told_to_roar_instead_of_speak() -> None:
+    """Saying nobody speaks is not enough on its own: an animal with a mouth
+    and no instruction about it gets one anyway. This says what happens
+    instead, and terminates the customer's sentence so the two do not run
+    together."""
+    import worker.dialogue as module
+
+    job = _job(
+        "A massive Tyrannosaurus Rex emerges from the jungle and roars",
+        auto_dialogue=True,
+    )
+    writer = _Writer()
+    result = await module.add_auto_dialogue(job, 15.0, providers=[writer])
+    # Asked for explicitly and still not a failure: the right video is the one
+    # with no dialogue in it, and the writer is never consulted.
+    assert writer.calls == 0
+    assert '"' not in result.prompt
+    assert "never to form speech" in result.prompt
+    assert result.prompt.startswith(job.prompt + ".")
+
+
+def test_a_deployment_can_license_a_talking_animal() -> None:
+    from dataclasses import replace as _replace
+
+    job = _job("A massive Tyrannosaurus Rex emerges from the jungle")
+    assert no_eligible_speaker(job) is True
+    allowed = _replace(job, execution={**job.execution, "allow_nonhuman_speech": True})
+    assert no_eligible_speaker(allowed) is False
 
 
 def test_a_possessive_is_not_a_spoken_line() -> None:

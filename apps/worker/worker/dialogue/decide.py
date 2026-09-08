@@ -127,6 +127,176 @@ class Dialogue:
         raise KeyError(speaker_id)
 
 
+# ── Who is allowed to speak ────────────────────────────────────────────────
+#
+# The client's report, 9 Sep 2026: a Tyrannosaurus was given the line "This
+# valley belongs to me alone. None shall challenge my reign." Nothing had
+# gone wrong mechanically — the writer was asked for "one to four visible
+# speaking characters", it found one, and a dinosaur is visible.
+#
+# The pack's own instruction ("if the scene has no visible human or human-like
+# character who could plausibly speak, return has_speaker: false") is advice
+# to a language model, and advice is not a gate. This is the gate: it runs on
+# the customer's text BEFORE any writer is called, which is the ordering the
+# client asked for, and it is deterministic so the same prompt always gets the
+# same answer.
+#
+# The bar is deliberately conservative in one direction only. A scene with a
+# human in it is eligible even if an animal is also present ("a woman walks
+# her dog"), because the human can speak. A scene with no human at all is not,
+# unless the customer asked for a talking one.
+
+#: Subjects that do not speak human words unless a customer says otherwise.
+_NONHUMAN_SUBJECTS = (
+    r"\bdinosaurs?\b",
+    r"\btyrannosaurus\b",
+    r"\bt-?rex\b",
+    r"\braptors?\b",
+    r"\bvelociraptors?\b",
+    r"\bdragons?\b",
+    r"\bcreatures?\b",
+    r"\bmonsters?\b",
+    r"\bbeasts?\b",
+    r"\baliens?\b",
+    r"\bdogs?\b",
+    r"\bcats?\b",
+    r"\bpuppy\b",
+    r"\bpuppies\b",
+    r"\bkittens?\b",
+    r"\bhorses?\b",
+    r"\blions?\b",
+    r"\btigers?\b",
+    r"\bbears?\b",
+    r"\bwolves\b",
+    r"\bwolf\b",
+    r"\belephants?\b",
+    r"\bbirds?\b",
+    r"\beagles?\b",
+    r"\bowls?\b",
+    r"\bsharks?\b",
+    r"\bwhales?\b",
+    r"\bdolphins?\b",
+    r"\bfoxes?\b",
+    r"\brabbits?\b",
+    r"\bsnakes?\b",
+    r"\bspiders?\b",
+    r"\binsects?\b",
+    r"\brobots?\b",
+    r"\bandroids?\b",
+    r"\bcars?\b",
+    r"\btrucks?\b",
+    r"\bspaceships?\b",
+    r"\baircraft\b",
+)
+
+#: Any of these and somebody in the scene can plausibly speak.
+_HUMAN_SUBJECTS = (
+    r"\bmans?\b",
+    r"\bmen\b",
+    r"\bwomans?\b",
+    r"\bwomen\b",
+    r"\bboys?\b",
+    r"\bgirls?\b",
+    r"\bchild(?:ren)?\b",
+    r"\bpersons?\b",
+    r"\bpeople\b",
+    r"\bguys?\b",
+    r"\bladys?\b",
+    r"\bladies\b",
+    r"\bgentlemans?\b",
+    r"\bgentlemen\b",
+    r"\bteenagers?\b",
+    r"\badults?\b",
+    r"\bfigures?\b",
+    r"\bdriver\b",
+    r"\bcaptain\b",
+    r"\bsoldier\b",
+    r"\bdoctor\b",
+    r"\bnurse\b",
+    r"\bteacher\b",
+    r"\bchef\b",
+    r"\bbarista\b",
+    r"\bsinger\b",
+    r"\bpresenters?\b",
+    r"\bhosts?\b",
+    r"\bnarrators?\b",
+    r"\bcouples?\b",
+    r"\bcrowds?\b",
+    r"\bfriends?\b",
+    r"\bfamily\b",
+    r"\bmother\b",
+    r"\bfather\b",
+    r"\bsister\b",
+    r"\bbrother\b",
+    r"\bhim\b",
+    r"\bher\b",
+    r"\bhe\b",
+    r"\bshe\b",
+    r"\bsomeone\b",
+    r"\bsomebody\b",
+)
+
+#: Explicit permission. The client's list, plus the shapes a customer
+#: actually writes. Only these turn a non-human scene back on.
+_NONHUMAN_SPEECH_ALLOWED = (
+    r"talking (?:animal|dog|cat|dinosaur|creature|robot|car|tree)",
+    r"anthropomorphic",
+    r"the (?:dinosaur|dragon|animal|dog|cat|robot|creature)\s+"
+    r"(?:says?|speaks?|talks?|sings?|whispers?|shouts?)",
+    r"(?:says?|speaks?|talks?|sings?)\s+in\s+(?:a\s+)?human\s+voice",
+    r"voice\s+of\s+the\s+(?:dinosaur|dragon|animal|robot)",
+    r"can\s+(?:talk|speak)",
+    r"able\s+to\s+(?:talk|speak)",
+    r"cartoon\s+(?:animal|character)\s+(?:says?|speaks?)",
+)
+
+
+def mentions_human(prompt: str) -> bool:
+    return any(re.search(p, prompt, re.IGNORECASE) for p in _HUMAN_SUBJECTS)
+
+
+def mentions_nonhuman(prompt: str) -> bool:
+    return any(re.search(p, prompt, re.IGNORECASE) for p in _NONHUMAN_SUBJECTS)
+
+
+def allows_nonhuman_speech(job: AdapterJob) -> bool:
+    """Whether this job licenses a non-human to speak human words.
+
+    `execution.allow_nonhuman_speech` decides it outright; otherwise the
+    customer has to have asked for it in words. "The dinosaur says" is a
+    request. "A dinosaur roars in a jungle" is not.
+    """
+    raw = job.execution.get("allow_nonhuman_speech")
+    if raw is not None and str(raw).strip() != "":
+        return str(raw).strip().lower() not in ("false", "no", "off", "0")
+    return any(
+        re.search(p, job.prompt, re.IGNORECASE) for p in _NONHUMAN_SPEECH_ALLOWED
+    )
+
+
+def no_eligible_speaker(job: AdapterJob) -> bool:
+    """A scene of animals, creatures or machines and no person in it."""
+    if allows_nonhuman_speech(job):
+        return False
+    return mentions_nonhuman(job.prompt) and not mentions_human(job.prompt)
+
+
+#: What a creature does INSTEAD of speaking. The client's sentence, kept close
+#: to their wording: it replaces speech with the sounds the animal actually
+#: makes, and names the jaw explicitly because an open mouth with no words is
+#: what a roar looks like and what lip-sync would otherwise try to fill.
+#:
+#: Composed only where the gate closed for this reason. `soundscape_clause`
+#: already says nobody speaks; this adds what happens instead.
+NONHUMAN_VOICE_CLAUSE = (
+    "The animals and creatures in this scene communicate only through natural "
+    "vocalisations - roars, calls, breathing, growls, footfalls - and the "
+    "sounds of the environment around them. None of them speaks, sings, "
+    "narrates or produces human words, and no human voice is heard. Their "
+    "jaws and mouths open naturally only to roar, call or breathe, never to "
+    "form speech."
+)
+
 # ── Whether to ask at all ──────────────────────────────────────────────────
 
 
@@ -174,6 +344,11 @@ def skip_reason(job: AdapterJob, seconds: float, *, enabled: bool) -> str:
         return "forbidden_by_prompt"
     if supplied_dialogue(prompt) or prompt_has_dialogue(prompt):
         return "dialogue_already_present"
+    if no_eligible_speaker(job):
+        # A dinosaur, a lion or a car is not a speaker. Checked BEFORE any
+        # writer is called, which is the ordering the client asked for on
+        # 9 Sep 2026 after a Tyrannosaurus was given four lines of dialogue.
+        return "no_eligible_speaker"
     if seconds < 5.0:
         # Under `ESTABLISH_SECONDS` plus a line's worth of air there is no
         # speakable window; `speech_budget` agrees, returning almost nothing.
@@ -333,6 +508,11 @@ def _capfirst(text: str) -> str:
 
 __all__ = [
     "AUTO_DIALOGUE_WORKFLOWS",
+    "NONHUMAN_VOICE_CLAUSE",
+    "allows_nonhuman_speech",
+    "mentions_human",
+    "mentions_nonhuman",
+    "no_eligible_speaker",
     "Dialogue",
     "Line",
     "Speaker",
