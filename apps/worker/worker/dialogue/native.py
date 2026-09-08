@@ -212,6 +212,42 @@ def _spoken(text: str) -> str:
     return body if body and body[-1] in ".!?" else body + "."
 
 
+def _one_mouth_clause(plan: NativePlan) -> str:
+    """Turn-taking stated as a constraint on the LISTENER, not the speaker.
+
+    Client report, 9 Sep 2026: on a two-hander both women moved their mouths
+    through the whole clip, though only one was speaking at a time. Nothing in
+    the prompt was wrong — it locked the voices, the order and the pauses, and
+    said nothing at all about what the other face should be doing. A model
+    given two visible speakers and no instruction about the silent one
+    animates both.
+
+    So this names the silent one. It does NOT restate who anybody is: the
+    voice locks above it already say "person_a is the woman on the left", and
+    the writer is now told to put the position first precisely so that this
+    sentence can lean on it. Saying it twice would be the repetition the
+    guideline pack's own validation warns about, in the box where repetition
+    costs most.
+
+    Empty for a monologue: one speaker cannot overlap themselves, and the
+    sentence would only spend tokens.
+
+    A caveat worth keeping in the file. This is a request, not a control
+    channel — the model has no per-face handle, and the client's own advice
+    was not to depend on native generation for two mouths. The guaranteed
+    fix is speaker-specific lip-sync on tracked face masks, which needs a
+    stage this platform does not have.
+    """
+    if len(plan.speakers) < 2:
+        return ""
+    return (
+        " They speak strictly one at a time, in the order written: while one of "
+        "them is speaking, everyone else on screen listens in silence with their "
+        "lips closed and still, and their mouth does not move until it is their "
+        "turn. Only one mouth moves at any moment and the voices never overlap."
+    )
+
+
 def compose_native_prompt(plan: NativePlan, language: str = "English") -> str:
     """`compose_native_ltx_prompt` from the client's package, verbatim in
     shape. The voice lock is stated once per speaker; the turns carry no
@@ -233,7 +269,8 @@ def compose_native_prompt(plan: NativePlan, language: str = "English") -> str:
     )
     return (
         f"{plan.visual_prompt} {voice_locks} The spoken language is "
-        f"{language or 'English'}. {turns} The dialogue is delivered as one fluent "
+        f"{language or 'English'}. {turns}{_one_mouth_clause(plan)} "
+        "The dialogue is delivered as one fluent "
         "continuous performance in the exact order written, with complete sentences, "
         "natural conversational pacing, consistent voices, accurate synchronized lip "
         "movement, and only brief natural pauses no longer than "
@@ -255,7 +292,14 @@ def system_prompt(seconds: float, *, max_speakers: int = MAX_SPEAKERS) -> str:
         "characters. Each speaker object needs speaker_id (person_a through person_d), "
         "visual_identity, and one stable voice_description containing age range, "
         "register, timbre, accent, and pace. Do not assign a different emotion or "
-        "voice style to every line. Dialogue turns need only speaker_id and text. "
+        "voice style to every line. "
+        "When two or more characters speak, visual_identity MUST begin with where "
+        "the character stands in the frame - \"the woman on the left\", \"the man "
+        "on the right\", \"the woman in the centre\" - before any description of "
+        "age, wardrobe or appearance, and the speakers must be listed in "
+        "left-to-right order. A position is the only identity the video can hold "
+        "onto; wardrobe alone does not tell one face from another. "
+        "Dialogue turns need only speaker_id and text. "
         "Write one connected monologue or natural conversation with complete "
         "sentences. Every response must logically answer or advance the previous "
         "line. No isolated catchphrases, filler, repeated ideas, narration labels, "

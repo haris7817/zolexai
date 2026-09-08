@@ -532,6 +532,85 @@ def test_the_native_format_locks_each_voice_once_with_no_cues_or_clocks() -> Non
     assert "The spoken language is English." in prompt
 
 
+def test_two_speakers_are_told_the_listener_keeps_her_mouth_shut() -> None:
+    """Client report, 9 Sep 2026: on a two-hander both women moved their
+    mouths for the whole clip though only one spoke at a time.
+
+    Nothing in the prompt was wrong. It locked the voices, the order and the
+    pauses — and said nothing whatever about the person who is NOT speaking.
+    Given two visible speakers and no instruction about the silent one, the
+    model animates both. The fix is a constraint on the listener.
+    """
+    from worker.dialogue.native import compose_native_prompt, validate_script
+
+    prompt = compose_native_prompt(validate_script(_native_answer(30), 30), "English")
+    assert "listens in silence with their lips closed and still" in prompt
+    assert "Only one mouth moves at any moment" in prompt
+    assert "voices never overlap" in prompt
+    assert "speak strictly one at a time, in the order written" in prompt
+
+
+def test_the_listener_rule_does_not_repeat_who_anybody_is() -> None:
+    """The voice locks already say "person_a is the woman on the left". The
+    turn-taking sentence leans on that rather than restating it — repetition
+    in a positive prompt is what the guideline pack's own validation warns
+    about, and it is why the writer is told to put the position first."""
+    from worker.dialogue.native import (
+        NativePlan,
+        NativeSpeaker,
+        NativeTurn,
+        compose_native_prompt,
+    )
+
+    plan = NativePlan(
+        visual_prompt="Two women sit on a park bench.",
+        ambience="Distant traffic.",
+        speakers=(
+            NativeSpeaker("person_a", "the woman on the left in a red coat", "warm and low"),
+            NativeSpeaker("person_b", "the woman on the right in denim", "lighter and quicker"),
+        ),
+        turns=(
+            NativeTurn("person_a", "Did you hear about Maria?"),
+            NativeTurn("person_b", "I did, this morning."),
+        ),
+    )
+    prompt = compose_native_prompt(plan)
+    assert prompt.count("the woman on the left in a red coat") == 1
+    assert prompt.count("the woman on the right in denim") == 1
+
+
+def test_a_monologue_is_not_told_about_turn_taking() -> None:
+    """One speaker cannot overlap themselves, and the sentence would only
+    spend tokens on a scene it does not describe."""
+    from worker.dialogue.native import (
+        NativePlan,
+        NativeSpeaker,
+        NativeTurn,
+        compose_native_prompt,
+    )
+
+    solo = NativePlan(
+        visual_prompt="A man walks a dog at dawn.",
+        ambience="Wind in the trees.",
+        speakers=(NativeSpeaker("person_a", "the man in the grey coat", "low and even"),),
+        turns=(NativeTurn("person_a", "Come on, boy, nearly home."),),
+    )
+    prompt = compose_native_prompt(solo)
+    assert "lips closed" not in prompt
+    assert "Only one mouth moves" not in prompt
+
+
+def test_the_writer_is_told_to_anchor_identity_to_the_frame() -> None:
+    """Wardrobe does not tell one face from another; a position does. Without
+    this the listener rule has nothing decidable to attach to."""
+    from worker.dialogue.native import system_prompt
+
+    text = system_prompt(30)
+    assert "the woman on the left" in text
+    assert "left-to-right order" in text
+    assert "before any description of" in text
+
+
 def test_the_native_validator_enforces_the_clients_rules() -> None:
     import pytest as _pytest
 
