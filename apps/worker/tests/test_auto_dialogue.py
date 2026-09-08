@@ -418,7 +418,7 @@ def _native_answer(seconds: int = 30, words: int | None = None) -> dict:
         "maybe peace begins when we finally stop running and simply breathe and listen "
         "to the sound of the wet street and the hum of the late trams going home"
     ).split()
-    chosen = pool[:total]
+    chosen = (pool * 3)[:total]   # long enough for any range under test
     half = len(chosen) // 2
     return {
         "visual_prompt": "A taxi driver picks up a passenger outside a rain-soaked station at night, in three connected shots.",
@@ -469,6 +469,14 @@ def test_the_native_validator_enforces_the_clients_rules() -> None:
         validate_script(_native_answer(30, words=40), 30)
     with _pytest.raises(NativeDialogueRejected):
         validate_script(_native_answer(30, words=80), 30)
+    # under is strict (47 fails); a small overshoot is tolerated (74 = 68 + 10%
+    # passes, 76 does not) — measured: the writer lands a few words over on
+    # rich prompts, and the alternative was a silent video
+    with _pytest.raises(NativeDialogueRejected):
+        validate_script(_native_answer(30, words=47), 30)
+    assert validate_script(_native_answer(30, words=74), 30).total_words == 74
+    with _pytest.raises(NativeDialogueRejected):
+        validate_script(_native_answer(30, words=76), 30)
     # a line under three words
     short = _native_answer(30)
     short["dialogue_turns"].append({"speaker_id": "person_a", "text": "Best day"})

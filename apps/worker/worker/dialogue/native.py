@@ -46,6 +46,9 @@ WORD_RANGES: dict[int, tuple[int, int]] = {
 MAX_SPEAKERS = 4
 MIN_WORDS_PER_LINE = 3
 MAX_REPLY_PAUSE_MS = 250
+#: Accepted overshoot above the top of the word range, as a fraction (see
+#: `validate_script`). Below the range stays strict.
+OVERSHOOT_TOLERANCE = 0.10
 
 
 class NativeDialogueRejected(ValueError):
@@ -160,7 +163,16 @@ def validate_script(raw: dict[str, Any], seconds: float, *, max_speakers: int = 
         turns=tuple(turns),
     )
     low, high = word_range(seconds)
-    if not low <= plan.total_words <= high:
+    # Strict below the range — too few words is the failure the client
+    # reported (28 for 30 s) and the one that leaves dead air. Above it, a
+    # small overshoot is tolerated: measured 8 Sep 2026 on a rich 15 s
+    # prompt, the hosted writer landed 35–37 words for 24–34 on six attempts
+    # in a row and the job fell open to a SILENT video. Two extra words are
+    # a second of speech; silence is the thing the whole feature exists to
+    # prevent. The tolerance is the top of the range plus 10% (never less
+    # than two words), and nothing else is relaxed.
+    slack = max(2, round(high * OVERSHOOT_TOLERANCE))
+    if plan.total_words < low or plan.total_words > high + slack:
         raise NativeDialogueRejected(
             f"dialogue must contain {low}-{high} total words; received {plan.total_words}"
         )
