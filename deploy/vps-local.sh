@@ -102,15 +102,28 @@ YAML
 }
 
 block_music_video() {
-  # UNCHANGED this milestone. `require_audio_conditioning` is a guard: it
-  # refuses the prompt-only + post-mux route outright, so a config slip cannot
-  # ship a music video whose mouth was never told about the song.
-  cat <<'YAML'
+  # Client-test (8 Sep 2026): the client's own music-video worker (v1.8.0)
+  # through the `music_video` adapter — shots cut on the music and the
+  # lyrics, the performers' real faces in every anchor, an audio-conditioned
+  # LTX pass per shot, 4K delivery. The step count is the package's own
+  # default. Elsewhere, UNCHANGED: the CLI audio tier, where
+  # `require_audio_conditioning` refuses the prompt-only + post-mux route
+  # outright, so a config slip cannot ship a music video whose mouth was
+  # never told about the song. Rolling back is this block on `production`.
+  case "$PROFILE" in
+    client-test) cat <<'YAML'
+  runtime: music_video
+  inference_steps: 24
+YAML
+      ;;
+    *) cat <<'YAML'
   runtime: ltx
   audio_conditioning: true
   require_audio_conditioning: true
   inference_steps: 15
 YAML
+      ;;
+  esac
 }
 
 block_music() {

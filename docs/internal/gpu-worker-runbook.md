@@ -2566,3 +2566,92 @@ Trap, hit twice today: **two deploy scripts that each wait for an idle
 queue will restart the worker at the same moment**, and supervisor reports
 `abnormal termination` for the one that lost. It recovers (autorestart), but
 run one deploy at a time.
+
+---
+
+## 49. Deploy: Music Video on the client's music-video worker (8 Sep 2026)
+
+The client delivered `ZolexAI-Music-Video-Worker-v1.8.0.zip` (sha256
+`5c512aec…`), a complete music-video orchestrator: song analysis, lyric
+transcription, up to five performers with reference pictures and roles, a
+shot plan cut on the music, an anchor still per shot, an audio-conditioned
+LTX pass per shot, one 4K finish. It is vendored verbatim
+(`apps/worker/zolex_music_worker/`) and driven by the `music_video` runtime
+(`worker/adapters/music_video.py`). Full account:
+`docs/internal/music-video-worker.md`.
+
+### 49.1 Node prerequisites (done on `ltx-6000-2`)
+
+```bash
+# 1. The worker's extras: numpy, Pillow, faster-whisper + its CUDA-12 wheels.
+cd /workspace/zolexai/apps/worker && UV_LINK_MODE=copy uv pip install --python .venv/bin/python -e ".[music-video]"
+
+# 2. faster-whisper large-v3 (3.1 GB), cached where the env below points.
+#    Downloads on first use into MUSIC_VIDEO_WHISPER_DOWNLOAD_ROOT.
+
+# 3. Qwen-Image-Edit-2509 for the anchor stills, in the LTX ComfyUI's models/
+#    (Apache-2.0; ~29 GB; symlinked from /workspace/qwen-dl on this node):
+#      diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors   Comfy-Org/Qwen-Image-Edit_ComfyUI
+#      text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors             Comfy-Org/Qwen-Image_ComfyUI
+#      vae/qwen_image_vae.safetensors                                  Comfy-Org/Qwen-Image_ComfyUI
+#      loras/Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors  lightx2v/Qwen-Image-Lightning
+#    ComfyUI v0.34.5 has the nodes (TextEncodeQwenImageEditPlus etc.); nothing to install.
+
+# 4. The LTX environment already holds the six files the audio tier needs
+#    (dev transformer bf16, gemma text encoder bf16, both VAEs, spatial
+#    upsampler, distilled LoRA) under /workspace/ltx2-benchmark/models/ltx-2.5.
+
+# 5. FFmpeg with hwupload_cuda / scale_cuda / h264_nvenc — the 4K finish.
+#    Verified: `ffmpeg -filters | grep scale_cuda`.
+```
+
+### 49.2 Env (`/workspace/zolexai/.env.gpu-worker`)
+
+```
+RUNTIMES=ltx,ltx_comfy,character_replacement,ltx_hd,music_video
+MUSIC_VIDEO_WHISPER_DOWNLOAD_ROOT=/workspace/models/faster-whisper
+# defaults, written out for reference — see worker/core/config.py:
+# MUSIC_VIDEO_RENDER_BACKEND=command     scripts/mv_render.py → a2vid_two_stage per shot
+# MUSIC_VIDEO_ANCHOR_BACKEND=command     scripts/mv_anchor.py → Qwen-Image-Edit on ComfyUI
+# MUSIC_VIDEO_INFERENCE_STEPS=24         the package's own default
+# MUSIC_VIDEO_TRANSCRIPTION_BACKEND=faster_whisper
+# MUSIC_VIDEO_UPSCALE_BACKEND=cuda
+```
+
+Then `supervisorctl restart zolexai-worker` when the queue is idle.
+
+### 49.3 The VPS half (owner-performed)
+
+`deploy/vps-local.sh --profile client-test` now writes `runtime: music_video`
+for `music-video`; production keeps the CLI audio tier. Both api AND web
+must be rebuilt: the definition gained five performer inputs and two
+settings flags (`performers`, `lyrics`), and the web app bakes the catalogue
+at build time. Same block as §48's VPS half.
+
+### 49.4 Smoke, directly on the node (bypasses the queue)
+
+```bash
+set -a; . /workspace/zolexai/.env.gpu-worker; set +a
+cd /workspace/zolexai/apps/worker
+.venv/bin/python scripts/mv_smoke.py --audio /workspace/mv-smoke/assets/song-40s.mp3 \
+  --prompt "make me a cinematic video for this duo according to the lyrics of the song" \
+  --performer 1:lead_vocalist:/path/singer.png --performer 2:guitarist:/path/guitarist.png \
+  --aspect 16:9 --out /workspace/mv-smoke/run1
+```
+
+The package's job directory (plan, anchors, every shot, working master, 4K
+delivery, QA reports) is under `<out>/music-video/<job-id>/`. Never run it
+against live traffic — it takes the whole card.
+
+### 49.5 Traps found on the first day
+
+- **faster-whisper's CUDA libraries.** The `nvidia-*-cu12` wheels are not on
+  any library path; the model LOADS fine and the first transcription dies
+  on `libcublas.so.12`. The worker preloads them with `ctypes` before the
+  import (`worker.musicvideo.prepare_whisper_libraries`). Do NOT export
+  `LD_LIBRARY_PATH` for them: it leaks into the LTX render subprocess and
+  its text encoder then fails with `CUDNN_STATUS_SUBLIBRARY_LOADING_FAILED`
+  — `scripts/mv_render.py` scrubs site-packages entries from the path.
+- **ComfyUI keeps Qwen warm (~29 GB) after the anchor stage.** The render
+  command frees it before every shot; the package's own direct LTX backend
+  would not, and the audio tier would then OOM behind it.
