@@ -200,3 +200,51 @@ what got cheaper.
 
 The canvas and two-stage numbers below stand; they are still the wrong trade.
 Full method and the rejected options: `ltx25_speed_optimization_report.md`.
+
+---
+
+## Deployed 8 Sep 2026: the client's 720p-generate / 1080p-deliver plan
+
+After the SageAttention revert, the client asked for their original proposal
+instead: generate at the LTX 720p size and let the GPU upscale to 1080p,
+keeping the audio. It is on — `LTX_HD_CANVAS=720p` on the GPU worker.
+
+| ratio | generated | delivered |
+| --- | --- | --- |
+| 16:9 | 1280×704 | 1920×1080 |
+| 9:16 | 704×1280 | 1080×1920 |
+| 1:1 | 960×960 | 1080×1080 |
+
+The upscale is the graph's own closing `ImageScale` (lanczos, `crop=center`),
+so it runs on the GPU inside ComfyUI and costs a second or two. The
+soundtrack never passes through that node — a compiled test pins that the
+audio reaches `CreateVideo` without meeting it — so "keep the same audio" is
+structural, not a promise.
+
+### Measured, same prompt and seed as the native render
+
+| length | native | 720p → 1080p | gain |
+| --- | --- | --- | --- |
+| 5 s (16:9) | 45.7 s | **21.6 s** | 2.1× |
+| 5 s (9:16) | 61.7 s | **37.2 s** | 1.7× |
+| 15 s | 312.7 s | **97.6 s** | 3.2× |
+| **30 s** | **1040.6 s (17.3 min)** | **254.3 s (4.2 min)** | **4.1×** |
+
+**30 s now beats the 5–6 minute target**, which nothing else tried did.
+
+### What it costs, honestly
+
+The detail penalty is real but **content-dependent**, which the single 0.29×
+figure from 7 Sep did not convey:
+
+* On the texture-rich harbour prompt (rope, netting, water), 7 Sep measured
+  **0.29× the fine detail** of native — visibly smoothed.
+* On a shallow-depth-of-field portrait prompt, the same comparison measures
+  **0.99×**: the sharp plane is thin and mostly bokeh, so there is little
+  fine texture to lose. Brightness moved a lot (63.2 → 43.2) but that is
+  scene-level — at a different generation canvas the model renders a
+  different video (SSIM 0.669), not a degraded copy of the same one.
+
+So: portraits, close-ups and shallow-DOF scenes hold up well; wide landscapes
+and detailed textures lose the most. Rollback is one setting —
+`LTX_HD_CANVAS=native` on the GPU worker, then restart it.
