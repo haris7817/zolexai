@@ -245,7 +245,9 @@ def build_config(
         max_attempts=int(settings.music_video_max_attempts),
         command_timeout_seconds=int(settings.music_video_command_timeout),
         render_concurrency=1,
-        render_gpu_ids=(),
+        # One lane, named, so the render command is handed a GPU id and the
+        # package's own validator sees a lane per worker.
+        render_gpu_ids=("0",),
         anchor_concurrency=1,
         enforce_latency_capacity=False,
         anchor_backend=anchor_backend,

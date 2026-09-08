@@ -1002,22 +1002,28 @@ class WorkerSettings(BaseSettings):
     deployment. The platform's own audio tier runs 15 (a user-approved
     quality trade, 27 Aug 2026)."""
 
-    music_video_shot_target_seconds: float = 4.5
-    music_video_shot_min_seconds: float = 2.0
-    music_video_shot_max_seconds: float = 5.0
-    """The shot ladder. Target and minimum are the package's own; the maximum
-    is 5.0 rather than their 7.0 because a shot up to 120 frames renders in
-    the package's minimum 121-frame window, and 121 is a MEASURED decoder
-    landing on this card while the counts between 121 and 193 are not (see
-    `_A2VID.measured_landings` in adapters/ltx.py). Every shot therefore
-    costs the same 5.04-second pass. `execution.shot_*_seconds` override."""
+    music_video_shot_min_seconds: float = 5.0
+    music_video_shot_target_seconds: float = 8.0
+    music_video_shot_max_seconds: float = 10.0
+    """The shot ladder, at the client's instruction (8 Sep 2026).
+
+    It does NOT make the model cheaper: rendering costs about 0.21 s per
+    frame with no meaningful per-shot fixed cost, measured at 121, 193 and
+    241 frames, so the same song costs the same however it is cut. What it
+    saves is everything a shot carries with it — one anchor still, one
+    normalise and one QA pass each. A 3-minute song goes from 41 shots to
+    23, which is about 100 s off the job.
+
+    The cost is a slower cut rhythm, which is a creative choice and theirs
+    to make. `execution.shot_*_seconds` override per deployment."""
 
     music_video_max_source_seconds: int = 300
     """The package's ceiling: five minutes of song."""
 
-    music_video_max_attempts: int = 3
-    """Render attempts per shot before the job fails (the package retries a
-    shot that fails its technical QA with a new seed)."""
+    music_video_max_attempts: int = 2
+    """Render attempts per shot before the job fails, at the client's
+    instruction (8 Sep 2026). The package retries only the shot that failed
+    its technical QA, with a new seed, and never restarts the job."""
 
     music_video_command_timeout: int = 7200
     """Wall-clock ceiling for any one external command the package runs."""
