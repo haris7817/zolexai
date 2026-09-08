@@ -2554,6 +2554,7 @@ AUTO_DIALOGUE_ENABLED=true
 AUTO_DIALOGUE_LAYOUT=native     # the client's second-revision format (default in code too)
 LTX_HD_CANVAS=720p              # 1280x704 / 704x1280 / 960x960, upscaled in-graph
 LTX_HD_UPSCALER=lanczos         # or seedvr2 — measured ~21 s per second of video; off
+LTX_HD_DELIVERY=4k              # or 1080p; 4K is one ffmpeg lanczos+NVENC resize, ~2 s per 10 s
 ```
 
 SeedVR2 weights, if ever enabled (already on `ltx-6000-2`):

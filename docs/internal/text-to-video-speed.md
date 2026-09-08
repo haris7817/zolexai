@@ -284,3 +284,26 @@ real water texture — with colour a touch warmer (saturation 61 → 72).
 
 **Decision: available, off.** It is the right tool for a "premium" pass on a
 short clip and the wrong tool for the 30 s budget. One setting turns it on.
+
+---
+
+## 4K delivery (8 Sep 2026) — one lanczos resize in ffmpeg, live
+
+Client request: 4K "in the same way we do 1920×1080". `LTX_HD_DELIVERY=4k`
+(or `execution.delivery` per job): 3840×2160 / 2160×3840 / 2160×2160 per
+ratio. The graph's closing node is parked at the generation canvas and
+ffmpeg does one scale-to-cover + centre-crop with lanczos, NVENC H.264,
+`-c:a copy` — the client's own package method. Not the graph's `ImageScale`,
+because 721 frames of 4K is ~72 GB as a tensor inside ComfyUI plus a CPU
+encode; ffmpeg streams it.
+
+| | measured |
+| --- | --- |
+| 10 s 1280×704 → 3840×2160 | 2.3 s (H.264 NVENC, 65 MB) / 2.4 s (HEVC, 26 MB) |
+| 5 s job end to end, 16:9 | 35.8 s wall incl. cold load → 3840×2160, 121 f, audio, 17 MB |
+| 5 s job end to end, 9:16 | 45.4 s → 2160×3840, 121 f, audio, 19 MB |
+
+H.264 over HEVC because browsers play it; ~2.5× the file for that. It is a
+resize: the *information* in the frame is still the 1280×704 the model
+generated, exactly as at 1080p — the client asked for 4K on those terms.
+Rollback: `LTX_HD_DELIVERY=1080p` and a worker restart.
