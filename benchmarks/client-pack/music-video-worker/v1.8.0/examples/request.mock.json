@@ -1,0 +1,10 @@
+{
+  "job_id": "mock-love-0001",
+  "audio": "/absolute/path/to/song.wav",
+  "prompt": "make me a love video",
+  "formats": ["16:9"],
+  "lip_sync": false,
+  "anchor_backend": "mock",
+  "render_backend": "mock"
+}
+

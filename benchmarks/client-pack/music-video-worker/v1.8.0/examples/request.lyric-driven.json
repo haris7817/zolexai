@@ -1,0 +1,8 @@
+{
+  "job_id": "mv-rap-lyrics-0001",
+  "audio": "/absolute/path/to/rap-song.wav",
+  "prompt": "make me a cinematic rap video according to the lyrics of the song",
+  "formats": ["16:9", "9:16"],
+  "lyric_mode": "automatic",
+  "lip_sync": true
+}

@@ -1,0 +1,8 @@
+{
+  "job_id": "reference-link-0001",
+  "audio": "/srv/zolexai/uploads/customer-song.wav",
+  "prompt": "make me a video according to the lyrics of the song",
+  "reference_video_url": "https://youtu.be/replace-with-approved-reference",
+  "formats": ["16:9"],
+  "lip_sync": true
+}

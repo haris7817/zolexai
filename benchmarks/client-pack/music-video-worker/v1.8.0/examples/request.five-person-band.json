@@ -1,0 +1,35 @@
+{
+  "job_id": "band-five-0001",
+  "audio": "/srv/zolexai/uploads/band-song.wav",
+  "prompt": "make me a cinematic performance video for this five-person band according to the lyrics",
+  "performers": [
+    {
+      "id": "lead-vocalist",
+      "role": "lead_vocalist",
+      "reference_images": ["/srv/zolexai/uploads/lead-front.jpg"]
+    },
+    {
+      "id": "guitarist",
+      "role": "guitarist",
+      "reference_images": ["/srv/zolexai/uploads/guitarist-front.jpg"]
+    },
+    {
+      "id": "bassist",
+      "role": "bassist",
+      "reference_images": ["/srv/zolexai/uploads/bassist-front.jpg"]
+    },
+    {
+      "id": "keyboardist",
+      "role": "keyboardist",
+      "reference_images": ["/srv/zolexai/uploads/keyboardist-front.jpg"]
+    },
+    {
+      "id": "drummer",
+      "role": "drummer",
+      "reference_images": ["/srv/zolexai/uploads/drummer-front.jpg"]
+    }
+  ],
+  "max_people_visible_per_shot": 5,
+  "formats": ["16:9"],
+  "lip_sync": true
+}

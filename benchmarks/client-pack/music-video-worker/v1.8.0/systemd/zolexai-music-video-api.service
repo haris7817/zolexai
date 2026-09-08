@@ -1,0 +1,19 @@
+[Unit]
+Description=ZolexAI Music Video API
+After=network.target
+
+[Service]
+Type=simple
+User=zolexai
+Group=zolexai
+WorkingDirectory=/srv/zolexai/music-video-worker
+EnvironmentFile=/etc/zolexai/music-video-worker.env
+ExecStart=/srv/zolexai/music-video-worker/.venv/bin/uvicorn zolex_music_worker.api:app --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+
