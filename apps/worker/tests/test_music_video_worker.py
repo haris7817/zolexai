@@ -307,6 +307,64 @@ def test_progress_moves_forward_through_the_packages_states() -> None:
     assert progress_for({"state": "failed"}) is None
 
 
+#: `JobProgressRequest._coherent_section`, reproduced. The API takes the four
+#: section fields together or not at all, rejects the whole report with a 422
+#: otherwise, and the worker reads that as a lost lease and fails the job.
+_SECTION_FIELDS = (
+    "section_index",
+    "section_total",
+    "section_start_seconds",
+    "section_end_seconds",
+)
+
+
+def _api_would_accept(details: dict) -> bool:
+    present = [f for f in _SECTION_FIELDS if details.get(f) is not None]
+    if present and len(present) != len(_SECTION_FIELDS):
+        return False
+    if "section_index" in details:
+        if not 1 <= details["section_index"] <= details["section_total"]:
+            return False
+    return True
+
+
+def test_every_progress_report_is_one_the_api_accepts() -> None:
+    """Job 0c7bf9a4, 8 Sep 2026: three attempts, three 422s, no video.
+
+    `progress_for` sent `section_index` and `section_total` and neither of the
+    two `section_*_seconds` the API requires alongside them. Every music video
+    failed the moment it started rendering — the only state that carries a
+    counter — and the failure surfaced as "LeaseLost: progress rejected",
+    which reads like a worker being fenced rather than a malformed payload.
+
+    A shot ladder has no song time range in `status.json`, so the range is
+    0.0/0.0 — what `StageReporter.section` sends for a caller that has none.
+    """
+    states = [
+        {"state": "planning"},
+        {"state": "building_identity_package"},
+        {"state": "generating_anchors"},
+        {"state": "rendering", "shot_index": 1, "shot_count": 10},
+        {"state": "rendering", "shot_index": 6, "shot_count": 10},
+        {"state": "rendering", "completed_shots": 10, "shot_count": 10},
+        # A status file mid-write can carry a shot number ahead of the count,
+        # and an index above the total is its own 422.
+        {"state": "rendering", "shot_index": 99, "shot_count": 10},
+        {"state": "rendering", "shot_index": 0, "shot_count": 10},
+        # No count at all: the counter is dropped rather than sent broken.
+        {"state": "rendering"},
+        {"state": "assembling"},
+    ]
+    for status in states:
+        reading = progress_for(status)
+        assert reading is not None, status
+        assert _api_would_accept(reading[3]), (status, reading[3])
+
+    countless = progress_for({"state": "rendering"})[3]
+    assert "section_index" not in countless
+    assert "Rendering your video" in progress_for({"state": "rendering"})[2]
+
+
 # ── The adapter's refusals ──────────────────────────────────────────────────
 
 

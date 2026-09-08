@@ -341,12 +341,28 @@ def progress_for(status: dict[str, Any]) -> tuple[str, int, str, dict[str, Any]]
         progress = low + int((high - low) * min(1.0, fraction))
         current = int(index) if index is not None else min(total, done + 1)
         message = f"Rendering shot {current} of {total}…" if total else "Rendering your video…"
-        return (
-            "generating",
-            progress,
-            message,
-            {"phase": "generating", "section_index": current, "section_total": total},
-        )
+        details: dict[str, Any] = {"phase": "generating"}
+        if total >= 1:
+            # The API takes the four section fields TOGETHER or not at all
+            # (`JobProgressRequest._coherent_section`), and rejects the whole
+            # report with a 422 otherwise — which the worker reads as a lost
+            # lease and fails the job on. Sending two of them failed every
+            # music video the moment it started rendering (job 0c7bf9a4,
+            # 8 Sep 2026: three attempts, three 422s, no video).
+            #
+            # A shot ladder has no song time range in `status.json` — only
+            # counts — so the range is 0.0/0.0, which is exactly what
+            # `StageReporter.section` sends for a caller that has none.
+            # The index is clamped because the API also requires 1 <= index
+            # <= total, and a status file mid-write can carry a shot number
+            # ahead of the count.
+            details |= {
+                "section_index": min(max(1, current), total),
+                "section_total": total,
+                "section_start_seconds": 0.0,
+                "section_end_seconds": 0.0,
+            }
+        return ("generating", progress, message, details)
     if state in _POST:
         progress, message = _POST[state]
         return "post_processing", progress, message, {"phase": "post_processing"}
