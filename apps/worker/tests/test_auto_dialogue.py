@@ -39,6 +39,7 @@ from worker.dialogue.provider import (
     parse,
     system_prompt,
 )
+from worker.adapters.base import AdapterError
 from worker.longform.language import soundscape_clause, supplied_dialogue
 
 SCENE = "A taxi driver picks up a passenger outside a rain-soaked station at night"
@@ -363,10 +364,18 @@ async def test_a_written_line_reaches_the_job() -> None:
     assert '"Where to tonight?"' in job.prompt
 
 
-async def test_a_failed_writer_renders_the_customers_own_prompt() -> None:
-    """Fail open. The customer asked for a video, not for dialogue, and the
-    right outcome is the video they asked for."""
-    original = _job(auto_dialogue=True)
+async def test_a_failed_writer_renders_the_customers_own_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail open where the feature came from the DEPLOYMENT.
+
+    Nobody asked for dialogue on this job — a deployment default did — so the
+    customer asked for a video and the right outcome is the video they asked
+    for. The parameter is deliberately absent: with it set, the contract is
+    the opposite one, below.
+    """
+    monkeypatch.setattr(settings, "auto_dialogue_enabled", True)
+    original = _job()
     for failure in (
         DialogueUnavailable("no key"),
         DialogueRejected("nonsense"),
@@ -374,6 +383,44 @@ async def test_a_failed_writer_renders_the_customers_own_prompt() -> None:
     ):
         job = await add_auto_dialogue(original, 15.0, providers=[_Writer(raises=failure)])
         assert job.prompt == SCENE, failure
+
+
+async def test_a_failed_writer_fails_a_job_that_asked_for_dialogue() -> None:
+    """Fail closed where the CUSTOMER asked.
+
+    The client's report on 8 Sep 2026: Auto Dialogue on, a video delivered
+    with an audio track and nobody speaking, and nothing anywhere saying so.
+    A silent video that looks like a success is the one outcome this must
+    never produce, so an explicit request that could not be written stops the
+    job with a message the customer can act on.
+    """
+    for failure in (
+        DialogueUnavailable("no key"),
+        DialogueRejected("nonsense"),
+        RuntimeError("something else entirely"),
+    ):
+        with pytest.raises(AdapterError) as caught:
+            await add_auto_dialogue(
+                _job(auto_dialogue=True), 15.0, providers=[_Writer(raises=failure)]
+            )
+        assert "Auto Dialogue is on" in caught.value.user_message, failure
+        assert caught.value.retriable is True
+
+
+async def test_a_prompt_that_already_speaks_is_not_a_failure() -> None:
+    """The refusals that are ANSWERS still render, switch on or not.
+
+    A customer who wrote their own quoted line asked for dialogue and has it;
+    failing that job would be failing it for succeeding.
+    """
+    spoken = _job('A taxi driver says, "Where to tonight?"', auto_dialogue=True)
+    job = await add_auto_dialogue(spoken, 15.0, providers=[_Writer(raises=RuntimeError("x"))])
+    assert job.prompt == spoken.prompt
+
+
+async def test_no_writer_at_all_fails_a_job_that_asked_for_dialogue() -> None:
+    with pytest.raises(AdapterError):
+        await add_auto_dialogue(_job(auto_dialogue=True), 15.0, providers=[])
 
 
 async def test_a_second_writer_gets_a_turn_after_a_failure() -> None:
@@ -577,6 +624,7 @@ async def test_a_native_script_the_validator_refuses_falls_open(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "auto_dialogue_layout", "native")
+    monkeypatch.setattr(settings, "auto_dialogue_enabled", True)
     bad = _Writer(answer=_native_answer(30, words=40))
-    job = await add_auto_dialogue(_job(auto_dialogue=True, duration="30s", layout="native"), 30.0, providers=[bad])
+    job = await add_auto_dialogue(_job(duration="30s", layout="native"), 30.0, providers=[bad])
     assert job.prompt == SCENE

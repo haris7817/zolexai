@@ -1,0 +1,46 @@
+LTX-2.5 SCREENPLAY-STYLE RULES
+
+USE WHEN
+Use screenplay structure for sustained dialogue, several performance beats, multiple speakers, or precise dramatic sequencing that becomes unclear in a single prose paragraph.
+
+FORMAT
+Use a concise scene header when it helps establish interior/exterior, location, or time of day. Follow with visible action and audible events in present tense. Use consistent character cues and exact quoted dialogue on separate lines. Preserve line breaks when they improve speaker and beat clarity.
+
+RECOMMENDED STRUCTURE
+SCENE HEADER
+Visible setting, lighting, subject placement, and current soundscape.
+
+ACTION
+Concrete present-tense action, physical performance cues, and camera behavior.
+
+CHARACTER NAME
+"Exact spoken dialogue."
+
+ACTION
+Visible reaction, next action, camera response, and synchronized sound.
+
+CHARACTER NAME
+"Exact spoken dialogue."
+
+WRITING RULES
+- Describe only what can be seen or heard.
+- Show emotion through gaze, breathing, posture, expression, gesture, pacing, and vocal delivery rather than internal-state labels.
+- Keep each beat concrete. The prompt may exceed eight sentences only when every line adds visual, performance, camera, timing, continuity, or audio direction.
+- Keep speaker identity and voice stable.
+- Put all spoken words in quotation marks and write them in the requested language.
+- Do not insert timestamps by default. Use chronological action and performance beats unless the active workflow explicitly requires timed alignment.
+
+CUTS INSIDE A SCREENPLAY
+A scene header does not create a reliable edit by itself. Whenever the camera changes to another distinct shot, describe the edit explicitly in prose. At each cut, state the new framing, recurring identity anchors, relevant lighting, and what happens to dialogue, music, effects, and ambience.
+
+AUTO DIALOGUE INTEGRATION
+If Auto Dialogue is disabled, do not invent dialogue. If Auto Dialogue is enabled upstream, respect its selected language and maximum-speaker value. Treat injected lines and speaker assignments as authoritative; do not add speakers or rewrite exact lines unless the user asked for rewriting.
+
+REJECT OR REWRITE WHEN
+- Dialogue lacks quotation marks or a clear speaker.
+- Internal thoughts are presented as visible facts.
+- Speaker identity, language, or voice changes unintentionally.
+- A cut is implied by a new framing but not named.
+- Dialogue and visible mouth performance compete with unrelated actions.
+- The screenplay includes model settings inside the scene text.
+

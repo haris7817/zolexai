@@ -84,8 +84,10 @@ from worker.comfy.ltx_graphs import (
 )
 from worker.comfy.ltx_prompts import (
     CHARACTER_REPLACEMENT_EXPOSURE,
+    CHARACTER_REPLACEMENT_EXPOSURE_STYLISED,
     CHARACTER_REPLACEMENT_SKIN,
     character_replacement_prompt,
+    looks_stylised,
     negative_for,
 )
 from worker.core.config import settings
@@ -111,6 +113,7 @@ from worker.media.skin_hold import (
     plan_hold,
     source_skin_level,
 )
+from worker.media.upscale import is_4k, upscale_clip
 from worker.providers.ltx_comfy import LtxComfyService
 
 logger = get_logger(__name__)
@@ -267,6 +270,12 @@ class ChainMetadata:
     """The first window's own skin level and chroma inside the source
     silhouette — what every later seed's dark skin is lifted back to."""
     skin_hold: bool = False
+    stylised: bool = False
+    """Whether this job was treated as a DRAWN character: the style terms
+    dropped from the negative prompt and every skin stage stood down. Recorded
+    because it is a heuristic over the prompt unless a deployment set
+    `subject_style`, and a wrong guess has to be visible in the artefact
+    rather than only in a log line."""
     """Whether every window's delivered frames went through the skin hold."""
     skin_source_y: float | None = None
     """The source performer's own skin luminance over the target frames —
@@ -290,6 +299,75 @@ class CharacterReplacementAdapter:
         if self._service is None:
             self._service = LtxComfyService()
         return self._service
+
+    # ── Delivery ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def delivers_4k(job: AdapterJob) -> bool:
+        """Whether the joined video is enlarged to 4K before it is uploaded.
+
+        `execution.delivery` on the job, else the deployment's
+        `character_replacement_delivery`. Anything unrecognised is native, so
+        a typo cannot silently quadruple every file."""
+        return is_4k(job.execution.get("delivery") or settings.character_replacement_delivery)
+
+    @staticmethod
+    def four_k_target(width: int, height: int) -> tuple[int, int]:
+        """The 4K frame for a canvas of this shape.
+
+        Computed from the delivered frame rather than looked up by ratio
+        label: Character Replacement takes whatever shape the customer's
+        source is, and a table would have to guess. 2160 on the SHORT side is
+        what makes 16:9 land on 3840x2160 and 9:16 on 2160x3840 — the same
+        frames Text to Video HD delivers. Both sides are forced even, which
+        H.264 requires.
+        """
+        if width <= 0 or height <= 0:
+            return (3840, 2160)
+        scale = 2160 / min(width, height)
+        return (
+            max(2, int(round(width * scale)) // 2 * 2),
+            max(2, int(round(height * scale)) // 2 * 2),
+        )
+
+    async def _deliver(
+        self, job: AdapterJob, reporter: StageReporter, output: Path, info: MediaInfo
+    ) -> AdapterResult:
+        """The finished file, optionally at 4K, as an `AdapterResult`.
+
+        One place, called by both paths, so the single-window job and the
+        chained one cannot deliver differently. The upscale runs LAST — after
+        the join and after the source audio is laid over — which is what
+        keeps it one encode with one audio stream and no seam.
+        """
+        if self.delivers_4k(job):
+            target = self.four_k_target(info.width, info.height)
+            await reporter.generating(GENERATE_TO - 1, "Upscaling your video to 4K…")
+            try:
+                output = await upscale_clip(
+                    output,
+                    job.workspace / "output_4k.mp4",
+                    target,
+                    nvenc_timeout=settings.ltx_comfy_transfer_timeout,
+                    cpu_timeout=settings.ltx_comfy_generation_timeout,
+                    run=lambda awaitable: cancellable(job, awaitable),
+                    log_extra={"job_id": job.job_id, "workflow_id": job.workflow_id},
+                )
+            except FfmpegError as exc:
+                raise AdapterError(
+                    "The finished video could not be upscaled to 4K.",
+                    internal_detail=str(exc)[-600:],
+                ) from exc
+            info = await probe_media(output)
+        await reporter.uploading()
+        return AdapterResult(
+            path=output,
+            content_type="video/mp4",
+            kind="video",
+            duration_seconds=info.duration_seconds,
+            width=info.width,
+            height=info.height,
+        )
 
     # ── Entry ────────────────────────────────────────────────────────────
 
@@ -371,7 +449,9 @@ class CharacterReplacementAdapter:
             positive=character_replacement_prompt(
                 job.prompt, exposure=self.exposure_clause(job)
             ),
-            negative=negative_for(WORKFLOW_ID, job.execution),
+            negative=negative_for(
+                WORKFLOW_ID, job.execution, drop_style=self.is_stylised(job)
+            ),
             video=video_name,
             image=image_name,
             seconds=seconds,
@@ -401,15 +481,7 @@ class CharacterReplacementAdapter:
             expected_seconds=planned_frames / fps,
             log_extra={"source_seconds": info.duration_seconds, "canvas": [width, height]},
         )
-        await reporter.uploading()
-        return AdapterResult(
-            path=output,
-            content_type="video/mp4",
-            kind="video",
-            duration_seconds=result_info.duration_seconds,
-            width=result_info.width,
-            height=result_info.height,
-        )
+        return await self._deliver(job, reporter, output, result_info)
 
     # ── Several windows: the whole source ────────────────────────────────
 
@@ -450,6 +522,7 @@ class CharacterReplacementAdapter:
                 "source_seconds": round(info.duration_seconds or 0.0, 3),
                 "windows": [window.seconds for window in windows],
                 "frames": [window.frames for window in windows],
+                "stylised": metadata.stylised,
                 "promised_seconds": round(metadata.promised_seconds, 3),
                 "reference_mode": mode,
                 "canvas": [width, height],
@@ -469,6 +542,7 @@ class CharacterReplacementAdapter:
         skin_anchoring = anchoring and self.anchors_skin(job)
         holding = self.holds_skin(job)
         metadata.skin_hold = holding
+        metadata.stylised = self.is_stylised(job)
         skin: SkinStats | None = None
         source_y: float | None = None
         pending_skin: dict[str, object] | None = None
@@ -485,7 +559,9 @@ class CharacterReplacementAdapter:
                 positive=character_replacement_prompt(
                     job.prompt, skin=skin_clause, exposure=self.exposure_clause(job)
                 ),
-                negative=negative_for(WORKFLOW_ID, job.execution),
+                negative=negative_for(
+                WORKFLOW_ID, job.execution, drop_style=self.is_stylised(job)
+            ),
                 video=video_name,
                 image=image_name,
                 seconds=window.seconds,
@@ -620,15 +696,7 @@ class CharacterReplacementAdapter:
                 "wall_seconds": round(sum(w.wall_seconds for w in metadata.windows), 1),
             },
         )
-        await reporter.uploading()
-        return AdapterResult(
-            path=output,
-            content_type="video/mp4",
-            kind="video",
-            duration_seconds=result_info.duration_seconds,
-            width=result_info.width,
-            height=result_info.height,
-        )
+        return await self._deliver(job, reporter, output, result_info)
 
     # ── One graph run ────────────────────────────────────────────────────
 
@@ -781,6 +849,34 @@ class CharacterReplacementAdapter:
         return plan_windows(total, per_window)
 
     @staticmethod
+    def is_stylised(job: AdapterJob) -> bool:
+        """Whether the new character is drawn rather than photographed.
+
+        `execution.subject_style` decides it outright — "cartoon", "stylised"
+        or "animated" for drawn, "human", "real" or "photoreal" for not — and
+        with nothing set the prompt is read (`looks_stylised`).
+
+        What it changes is every stage built on a photographed human, and
+        those are exactly the stages the client's 8 Sep 2026 Simpsons render
+        went through: the negative prompt asks the model to avoid "cartoon,
+        illustration, anime" while the positive asks for one, and the skin
+        machinery keys on the human skin chroma range, which a bright drawn
+        face sits close enough to for the gate to fire and pull it toward a
+        human skin level. A dark grey face is what that looks like.
+
+        (Their report also blamed ReActor and a per-frame SAM mask. Those run
+        in the client's own MULTI4 graph and have never run here — this
+        deployment's graph carries no face-swap branch at all, which is also
+        why our render is not the eleven-minute one they measured.)
+        """
+        raw = str(job.execution.get("subject_style") or "").strip().lower()
+        if raw in ("cartoon", "stylised", "stylized", "animated", "drawn", "nonhuman"):
+            return True
+        if raw in ("human", "real", "photoreal", "person"):
+            return False
+        return looks_stylised(job.prompt)
+
+    @staticmethod
     def exposure_clause(job: AdapterJob) -> str | None:
         """The client's lighting lock, or None when this deployment is without it.
 
@@ -795,10 +891,15 @@ class CharacterReplacementAdapter:
             raw = settings.character_replacement_exposure_clause
         if str(raw).strip().lower() in ("false", "no", "off", "0"):
             return None
+        if CharacterReplacementAdapter.is_stylised(job):
+            return CHARACTER_REPLACEMENT_EXPOSURE_STYLISED
         return CHARACTER_REPLACEMENT_EXPOSURE
 
     @staticmethod
     def chain_skin_clause(job: AdapterJob) -> bool:
+        if CharacterReplacementAdapter.is_stylised(job):
+            # Every one of these reads or writes HUMAN skin. See `is_stylised`.
+            return False
         raw = job.execution.get("chain_skin_clause")
         if raw is None:
             return bool(settings.character_replacement_chain_skin_clause)
@@ -817,6 +918,9 @@ class CharacterReplacementAdapter:
 
     @staticmethod
     def holds_skin(job: AdapterJob) -> bool:
+        if CharacterReplacementAdapter.is_stylised(job):
+            # Every one of these reads or writes HUMAN skin. See `is_stylised`.
+            return False
         raw = job.execution.get("skin_hold")
         if raw is None:
             return bool(settings.character_replacement_skin_hold)
@@ -837,6 +941,9 @@ class CharacterReplacementAdapter:
 
     @staticmethod
     def anchors_skin(job: AdapterJob) -> bool:
+        if CharacterReplacementAdapter.is_stylised(job):
+            # Every one of these reads or writes HUMAN skin. See `is_stylised`.
+            return False
         raw = job.execution.get("skin_anchor")
         if raw is None:
             return bool(settings.character_replacement_skin_anchor)

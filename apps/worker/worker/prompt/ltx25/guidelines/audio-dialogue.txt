@@ -1,0 +1,33 @@
+LTX-2.5 AUDIO AND DIALOGUE RULES
+
+SOUNDSCAPE
+Build audio from identifiable sources in the scene: room tone, wind, rain, traffic, footsteps, clothing, impacts, machinery, environmental activity, score, speech, or singing. Place a sound cue beside the action that creates it. Avoid generic phrases such as "cinematic audio" when a specific source can be named.
+
+DIALOGUE
+- Put every spoken line in quotation marks.
+- State the language and accent when relevant.
+- Use pronunciation-friendly spelling when a name or term could be spoken incorrectly.
+- Keep the visible speaker, speaker cue, and spoken line unambiguous.
+- Describe delivery through audible qualities such as whispering, muttering, projecting, shouting, a resonant voice, an energetic delivery, a radio-filtered voice, or a robotic monotone.
+- Preserve the same voice for a recurring character unless a change is explicitly requested.
+- Do not invent subtitles, captions, visible text, narration, or extra speakers.
+
+SYNCHRONIZATION
+Keep speech, singing, impacts, footsteps, and environmental reactions aligned with their visible causes. Avoid packing dialogue together with several unrelated mouth, head, hand, and body actions at the same instant. For a continuous shot, maintain one coherent soundscape. For multi-shot or screenplay scenes, state at every cut whether dialogue, music, sound effects, and ambience continue, change, fade, drop, or stop.
+
+AUTO DIALOGUE CONTRACT
+- OFF: generate no spoken lines unless the user supplied exact dialogue.
+- ON: use only dialogue supplied by the Auto Dialogue module.
+- LANGUAGE: preserve the language selected upstream; do not translate unless translation was requested.
+- MAX SPEAKERS: never exceed the selected maximum; assign each line to one stable, visibly identifiable speaker.
+- If Auto Dialogue fails or returns no usable dialogue, do not silently fabricate replacement lines. Return the upstream error or fall back to a non-dialogue prompt according to the product's existing error policy.
+
+USER-SUPPLIED DIALOGUE
+Treat exact user-supplied dialogue as authoritative. Correct spelling only when requested or when pronunciation-friendly spelling is necessary and meaning is preserved. Do not paraphrase, translate, expand, censor, or redistribute lines among speakers without permission.
+
+SILENT OUTPUT
+When silent video is requested, omit audio directions from the prompt and set silent generation externally. Never write API parameter names inside the prompt.
+
+NON-HUMAN OR CARTOON PATH
+When the separate cartoon/non-human pipeline is selected, keep the same audio rules: attribute every line to a stable visible speaker, describe the intended vocal character concretely, and synchronize speech with visible performance. Do not force human vocal qualities unless requested.
+

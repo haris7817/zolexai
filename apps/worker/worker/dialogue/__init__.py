@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from worker.adapters.base import AdapterJob
+from worker.adapters.base import AdapterError, AdapterJob
 from worker.core.config import settings
 from worker.core.logging import get_logger
 from worker.dialogue.decide import (
@@ -68,11 +68,80 @@ from worker.longform.language import spoken_language_name
 logger = get_logger(__name__)
 
 
+#: Skip reasons that are an ANSWER, not a failure. Each one describes a video
+#: that is correct without generated lines — the customer asked for silence,
+#: wrote their own dialogue, turned the sound off, or picked a workflow whose
+#: prompt continues something rather than inventing a scene. A job that asked
+#: for Auto Dialogue explicitly still renders on these, and the log says which
+#: one closed the gate.
+HONOURED_REFUSALS = frozenset(
+    {
+        "workflow_not_eligible",
+        "director_mode_owns_the_dialogue",
+        "sound_off",
+        "empty_prompt",
+        "forbidden_by_prompt",
+        "dialogue_already_present",
+        "too_short_to_speak",
+    }
+)
+
+
+def requested_explicitly(job: AdapterJob) -> bool:
+    """Whether this job's own parameters ASKED for automatic dialogue.
+
+    The distinction that `enabled_for` deliberately flattens. A deployment
+    default that quietly falls open is the right posture — the feature is an
+    improvement on a prompt, and a writer being rate-limited should not lose a
+    render. An explicit request is a different contract: the customer ticked
+    the box, the panel promised speech, and handing back a silent video that
+    looks like a successful generation is the failure the client reported on
+    8 Sep 2026. So an explicit request that could not be written stops the job
+    with a message, and the deployment default still falls open.
+    """
+    raw = job.parameters.get("auto_dialogue")
+    if raw is None or str(raw).strip() == "":
+        return False
+    return str(raw).strip().lower() not in ("false", "no", "off", "0")
+
+
+def max_speakers_for(job: AdapterJob) -> int:
+    """How many visible people the writer may give words to.
+
+    The client's request carries `maximum_speakers`; their own validator's
+    ceiling (`native.MAX_SPEAKERS`) is both the default and the cap, because
+    a screenplay with five voices in one pass is a voice the model has to
+    invent and then hold, and it does not.
+    """
+    raw = job.parameters.get("maximum_speakers")
+    if raw is None or str(raw).strip() == "":
+        raw = job.execution.get("maximum_speakers")
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return native.MAX_SPEAKERS
+    return max(1, min(value, native.MAX_SPEAKERS))
+
+
+def _unwritten(job: AdapterJob, detail: str) -> AdapterError:
+    return AdapterError(
+        "Auto Dialogue is on, but the dialogue writer could not be reached, "
+        "so this video would have come back with nobody speaking. Please try "
+        "again, or turn Auto Dialogue off to generate from your prompt as "
+        "written.",
+        internal_detail=f"auto_dialogue requested explicitly but no plan was produced: {detail}",
+        retriable=True,
+    )
+
+
 async def _write_native(
     job: AdapterJob,
     seconds: float,
     chain: list[DialogueProvider],
     language: str,
+    *,
+    strict: bool = False,
+    max_speakers: int = native.MAX_SPEAKERS,
 ) -> AdapterJob:
     """The client's native-dialogue format (their package's second revision,
     8 Sep 2026): one screenplay prompt, validated by their rules, for one
@@ -86,7 +155,7 @@ async def _write_native(
         prompt=job.prompt.strip(),
         seconds=seconds,
         language=language,
-        system=native.system_prompt(seconds),
+        system=native.system_prompt(seconds, max_speakers=max_speakers),
         user=native.user_prompt(job.prompt, seconds, language),
     )
     for provider in chain:
@@ -108,7 +177,7 @@ async def _write_native(
                         "auto_dialogue_no_speaker", extra={"job_id": job.job_id, "provider": name}
                     )
                     return job
-                plan = native.validate_script(raw, seconds)
+                plan = native.validate_script(raw, seconds, max_speakers=max_speakers)
                 break
             except DialogueUnavailable as exc:
                 logger.info(
@@ -157,6 +226,8 @@ async def _write_native(
         )
         return replace(job, prompt=enriched)
 
+    if strict:
+        raise _unwritten(job, "every provider failed on the native layout")
     logger.info(
         "auto_dialogue_skipped",
         extra={"job_id": job.job_id, "reason": "every_provider_failed"},
@@ -188,9 +259,11 @@ async def add_auto_dialogue(
 ) -> AdapterJob:
     """The job, with spoken lines written into its prompt — or unchanged.
 
-    Never raises. The only thing a caller can do with a failure here is render
-    the video anyway, so that decision is made once, here, rather than at
-    three call sites.
+    Raises only for a job that asked for Auto Dialogue **in its own
+    parameters** and could not be given any (`requested_explicitly`). Where
+    the feature comes from the deployment default it never raises: the only
+    thing a caller can do with that failure is render the video anyway, and
+    that decision is made once, here, rather than at three call sites.
 
     `carries_soundscape_clause` says whether the caller's prompt already picks
     up `soundscape_clause` downstream. The ComfyUI text-to-video path does, so
@@ -198,11 +271,15 @@ async def add_auto_dialogue(
     from the job's text alone, so this composes the rule in. Neither path
     changes at all when no line is written.
     """
+    strict = requested_explicitly(job)
     reason = skip_reason(job, seconds, enabled=enabled_for(job))
     if reason:
         logger.info(
-            "auto_dialogue_skipped", extra={"job_id": job.job_id, "reason": reason}
+            "auto_dialogue_skipped",
+            extra={"job_id": job.job_id, "reason": reason, "requested": strict},
         )
+        if strict and reason not in HONOURED_REFUSALS:
+            raise _unwritten(job, reason)
         return job
 
     language = spoken_language_name(job.parameters, job.execution)
@@ -212,12 +289,23 @@ async def add_auto_dialogue(
             "auto_dialogue_skipped",
             extra={"job_id": job.job_id, "reason": "no_provider_available"},
         )
+        if strict:
+            raise _unwritten(
+                job, "no dialogue writer is configured on this deployment"
+            )
         return job
 
     layout = str(job.execution.get("auto_dialogue_layout") or settings.auto_dialogue_layout)
     layout = layout.strip().lower()
     if layout == "native":
-        return await _write_native(job, seconds, chain, language)
+        return await _write_native(
+            job,
+            seconds,
+            chain,
+            language,
+            strict=strict,
+            max_speakers=max_speakers_for(job),
+        )
 
     request = DialogueRequest(prompt=job.prompt.strip(), seconds=seconds, language=language)
     for provider in chain:
@@ -276,6 +364,8 @@ async def add_auto_dialogue(
         )
         return replace(job, prompt=enriched)
 
+    if strict:
+        raise _unwritten(job, "every provider failed")
     logger.info(
         "auto_dialogue_skipped",
         extra={"job_id": job.job_id, "reason": "every_provider_failed"},
@@ -285,11 +375,14 @@ async def add_auto_dialogue(
 
 __all__ = [
     "AUTO_DIALOGUE_WORKFLOWS",
+    "HONOURED_REFUSALS",
     "Dialogue",
     "Line",
     "Speaker",
     "add_auto_dialogue",
     "compose",
     "enabled_for",
+    "max_speakers_for",
+    "requested_explicitly",
     "skip_reason",
 ]

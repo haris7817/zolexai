@@ -57,6 +57,14 @@ logger = get_logger(__name__)
 _BEGIN = "===DIALOGUE_BEGIN==="
 _END = "===DIALOGUE_END==="
 
+#: The same two markers, public, because this provider chain now carries a
+#: second kind of request: `worker/prompt/ltx25` asks the same two models to
+#: rewrite a prompt. Anything building its own `system`/`user` text has to
+#: agree with `_extract_json` on where the JSON starts, and a private name
+#: copied into another module is an agreement that breaks silently.
+JSON_BEGIN = _BEGIN
+JSON_END = _END
+
 #: Statuses no retry can fix: no key, wrong key, wrong model, bad request.
 _PERMANENT_STATUS = frozenset({400, 401, 403, 404, 422})
 

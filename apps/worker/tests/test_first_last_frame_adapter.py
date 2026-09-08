@@ -18,7 +18,11 @@ from tests.conftest import needs_ffmpeg
 from tests.test_ltx_comfy import FakeLtxComfy, _job, _recorder, _rendered, _service
 from worker.adapters.base import AdapterError, AdapterInput
 from worker.adapters.ltx_comfy import LtxComfyAdapter
-from worker.comfy.ltx_prompts import FIRST_LAST_FRAME_NEGATIVE
+from worker.comfy.ltx_prompts import (
+    FIRST_LAST_FRAME_NEGATIVE,
+    UNIVERSAL_NEGATIVE,
+    compose_negative,
+)
 from worker.media.ffmpeg import ffmpeg
 
 
@@ -72,7 +76,11 @@ async def test_first_frame_only_runs_the_graph_with_a_one_image_conditioning_nod
         for e in prompt.values()
         if e["class_type"] == "CLIPTextEncode"
     }
-    assert texts["CLIP Text Encode (Prompt) negative"] == FIRST_LAST_FRAME_NEGATIVE
+    # The client's universal block in front of the pack's own short list
+    # (8 Sep 2026), the overlap between them spent once.
+    assert texts["CLIP Text Encode (Prompt) negative"] == compose_negative(
+        UNIVERSAL_NEGATIVE, FIRST_LAST_FRAME_NEGATIVE
+    )
     assert texts["CLIP Text Encode (Prompt) positive"].startswith(
         "A koi pond at dawn, mist over the water."
     )

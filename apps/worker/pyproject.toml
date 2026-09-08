@@ -43,6 +43,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["worker*", "zolex_music_worker*"]
 
+[tool.setuptools.package-data]
+# The client's LTX 2.5 guideline pack ships as data, not code: it is their
+# text, read at runtime and never edited here. The image copies the whole
+# `worker` tree so this matters only to a real wheel build, which is exactly
+# when a missing .txt would be discovered late.
+"worker.prompt.ltx25" = ["guidelines/*.txt", "guidelines/*.json"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

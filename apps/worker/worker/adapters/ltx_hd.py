@@ -53,6 +53,9 @@ from worker.core.logging import get_logger
 from worker.dialogue import add_auto_dialogue
 from worker.longform import GENERATE_FROM, GENERATE_TO, StageReporter
 from worker.media import FfmpegError, OutputExpectation, ffmpeg, verify_output
+from worker.media.upscale import DELIVERY_4K as _DELIVERY_4K
+from worker.media.upscale import is_4k, upscale_clip
+from worker.prompt.ltx25 import apply_guidelines
 from worker.providers.ltx_comfy import LtxComfyService
 
 logger = get_logger(__name__)
@@ -112,11 +115,7 @@ DRAFT_CANVAS: dict[str, tuple[int, int]] = {
 
 #: The 4K frame per ratio (client request, 8 Sep 2026), reached from the
 #: generated frame by one lanczos resize in ffmpeg — see `_upscale_4k`.
-DELIVERY_4K: dict[str, tuple[int, int]] = {
-    "16:9": (3840, 2160),
-    "9:16": (2160, 3840),
-    "1:1": (2160, 2160),
-}
+DELIVERY_4K = _DELIVERY_4K
 
 
 class LtxHdAdapter:
@@ -157,6 +156,12 @@ class LtxHdAdapter:
         # exactly the shape generated speech is honest in.
         # No soundscape clause runs on this path — the graph is driven from
         # the job's own text — so the anti-repeat rule comes with the lines.
+        # The client's LTX 2.5 guideline pack, when this deployment asks
+        # for it: one rewrite of the customer's description to the
+        # vendor's rules. BEFORE the dialogue writer on purpose — see
+        # `worker/prompt/ltx25/__init__.py` — so no model is ever in a
+        # position to paraphrase a line that has to be spoken verbatim.
+        job = await apply_guidelines(job)
         job = await add_auto_dialogue(job, seconds, carries_soundscape_clause=False)
         service = self.service()
 
@@ -204,6 +209,11 @@ class LtxHdAdapter:
                 "aspect": aspect,
                 "canvas": canvas or "native",
                 "ai_upscale": ai_upscale,
+                # The prompt as the graph receives it, dialogue and all. See
+                # the same log in `ltx_comfy.render_pass` for why.
+                "positive": job.prompt.strip(),
+                "negative": self._negative(job),
+                "quoted_lines": job.prompt.count('"') // 2,
             },
         )
 
@@ -384,57 +394,29 @@ class LtxHdAdapter:
         `ltx_hd_delivery`. Client request, 8 Sep 2026: 4K "in the same way we
         do 1920x1080" — a lanczos resize, no model. Anything unrecognised is
         1080p, so a typo cannot silently quadruple every file."""
-        raw = str(job.execution.get("delivery") or settings.ltx_hd_delivery or "1080p")
-        return "4k" if raw.strip().lower() in ("4k", "2160p", "uhd") else "1080p"
+        raw = job.execution.get("delivery") or settings.ltx_hd_delivery or "1080p"
+        return "4k" if is_4k(raw) else "1080p"
 
     async def _upscale_4k(self, job: AdapterJob, clip: Path, target: tuple[int, int]) -> Path:
-        """Lanczos to 4K with ffmpeg, the way the client's own package does
-        1080p (`upscale_to_1080` in `integration_example.py`): scale to cover,
-        centre-crop to the exact frame, NVENC, and the soundtrack copied
-        through untouched (`-c:a copy`).
-
-        Done here rather than in the graph's `ImageScale` on purpose: a 4K
-        frame batch of 721 frames is ~72 GB as a tensor inside ComfyUI plus a
-        CPU encode, where ffmpeg streams it and NVENC does it in seconds —
-        measured 2.3 s for a 10 s clip (8 Sep 2026). H.264 rather than HEVC
-        because browsers play it; the file is ~2.5x larger for that.
-        """
-        width, height = target
+        """Lanczos to 4K with ffmpeg — `worker/media/upscale.py`, which is
+        this method's own body, moved there on 8 Sep 2026 so Character
+        Replacement finishes the same way and the two cannot drift."""
         out = job.workspace / "output_4k.mp4"
-        scale = (
-            f"scale=w={width}:h={height}:force_original_aspect_ratio=increase:flags=lanczos,"
-            f"crop={width}:{height}"
-        )
-        common = ["-i", str(clip), "-vf", scale, "-pix_fmt", "yuv420p", "-c:a", "copy",
-                  "-movflags", "+faststart"]
         try:
-            try:
-                await cancellable(
-                    job,
-                    ffmpeg([*common, "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", str(out)],
-                           timeout=settings.ltx_comfy_transfer_timeout),
-                )
-            except FfmpegError as exc:
-                # No NVENC on this box: the CPU encoder, slower and identical.
-                logger.warning(
-                    "ltx_hd_4k_nvenc_unavailable",
-                    extra={"job_id": job.job_id, "detail": str(exc)[-300:]},
-                )
-                await cancellable(
-                    job,
-                    ffmpeg([*common, "-c:v", "libx264", "-preset", "fast", "-crf", "18", str(out)],
-                           timeout=settings.ltx_comfy_generation_timeout),
-                )
+            return await upscale_clip(
+                clip,
+                out,
+                target,
+                nvenc_timeout=settings.ltx_comfy_transfer_timeout,
+                cpu_timeout=settings.ltx_comfy_generation_timeout,
+                run=lambda awaitable: cancellable(job, awaitable),
+                log_extra={"job_id": job.job_id, "workflow_id": job.workflow_id},
+            )
         except FfmpegError as exc:
             raise AdapterError(
                 "The finished video could not be upscaled to 4K.",
                 internal_detail=str(exc)[-600:],
             ) from exc
-        logger.info(
-            "ltx_hd_upscaled_4k",
-            extra={"job_id": job.job_id, "target": f"{width}x{height}"},
-        )
-        return out
 
     @staticmethod
     def _ai_upscale(job: AdapterJob) -> bool:

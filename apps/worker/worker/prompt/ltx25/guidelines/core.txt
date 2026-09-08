@@ -1,0 +1,60 @@
+LTX-2.5 PROMPTING CORE
+
+PURPOSE
+This file contains the shared rules used before applying a form-specific guide. It is an implementation-oriented paraphrase of the official LTX-2.5 prompting guidance; it is not a replacement model configuration.
+
+1. CHOOSE ONE PROMPT FORM
+- SINGLE_SHOT: one uninterrupted camera take.
+- MULTI_SHOT: two to four connected shots separated by explicitly named edits.
+- SCREENPLAY: dialogue-heavy or multi-beat scene whose clarity benefits from scene headers, action lines, speaker cues, and line breaks.
+- DUB_IT: replacement speech for one speaker in an existing video. Use dub-it.txt only.
+
+Do not mix forms accidentally. A camera pan, track, orbit, tilt, push-in, or pullback is movement inside one shot. A hard cut, match cut, dissolve, or other named edit begins another shot.
+
+2. BUILD ONLY THE CONTENT THAT CONTROLS THE RESULT
+Use this order when it applies:
+shot and cinematic treatment -> scene and lighting -> recurring subject identifiers -> chronological action -> camera behavior and resulting framing -> synchronized audio -> continuity
+
+Include:
+- A concrete shot scale, angle, genre, or visual treatment.
+- One physically coherent setting with compatible lighting, palette, surfaces, and atmosphere.
+- A natural beginning-to-end action written in present tense.
+- Only character details that help identify or direct the person: age range, hair, wardrobe, distinguishing features, posture, gaze, facial expression, gesture, or delivery.
+- Camera movement relative to the subject, including what the movement reveals or how the framing ends.
+- Audible sources that matter: ambience, movement sounds, machinery, weather, music, speech, or singing.
+
+3. KEEP THE PROMPT FOCUSED
+- Prefer a few clear characters and readable actions over a crowded frame.
+- Give each sentence a visual, performance, camera, continuity, or audio job.
+- Keep one coherent lighting logic within each shot.
+- Use observable physical cues instead of abstract emotion labels.
+- Prefer plausible, readable movement over chaotic or highly complex physics.
+- Treat critical spelling, titles, labels, and logos as post-production work because exact on-screen text may not remain stable.
+
+4. KEEP GENERATION SETTINGS OUTSIDE THE PROMPT
+Do not write the model name or version, total clip duration, aspect ratio, resolution, frame rate, seed, CFG, steps, sampler, LoRA, guidance, upscaler, or API field names inside generated prompt text. These belong in the request parameters or backend configuration.
+
+Use automatic duration externally when the product supports it and the requested shot does not need an exact endpoint. Use a fixed external duration when a required last frame is supplied. Prompt complexity must fit the externally selected duration, but the duration itself must not appear in the prompt.
+
+5. IMAGE-TO-VIDEO BOUNDARY
+Treat the supplied image as the opening visual anchor. Do not rewrite a long inventory of details already visible. Describe what changes: performance, body movement, environmental movement, camera behavior, audio, and the intended ending state. Preserve one continuous take unless a cut away from the opening image is explicitly requested. If dedicated camera controls are active, the text must not request a conflicting move.
+
+6. CONTINUITY
+Keep recurring identity, wardrobe, object appearance, scene geography, lighting, visual style, and voice consistent unless the user explicitly requests and motivates a change. Re-identify recurring subjects concisely after every cut. Never create unexplained costume, identity, location, lighting, or voice changes.
+
+7. PIPELINE BOUNDARIES
+- Do not duplicate the universal negative prompt in the positive prompt or in a tool-specific negative prompt.
+- Respect externally supplied dialogue, language, speaker count, silent-output choice, input image, last frame, and camera-control values.
+- Do not invent dialogue, narration, captions, titles, logos, extra speakers, or scene changes unless requested or supplied by an enabled upstream feature.
+
+8. OUTPUT CONTRACT
+- Simple single-shot, image-to-video, and multi-shot prompts: one clean paragraph without a heading by default.
+- Screenplay prompts: preserve useful multiline formatting.
+- Dub-It: return the exact one-line structure defined in dub-it.txt.
+- Requested generation parameters: return separately from prompt text.
+- Output the finished prompt, not an explanation of how it was written.
+
+SOURCE BASIS
+https://ltx.io/blog/ltx-2-5-prompt-guide
+https://docs.ltx.io/models/ltx-2-5
+

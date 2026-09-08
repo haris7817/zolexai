@@ -63,6 +63,15 @@ settings:
   # this workflow is; the Director machinery stays in the repository, unrouted.
   prompt_modes: false
 
+  # Auto Dialogue (client request, 8 Sep 2026). Off unless the customer
+  # turns it on: the worker writes spoken lines into a prompt that has none,
+  # and a prompt that already carries quoted words or asks for silence is
+  # left exactly as written. Turning it on is a promise the worker keeps by
+  # FAILING a job whose lines could not be written, rather than delivering a
+  # silent video that looks like a success. See
+  # apps/worker/worker/dialogue/__init__.py.
+  auto_dialogue: true
+
 capabilities:
   download: true
   extend: true
@@ -99,6 +108,16 @@ execution:
   # canvas_from_source_image: true — CLI runtime only: the picture decides
   #                          the shape (the ltx_comfy runtime resizes to the
   #                          selected canvas, as the ZIP graph does).
+
+  # ltx25_guidelines: true  — rewrite the customer's prompt to the client's
+  #                           LTX 2.5 guideline pack before rendering (one
+  #                           language-model call; form chosen from the text,
+  #                           result validated, every failure falls back to
+  #                           the prompt as written). Default off: it wants a
+  #                           GPU A/B against the deterministic structuring it
+  #                           replaces. See apps/worker/worker/prompt/ltx25/.
+  # ltx25_form: single_shot | multi_shot | screenplay — pin the form instead
+  #                           of reading it from the prompt.
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

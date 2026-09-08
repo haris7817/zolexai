@@ -130,6 +130,11 @@ export const workflowSchema = z.object({
     // A sound on/off control, shown only at the Best quality level — that
     // engine generates native audio, Fast does not. Defaulted likewise.
     sound: z.boolean().default(false),
+    // The single-pass video workflows: an Auto Dialogue switch, and with it
+    // a dialogue language and a maximum speaker count. Defaulted for the
+    // same reason as `lyrics` — the flag that reached every client as
+    // `false` because one reader was never taught it.
+    auto_dialogue: z.boolean().default(false),
     // Music Video's band (the client's music-video worker, 8 Sep 2026): a
     // role and a description beside each `performer_N` picture input, sent
     // as the `performers` parameter. Defaulted likewise.

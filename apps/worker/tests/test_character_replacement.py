@@ -12,16 +12,25 @@ delivered sample is the acceptance test).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from tests.conftest import make_clip, needs_ffmpeg
+from tests.conftest import make_clip, needs_4k_encode, needs_ffmpeg
 from tests.test_ltx_comfy import FakeLtxComfy, _recorder, _service
 from worker.adapters.base import AdapterError, AdapterInput, AdapterJob
 from worker.adapters.character_replacement import CharacterReplacementAdapter
 from worker.adapters.registry import get_adapter
-from worker.comfy.ltx_prompts import CHARACTER_REPLACEMENT_LEAD, CHARACTER_REPLACEMENT_NEGATIVE
+from worker.comfy.ltx_prompts import (
+    CHARACTER_REPLACEMENT_EXPOSURE,
+    CHARACTER_REPLACEMENT_EXPOSURE_STYLISED,
+    CHARACTER_REPLACEMENT_LEAD,
+    CHARACTER_REPLACEMENT_NEGATIVE,
+    UNIVERSAL_NEGATIVE,
+    compose_negative,
+    negative_for,
+)
 from worker.core.config import settings
 from worker.media import probe_media
 from worker.media.ffmpeg import ffmpeg
@@ -117,7 +126,13 @@ async def test_replacement_runs_the_client_graph_end_to_end(tmp_path: Path) -> N
     negative = prompt[conditioning["inputs"]["negative"][0]]["inputs"]["text"]
     assert positive.startswith(CHARACTER_REPLACEMENT_LEAD)
     assert positive.endswith("a man with short black curls and a charcoal suit")
-    assert negative == CHARACTER_REPLACEMENT_NEGATIVE
+    # The client's universal block in front of the pack's own list, the
+    # overlap between them spent once (8 Sep 2026). This prompt describes a
+    # photographed man, so the style terms stay.
+    assert negative == compose_negative(UNIVERSAL_NEGATIVE, CHARACTER_REPLACEMENT_NEGATIVE)
+    assert negative.startswith("temporal flicker, ")
+    assert "source actor identity" in negative
+    assert "cartoon" in negative
     [combine] = [e for e in prompt.values() if e["class_type"] == "VHS_VideoCombine"]
     assert combine["inputs"]["filename_prefix"] == "zolexai/job-cr-1/output"
     seeds = [e["inputs"]["noise_seed"] for e in prompt.values() if e["class_type"] == "RandomNoise"]
@@ -346,3 +361,163 @@ def test_a_customer_seed_replaces_the_graphs_fixed_seeds(tmp_path: Path) -> None
     ] == [7, 7 + 7_919]
     assert CharacterReplacementAdapter.seed_base(_job(tmp_path, [], seed=7)) == 7
     assert CharacterReplacementAdapter.seed_base(_job(tmp_path, [])) is None
+
+
+# ── A drawn character ───────────────────────────────────────────────────────
+
+
+def test_a_drawn_character_is_recognised_from_the_prompt() -> None:
+    """The heuristic, and the override in both directions.
+
+    Named a heuristic in `is_stylised` and treated as one here: what matters
+    is that `execution.subject_style` beats it either way, so a wrong guess
+    is a deployment line rather than a release.
+    """
+    stylised = CharacterReplacementAdapter.is_stylised
+    assert stylised(_job(Path("."), [], prompt="Homer Simpson in a yellow shirt")) is True
+    assert stylised(_job(Path("."), [], prompt="an anime swordswoman")) is True
+    assert stylised(_job(Path("."), [], prompt="a man in a navy blazer")) is False
+
+    job = _job(Path("."), [], prompt="a man in a navy blazer")
+    assert stylised(replace(job, execution={**job.execution, "subject_style": "cartoon"})) is True
+    forced = replace(job, execution={**job.execution, "subject_style": "human"})
+    assert stylised(replace(forced, prompt="Homer Simpson")) is False
+
+
+def test_a_drawn_character_stands_every_skin_stage_down() -> None:
+    """The half of the client's 8 Sep 2026 Simpsons report that lands here.
+
+    Their diagnosis named ReActor and a per-frame SAM mask, neither of which
+    exists in this deployment's graph. What does exist is a negative prompt
+    that lists the look the prompt asked for as a fault, and three stages
+    built on the human skin chroma range that a bright drawn face sits close
+    enough to for the gate to fire on it — which is what a dark grey face
+    looks like from the outside.
+    """
+    job = _job(Path("."), [], prompt="Homer Simpson walking through Springfield")
+    adapter = CharacterReplacementAdapter
+    assert adapter.chain_skin_clause(job) is False
+    assert adapter.holds_skin(job) is False
+    assert adapter.anchors_skin(job) is False
+
+    negative = negative_for("character-replacement", job.execution, drop_style=True)
+    for term in ("cartoon", "anime", "illustration", "CGI"):
+        assert term.lower() not in [t.strip().lower() for t in negative.split(",")]
+    # Every fault that is still a fault on a drawing survives.
+    assert "identity drift" in negative
+    assert "source actor identity" in negative
+
+    # The lighting lock is kept, in words a drawing has.
+    clause = adapter.exposure_clause(job)
+    assert clause == CHARACTER_REPLACEMENT_EXPOSURE_STYLISED
+    assert "skin" not in clause
+    assert "ever grows darker, greyer or duller" in clause
+
+
+def test_a_photographed_character_keeps_every_skin_stage() -> None:
+    """The stable path, unchanged. The switch above must not reach it."""
+    job = _job(Path("."), [], prompt="a man with short black curls and a charcoal suit")
+    adapter = CharacterReplacementAdapter
+    assert adapter.chain_skin_clause(job) is True
+    assert adapter.holds_skin(job) is True
+    assert adapter.anchors_skin(job) is True
+    assert adapter.exposure_clause(job) == CHARACTER_REPLACEMENT_EXPOSURE
+
+
+# ── The 4K finish ───────────────────────────────────────────────────────────
+
+
+def test_the_4k_frame_follows_the_sources_own_shape() -> None:
+    """2160 on the SHORT side, both sides even.
+
+    Computed rather than looked up because this tool takes whatever shape the
+    customer's source is: 16:9 and 9:16 land on the frames Text to Video HD
+    delivers, and an unusual ratio is enlarged rather than cropped to a
+    guess.
+    """
+    target = CharacterReplacementAdapter.four_k_target
+    assert target(1920, 1080) == (3840, 2160)
+    assert target(1080, 1920) == (2160, 3840)
+    assert target(960, 960) == (2160, 2160)
+    for width, height in ((1280, 704), (736, 1280), (100, 33)):
+        w, h = target(width, height)
+        assert min(w, h) == 2160
+        assert w % 2 == 0 and h % 2 == 0
+
+
+def test_4k_delivery_is_off_until_a_deployment_asks() -> None:
+    job = _job(Path("."), [], prompt="a man in a navy blazer")
+    assert CharacterReplacementAdapter.delivers_4k(job) is False
+    on = replace(job, execution={**job.execution, "delivery": "4k"})
+    assert CharacterReplacementAdapter.delivers_4k(on) is True
+    # A typo cannot silently quadruple every file.
+    typo = replace(job, execution={**job.execution, "delivery": "4kk"})
+    assert CharacterReplacementAdapter.delivers_4k(typo) is False
+
+
+@needs_ffmpeg
+async def test_the_delivery_stage_enlarges_joins_and_re_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 4K wiring, at a frame any machine can encode.
+
+    Its twin below runs the real 3840x2160 and needs the memory for it; this
+    one runs the same code path — `delivers_4k` → `four_k_target` →
+    `upscale_clip` → re-probe → `AdapterResult` — with the target shrunk, so
+    the wiring is verified everywhere and only the frame size is conditional.
+    """
+    monkeypatch.setattr(
+        CharacterReplacementAdapter, "four_k_target", staticmethod(lambda w, h: (960, 540))
+    )
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    source = await make_clip(tmp_path / "source.mp4", 8.6, audio=True, size="256x144")
+    reference = await _still(tmp_path / "reference.png")
+    fake = FakeLtxComfy(await _rendered_for(tmp_path / "render.mp4", 8, 8.6))
+    adapter = CharacterReplacementAdapter(service=_service(fake))
+    on_progress, reports = _recorder()
+
+    job = _job(
+        workspace,
+        [
+            _input("source_video", source, "video"),
+            _input("reference_image", reference, "image"),
+        ],
+        prompt="a man with short black curls and a charcoal suit",
+    )
+    result = await adapter.run(
+        replace(job, execution={**job.execution, "delivery": "4k"}), on_progress
+    )
+    assert result.path.name == "output_4k.mp4"
+    assert (result.width, result.height) == (960, 540)
+    # The soundtrack survives the enlargement: it is copied, not re-encoded.
+    assert (await probe_media(result.path)).has_audio
+    assert [status for status, _, _ in reports][-1] == "uploading"
+
+
+@needs_ffmpeg
+@needs_4k_encode
+async def test_a_4k_job_delivers_the_enlarged_file(tmp_path: Path) -> None:
+    """The finish runs ONCE, after the render, and the result reports it."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    source = await make_clip(tmp_path / "source.mp4", 8.6, audio=True, size="256x144")
+    reference = await _still(tmp_path / "reference.png")
+    fake = FakeLtxComfy(await _rendered_for(tmp_path / "render.mp4", 8, 8.6))
+    adapter = CharacterReplacementAdapter(service=_service(fake))
+    on_progress, reports = _recorder()
+
+    job = _job(
+        workspace,
+        [
+            _input("source_video", source, "video"),
+            _input("reference_image", reference, "image"),
+        ],
+        prompt="a man with short black curls and a charcoal suit",
+    )
+    result = await adapter.run(
+        replace(job, execution={**job.execution, "delivery": "4k"}), on_progress
+    )
+    assert result.path.name == "output_4k.mp4"
+    assert min(result.width, result.height) == 2160
+    assert [status for status, _, _ in reports][-1] == "uploading"

@@ -123,6 +123,19 @@ execution:
   #                           single-window job too.
   # negative_prompt: "…"    — overrides the house negative prompt (default:
   #                           derived from the client's own graph).
+  # universal_negative: false — drop the universal negative block composed in
+  #                           front of it (8 Sep 2026; default on).
+  # subject_style: cartoon | human — what the new character IS. Default is
+  #                           read from the prompt. A drawn character stands
+  #                           down every stage built on human skin (the skin
+  #                           clause, the skin hold, the skin anchor) and
+  #                           drops "cartoon, illustration, anime, CGI" from
+  #                           the negative prompt, where they were asking the
+  #                           model to avoid the look the prompt requested.
+  # delivery: native | 4k   — the frame the finished video is delivered at.
+  #                           4K is one lanczos-and-NVENC pass after the
+  #                           windows are joined, the same finish Text to
+  #                           Video HD ships (default: native).
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

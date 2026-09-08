@@ -130,6 +130,8 @@ class GenerationService:
             prompt_mode=params.prompt_mode,
             dialogue_language=params.dialogue_language,
             sound=params.sound,
+            auto_dialogue=params.auto_dialogue,
+            maximum_speakers=params.maximum_speakers,
             performers=params.performers,
         )
 

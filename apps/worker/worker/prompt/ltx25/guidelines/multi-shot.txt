@@ -1,0 +1,36 @@
+LTX-2.5 MULTI-SHOT RULES
+
+USE WHEN
+Use only when the user wants actual edited shots rather than one camera move. Prefer two to four connected shots in a single generation.
+
+OUTPUT SHAPE
+Write one chronological paragraph or a short connected prose sequence. Do not output a numbered shot list. Do not rely on screenplay sluglines alone to communicate edits.
+
+OPENING SHOT
+Establish the first shot with its scale, angle, subject placement, setting, lighting, action, and active soundscape.
+
+EVERY CUT MUST INCLUDE
+1. An explicit transition stated naturally, for example: "A hard cut transitions to...", "The view cuts to...", "A match cut connects...", or "The image dissolves into..."
+2. The new shot scale and camera angle.
+3. Who or what appears in frame and where it is positioned.
+4. The setting and any intentional lighting change.
+5. The same concise visual anchors for every recurring person or object.
+6. A direct statement that music, dialogue, effects, and ambience continue, change, fade, drop, or stop.
+
+SHOT DESIGN
+Give each shot one clear purpose, such as establishing the geography, showing a decisive action, revealing a detail, or capturing a reaction. Keep every action chronological and readable. Re-establish the recurring subject after each cut instead of relying only on pronouns.
+
+CONTINUITY
+Preserve character identity, body characteristics, wardrobe, object appearance, scene geography, lighting logic, visual style, and voice across cuts unless the prompt explicitly establishes a motivated change of time or place. Audio continuity must be described at every cut.
+
+CAMERA MOVEMENT VERSUS EDITING
+"The camera pans/tracks/circles/pushes" continues the current shot. "A hard cut/match cut/dissolve transitions" begins another shot. Never use movement language as a substitute for an edit, and never describe an edit as if it were continuous camera travel.
+
+REJECT OR REWRITE WHEN
+- More than four shots are requested without a strong reason.
+- A cut is implied but not named.
+- A new shot fails to re-establish framing or the recurring subject.
+- Audio continuity is missing at a cut.
+- Clothing, identity, lighting, geography, visual style, or voice changes without explanation.
+- Several competing actions or camera instructions occur simultaneously.
+

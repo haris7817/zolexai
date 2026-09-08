@@ -27,7 +27,12 @@ from worker.adapters.ltx_comfy import LtxComfyAdapter, PassSpec
 from worker.adapters.registry import available_runtimes, get_adapter
 from worker.comfy.client import ComfyClient, ComfyError, evict_comfy_vram
 from worker.comfy.ltx_graphs import ASPECT_LABELS
-from worker.comfy.ltx_prompts import TEXT_TO_VIDEO_NEGATIVE, negative_for
+from worker.comfy.ltx_prompts import (
+    TEXT_TO_VIDEO_NEGATIVE,
+    UNIVERSAL_NEGATIVE,
+    compose_negative,
+    negative_for,
+)
 from worker.core.config import settings
 from worker.providers.ltx_comfy import LtxComfyService
 from worker.providers.router import get_provider
@@ -273,7 +278,9 @@ async def test_text_to_video_runs_the_client_graph_end_to_end(tmp_path: Path) ->
     assert texts["CLIP Text Encode (Prompt) positive"].startswith(
         "A koi pond at dawn, mist over the water."
     )
-    assert texts["CLIP Text Encode (Prompt) negative"] == TEXT_TO_VIDEO_NEGATIVE
+    assert texts["CLIP Text Encode (Prompt) negative"] == compose_negative(
+        UNIVERSAL_NEGATIVE, TEXT_TO_VIDEO_NEGATIVE
+    )
     [slider] = [e for e in prompt.values() if e["class_type"] == "mxSlider"]
     assert slider["inputs"]["Xi"] == 5
     [selector] = [e for e in prompt.values() if e["class_type"] == "ResolutionSelector"]
@@ -582,8 +589,34 @@ def test_referenced_models_cover_the_whole_pack() -> None:
 
 
 def test_negative_prompt_can_be_overridden_per_deployment() -> None:
-    assert negative_for("text-to-video", {}) == TEXT_TO_VIDEO_NEGATIVE
-    assert negative_for("text-to-video", {"negative_prompt": "  custom  "}) == "custom"
+    """A deployment override still replaces the WORKFLOW's list. What it no
+    longer replaces is the universal block in front of it (client request,
+    8 Sep 2026) — that is what `universal_negative` is for."""
+    assert negative_for("text-to-video", {}) == compose_negative(
+        UNIVERSAL_NEGATIVE, TEXT_TO_VIDEO_NEGATIVE
+    )
+    assert negative_for("text-to-video", {"negative_prompt": "  custom  "}) == (
+        compose_negative(UNIVERSAL_NEGATIVE, "custom")
+    )
+    assert negative_for(
+        "text-to-video", {"negative_prompt": "custom", "universal_negative": False}
+    ) == "custom"
+    assert negative_for(
+        "text-to-video", {"universal_negative": "off"}
+    ) == TEXT_TO_VIDEO_NEGATIVE
+
+
+def test_the_universal_block_leads_and_is_never_said_twice() -> None:
+    """It is composed in FRONT of the workflow's own list, and the large
+    overlap between the two is spent once: a term repeated is not stronger for
+    being repeated, it is one more token in a budget the encoder truncates."""
+    text = negative_for("text-to-video", {})
+    terms = [t.strip() for t in text.split(",")]
+    assert terms[0] == "temporal flicker"
+    assert len(terms) == len({t.casefold() for t in terms})
+    # Both halves survived the merge.
+    assert "texture crawling" in terms       # theirs
+    assert "wardrobe flicker" in terms       # ours
 
 
 def test_positive_prompt_keeps_the_customers_words_first(tmp_path: Path) -> None:

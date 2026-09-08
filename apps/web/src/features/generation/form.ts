@@ -59,6 +59,15 @@ export interface GenerationFormValues {
    *  modes. Holds its value while the mode is "standard" so switching back
    *  and forth does not forget the choice — it is simply not submitted. */
   dialogueLanguage: string | null;
+  /** Whether the backend writes spoken lines into a prompt that has none.
+   *  Only meaningful when the workflow declares `settings.auto_dialogue`.
+   *  False at rest: turning it on is a promise the backend keeps by FAILING
+   *  a job whose lines could not be written, and a switch that defaulted on
+   *  would turn a writer outage into a wall of failed generations. */
+  autoDialogue: boolean;
+  /** How many visible people Auto Dialogue may give words to. Holds its
+   *  value while the switch is off, exactly like `dialogueLanguage`. */
+  maximumSpeakers: number;
   /** role → asset id. null while an optional input is unfilled. */
   inputs: Record<string, string | null>;
   /** picture input role (`performer_N`) → that band member's role and
@@ -99,11 +108,21 @@ export const PERFORMER_DESCRIPTION_MAX_LENGTH = 300;
 const DEFAULT_PERFORMER: PerformerFormValue = { role: "performer", description: "" };
 
 /**
- * Languages Director mode will write dialogue in. "auto" follows the idea's
- * own language. Deliberately shorter than LYRIC_LANGUAGES: this list is only
- * what the video runtime's vendor documents as validated for generated
- * speech, and offering a language the voices cannot deliver would be a
- * control the result ignores.
+ * The most people Auto Dialogue may give words to in one pass.
+ *
+ * The worker's own validator ceiling (`native.MAX_SPEAKERS`), and the reason
+ * is the pass: one generation holds one voice per visible speaker, and past
+ * four it starts reusing them.
+ */
+export const MAX_SPEAKERS = 4;
+
+/**
+ * Languages the spoken track can be written in — Director mode's plan and
+ * Auto Dialogue's lines alike. "auto" follows the idea's own language.
+ * Deliberately shorter than LYRIC_LANGUAGES: this list is only what the video
+ * runtime's vendor documents as validated for generated speech, and offering
+ * a language the voices cannot deliver would be a control the result
+ * ignores.
  */
 export const DIALOGUE_LANGUAGES = [
   "auto",
@@ -233,10 +252,11 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
       "Choose a prompt mode.",
     ),
     // Unlike choiceOrNull fields, null stays valid while the control exists:
-    // the language only applies in Director mode, and the resting state on
-    // Standard is simply "not applicable" rather than an error.
+    // the language only applies once something is actually writing speech —
+    // Director mode, or Auto Dialogue — and the resting state beside a
+    // switched-off control is "not applicable" rather than an error.
     dialogueLanguage: z.union([z.string(), z.null()]).superRefine((value, ctx) => {
-      if (!workflow.settings.prompt_modes) {
+      if (!offersSpeech(workflow)) {
         if (value !== null) {
           ctx.addIssue({ code: "custom", message: "Not available for this tool." });
         }
@@ -246,6 +266,21 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
         ctx.addIssue({ code: "custom", message: "Choose a dialogue language." });
       }
     }),
+
+    // Auto Dialogue: off unless the tool declares it AND the customer asks.
+    // Off is the resting state on purpose — turning it on is a promise the
+    // worker keeps by FAILING a job it cannot write lines for, and a switch
+    // that defaults on would turn a writer outage into a wall of failures.
+    autoDialogue: z.boolean().superRefine((value, ctx) => {
+      if (value && !workflow.settings.auto_dialogue) {
+        ctx.addIssue({ code: "custom", message: "Not available for this tool." });
+      }
+    }),
+    maximumSpeakers: z
+      .number()
+      .int()
+      .min(1, "At least one person has to speak.")
+      .max(MAX_SPEAKERS, `One pass holds at most ${MAX_SPEAKERS} voices.`),
 
     // Required roles are enforced here, which is what makes Video to Video's
     // OPTIONAL reference image work with no bespoke rule (directive §14).
@@ -302,6 +337,17 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
 }
 
 /** Fresh defaults for a workflow — first supported value of each control. */
+/**
+ * Whether this tool writes speech the customer can choose a language for.
+ *
+ * Two controls reach the same question. Director mode plans dialogue; Auto
+ * Dialogue writes it into an ordinary prompt. The API accepts
+ * `dialogue_language` from either, so the panel offers it from either.
+ */
+export function offersSpeech(workflow: Workflow): boolean {
+  return workflow.settings.prompt_modes || workflow.settings.auto_dialogue;
+}
+
 export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
   return {
     prompt: "",
@@ -316,7 +362,9 @@ export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
     lyrics: "",
     lyricsLanguage: workflow.settings.lyrics ? LYRIC_LANGUAGES[0] : null,
     promptMode: workflow.settings.prompt_modes ? PROMPT_MODES[0] : null,
-    dialogueLanguage: workflow.settings.prompt_modes ? DIALOGUE_LANGUAGES[0] : null,
+    dialogueLanguage: offersSpeech(workflow) ? DIALOGUE_LANGUAGES[0] : null,
+    autoDialogue: false,
+    maximumSpeakers: MAX_SPEAKERS,
     inputs: Object.fromEntries(workflow.inputs.map((input) => [input.role, null])),
     performers: Object.fromEntries(
       performerInputs(workflow).map((input) => [input.role, { ...DEFAULT_PERFORMER }]),
@@ -422,11 +470,15 @@ export function preserveValues(
         ? previous.promptMode
         : defaults.promptMode,
     dialogueLanguage:
-      workflow.settings.prompt_modes &&
+      offersSpeech(workflow) &&
       previous.dialogueLanguage &&
       (DIALOGUE_LANGUAGES as readonly string[]).includes(previous.dialogueLanguage)
         ? previous.dialogueLanguage
         : defaults.dialogueLanguage,
+    autoDialogue: workflow.settings.auto_dialogue ? previous.autoDialogue : false,
+    maximumSpeakers: workflow.settings.auto_dialogue
+      ? previous.maximumSpeakers
+      : defaults.maximumSpeakers,
     aspectRatio:
       previous.aspectRatio && workflow.supported_aspect_ratios.includes(previous.aspectRatio)
         ? previous.aspectRatio
@@ -509,10 +561,24 @@ export function toCreateInput(
       ...(workflow.settings.prompt_modes && values.promptMode === "director"
         ? { prompt_mode: "director" }
         : {}),
-      ...(workflow.settings.prompt_modes &&
-      values.promptMode === "director" &&
-      values.dialogueLanguage
+      ...((workflow.settings.prompt_modes &&
+        values.promptMode === "director" &&
+        values.dialogueLanguage) ||
+      (workflow.settings.auto_dialogue && values.autoDialogue && values.dialogueLanguage)
         ? { dialogue_language: values.dialogueLanguage }
+        : {}),
+      // Sent EXPLICITLY in both directions once the tool offers the control,
+      // which is the one place this differs from prompt mode's absence-is-
+      // default contract. It has to: deployments run with
+      // AUTO_DIALOGUE_ENABLED=true, so an omitted field means ON, and a
+      // customer looking at a switch they left alone would get spoken lines
+      // anyway. A panel that says off must mean off. Absence still means the
+      // deployment default — that path now belongs to clients that have
+      // never heard of the field, which is what it was always for.
+      ...(workflow.settings.auto_dialogue
+        ? values.autoDialogue
+          ? { auto_dialogue: true, maximum_speakers: values.maximumSpeakers }
+          : { auto_dialogue: false }
         : {}),
       // No band is expressed by ABSENCE, so a request from a client that
       // has never heard of performers is byte-identical to one with five
@@ -605,8 +671,18 @@ export function valuesFromJob(
     ),
     dialogueLanguage: pick(
       parameters.dialogue_language,
-      workflow.settings.prompt_modes ? DIALOGUE_LANGUAGES : [],
+      offersSpeech(workflow) ? DIALOGUE_LANGUAGES : [],
       defaults.dialogueLanguage,
     ),
+    autoDialogue: workflow.settings.auto_dialogue
+      ? parameters.auto_dialogue === true
+      : defaults.autoDialogue,
+    maximumSpeakers:
+      workflow.settings.auto_dialogue &&
+      typeof parameters.maximum_speakers === "number" &&
+      parameters.maximum_speakers >= 1 &&
+      parameters.maximum_speakers <= MAX_SPEAKERS
+        ? parameters.maximum_speakers
+        : defaults.maximumSpeakers,
   };
 }

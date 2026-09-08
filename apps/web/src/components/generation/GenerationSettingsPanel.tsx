@@ -19,6 +19,8 @@ import {
 import {
   DIALOGUE_LANGUAGES,
   LYRIC_LANGUAGES,
+  MAX_SPEAKERS,
+  offersSpeech,
   PERFORMER_DESCRIPTION_MAX_LENGTH,
   PERFORMER_ROLES,
   type GenerationFormValues,
@@ -75,6 +77,8 @@ export function GenerationSettingsPanel({
   /** Only meaningful on workflows that declare `settings.prompt_modes`. */
   const directorMode =
     workflow.settings.prompt_modes && form.watch("promptMode") === "director";
+  /** Only meaningful on workflows that declare `settings.auto_dialogue`. */
+  const autoDialogue = workflow.settings.auto_dialogue && form.watch("autoDialogue");
 
   /**
    * The selected quality level narrows what the other controls offer
@@ -257,7 +261,7 @@ export function GenerationSettingsPanel({
             stated it picks one. A customer asked "what language you got the
             backend?", which is what a control hidden behind a mode they never
             switched into sounds like from outside. */}
-        {workflow.settings.prompt_modes ? (
+        {offersSpeech(workflow) ? (
           <>
             <SectionLabel as="label" htmlFor="zx-dialogue-language">
               {directorMode ? "Dialogue language" : "Spoken language"}
@@ -284,6 +288,64 @@ export function GenerationSettingsPanel({
                 </SelectField>
               )}
             />
+          </>
+        ) : null}
+
+        {/* ── Auto Dialogue ─────────────────────────────────────────
+            The switch the worker's dialogue writer never had. On, the backend
+            writes spoken lines into a prompt that has none and the people on
+            screen say them; off (the resting state), the prompt is generated
+            exactly as written. Turning it on is a PROMISE: a job that asks
+            for dialogue and cannot be given any fails with a message rather
+            than delivering a silent video that looks like a success — which
+            is what the client received on 8 Sep 2026. */}
+        {workflow.settings.auto_dialogue ? (
+          <>
+            <Controller
+              control={form.control}
+              name="autoDialogue"
+              render={({ field }) => (
+                <div className={field.value ? "mb-2" : "mb-6"}>
+                  <ToggleField
+                    id="zx-auto-dialogue"
+                    label="Auto Dialogue"
+                    checked={field.value}
+                    onChange={field.onChange}
+                  />
+                </div>
+              )}
+            />
+            {autoDialogue ? (
+              <>
+                <p className="text-zx-text-muted mb-4 text-[11.5px] leading-[1.5]">
+                  The people in your scene are given lines to speak. Write your
+                  own dialogue in quotes and this steps aside.
+                </p>
+                <SectionLabel as="label" htmlFor="zx-max-speakers">
+                  Maximum speakers
+                </SectionLabel>
+                <Controller
+                  control={form.control}
+                  name="maximumSpeakers"
+                  render={({ field }) => (
+                    <SelectField
+                      id="zx-max-speakers"
+                      value={String(field.value)}
+                      onChange={(event) => field.onChange(Number(event.target.value))}
+                      className="mb-6"
+                    >
+                      {Array.from({ length: MAX_SPEAKERS }, (_, index) => index + 1).map(
+                        (count) => (
+                          <option key={count} value={count}>
+                            {count === 1 ? "1 person" : `Up to ${count} people`}
+                          </option>
+                        ),
+                      )}
+                    </SelectField>
+                  )}
+                />
+              </>
+            ) : null}
           </>
         ) : null}
 

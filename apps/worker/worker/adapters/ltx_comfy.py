@@ -76,6 +76,7 @@ from worker.media import (
     probe_media,
     verify_output,
 )
+from worker.prompt.ltx25 import apply_guidelines
 from worker.providers.ltx_comfy import LtxComfyService
 
 logger = get_logger(__name__)
@@ -170,6 +171,12 @@ class LtxComfyAdapter:
         # speech honest here and would not across a seam. Returns the job
         # untouched on every refusal and every failure, so nothing below this
         # line knows it happened.
+        # The client's LTX 2.5 guideline pack, when this deployment asks
+        # for it: one rewrite of the customer's description to the
+        # vendor's rules. BEFORE the dialogue writer on purpose — see
+        # `worker/prompt/ltx25/__init__.py` — so no model is ever in a
+        # position to paraphrase a line that has to be spoken verbatim.
+        job = await apply_guidelines(job)
         job = await add_auto_dialogue(job, seconds)
 
         first = job.input_for("source_image")
@@ -374,6 +381,20 @@ class LtxComfyAdapter:
         Public because the extension engine drives it once per section. The
         returned probe is of the file at `output`.
         """
+        # What actually reaches the graph's prompt boxes. The client asked for
+        # this after a render came back silent (8 Sep 2026): with only the
+        # job's own prompt in the log there was no way to tell a dialogue
+        # writer that never ran from one whose lines never reached the node.
+        logger.info(
+            "comfy_prompt_submitted",
+            extra={
+                "job_id": job.job_id,
+                "workflow_id": job.workflow_id,
+                "positive": spec.positive,
+                "negative": spec.negative,
+                "quoted_lines": spec.positive.count('"') // 2,
+            },
+        )
         service = self.service()
         edits = GenerationEdits(
             positive=spec.positive,

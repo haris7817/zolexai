@@ -1,0 +1,87 @@
+LTX-2.5 PROMPT VALIDATION
+
+VALIDATION LEVELS
+ERROR: the prompt form or instruction is incompatible and must be corrected before generation.
+WARNING: generation can proceed, but adherence or continuity may be less reliable.
+PASS: the relevant check is satisfied.
+
+1. FORM SELECTION
+ERROR if no form is selected from SINGLE_SHOT, MULTI_SHOT, SCREENPLAY, or DUB_IT.
+ERROR if DUB_IT is combined with scene-generation instructions.
+ERROR if SINGLE_SHOT contains a cut, dissolve, montage, or other edit.
+ERROR if MULTI_SHOT changes framing as a new shot without explicitly naming the edit.
+WARNING if MULTI_SHOT contains more than four shots.
+
+2. PROMPT CONTENT
+PASS when the prompt provides the relevant shot, scene, action, character, camera, and audio information in chronological order.
+WARNING when a required element is missing and cannot be inferred from an input image or upstream control.
+WARNING when the prompt contains several simultaneous actions, crowded direction, incompatible lighting, conflicting camera movement, or chaotic physics.
+WARNING when emotion is expressed only as an abstract label rather than through visible or audible performance.
+
+3. SETTINGS SEPARATION
+ERROR if generated prompt text contains the model name/version or embeds backend controls such as total duration, aspect ratio, resolution, FPS, seed, CFG, steps, sampler, LoRA, guidance, upscaler, or API field names.
+PASS when settings remain external to the prompt.
+ERROR if automatic duration is combined with a required last frame.
+
+4. SINGLE-SHOT CHECKS
+PASS when output is one flowing paragraph written in present tense with one uninterrupted soundscape.
+WARNING when the prompt is substantially shorter than four useful sentences or longer than eight without a clear need.
+ERROR when multiple unrelated scenes or incompatible camera moves are requested inside the take.
+
+5. MULTI-SHOT CHECKS
+PASS when the prompt contains two to four connected shots.
+For every cut, require:
+- a named transition;
+- new shot scale and angle;
+- subject/object placement;
+- setting and relevant lighting;
+- recurring identity anchors;
+- explicit audio continuity.
+ERROR when any required cut field is absent.
+WARNING when a recurring subject is referenced only by a pronoun after a cut.
+
+6. SCREENPLAY CHECKS
+ERROR when spoken dialogue lacks quotation marks or a stable speaker cue.
+ERROR when a scene header is used as the only indication of a cut.
+WARNING when internal thoughts are stated instead of visible or audible behavior.
+ERROR when speaker language, identity, or voice changes without instruction.
+
+7. AUDIO AND DIALOGUE CHECKS
+ERROR when Auto Dialogue is OFF but unsupplied dialogue is invented.
+ERROR when generated dialogue exceeds the upstream maximum-speaker value.
+ERROR when dialogue is translated away from the selected language without a translation request.
+ERROR when a silent-output request still contains sound directions.
+WARNING when a sound is separated from or contradicts its visible cause.
+For every multi-shot cut, ERROR when the prompt does not say whether dialogue, music, effects, and ambience continue, change, fade, drop, or stop.
+
+8. DUB-IT CHECKS
+Required one-line pattern:
+[Speaker] is speaking [language/accent], saying: "[complete replacement dialogue]"
+ERROR when there is more than one speaker, missing dialogue, missing quotation marks, non-native target script, or scene/camera/generation instructions.
+WARNING when the replacement is clearly much shorter or longer than the source speech timing.
+
+9. IMAGE-TO-VIDEO CHECKS
+PASS when the input image remains the first-frame anchor and the text focuses on changes, motion, camera, performance, and audio.
+WARNING when the prompt redundantly re-describes most static image content.
+ERROR when textual camera direction conflicts with an active dedicated camera control.
+ERROR when an unexplained cut abandons the opening-image composition.
+
+10. CONTINUITY AND RELIABILITY
+ERROR for unexplained changes in recurring identity, wardrobe, object appearance, location, lighting, visual style, or voice.
+WARNING for critical on-screen spelling, titles, labels, or logos; require post-production verification.
+WARNING for highly chaotic physics, excessive characters, or too many competing actions.
+PASS when every requested change is motivated and all unrequested recurring elements remain consistent.
+
+11. PIPELINE DUPLICATION
+WARNING when the positive prompt repeats universal-negative concepts as long lists of prohibitions.
+WARNING when the tool-specific negative prompt duplicates the universal negative prompt.
+PASS when universal and tool-specific negative prompts are combined once by the backend.
+
+FINAL RESULT
+Return:
+- VALID when there are no ERROR items.
+- VALID_WITH_WARNINGS when there are no ERROR items but at least one WARNING.
+- INVALID when at least one ERROR is present.
+
+When INVALID, return the failed rule identifiers and a corrected prompt. When VALID_WITH_WARNINGS, return the warnings without silently changing user intent.
+

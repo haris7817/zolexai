@@ -28,6 +28,11 @@ export interface CreateGenerationInput {
     /** Only ever sent as "director" — Standard mode is expressed by absence. */
     prompt_mode?: string;
     dialogue_language?: string;
+    /** Only ever sent as true — the deployment default is expressed by
+     *  absence, so a client that never heard of it is byte-identical. */
+    auto_dialogue?: boolean;
+    /** Sent only alongside `auto_dialogue: true`; the API rejects it alone. */
+    maximum_speakers?: number;
     /** The band, on workflows declaring `settings.performers`: one entry per
      *  member, paired with the `performer_{slot}` picture input. Sent only
      *  when at least one member is given. */

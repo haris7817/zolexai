@@ -1,0 +1,38 @@
+LTX-2.5 SINGLE-SHOT RULES
+
+USE WHEN
+Use for one continuous take, smooth camera movement, intimate performance, dialogue that must remain lip-synchronized in one framing, or image-to-video anchored to an opening image.
+
+OUTPUT SHAPE
+- Return one flowing paragraph.
+- A typical complete prompt contains roughly four to eight descriptive sentences, but clarity is more important than forcing a count.
+- Use present-tense active verbs.
+- Keep the action chronological with connectors such as "as," "while," "then," and "after."
+
+CONSTRUCTION ORDER
+1. Begin with the shot scale, angle, and visual treatment.
+2. Establish the setting, atmosphere, and one coherent lighting design.
+3. Identify the subject only as much as needed for recognition and performance.
+4. Describe one readable progression of natural action.
+5. Describe camera movement relative to the subject and state the resulting framing or reveal.
+6. Place ambience, sound effects, music, speech, or singing beside the visible action that produces or motivates it.
+
+CAMERA
+All camera movement remains inside the same take. Panning, tracking, circling, tilting, pushing in, pulling back, handheld movement, or holding a static frame must flow without an edit. Do not use "cut," "hard cut," "match cut," "dissolve," "montage," or another editing transition.
+
+FRAMING AND DETAIL
+Match detail to framing. Wide shots prioritize geography, subject placement, and movement through space. Medium shots prioritize performance and interaction. Close views may carry finer facial, material, hand, or lip detail.
+
+AUDIO AND DIALOGUE
+Maintain one continuous soundscape. Put exact spoken words in quotation marks. Include language, accent, tone, or vocal quality only when relevant. Do not add dialogue when it was not requested or supplied by the enabled Auto Dialogue path.
+
+IMAGE-TO-VIDEO
+Use the input image as the first-frame anchor. Focus the prompt on motion, camera, performance, environmental change, and audio rather than re-describing the complete image. If a final frame is supplied, describe a plausible transition toward that ending while the fixed duration remains outside the prompt.
+
+REJECT OR REWRITE WHEN
+- The prompt contains an editing transition.
+- It asks for incompatible camera moves at the same moment.
+- It contains multiple unrelated scenes or unexplained changes.
+- It overloads the take with too many simultaneous actions.
+- The soundtrack changes without an audible or visible cause.
+

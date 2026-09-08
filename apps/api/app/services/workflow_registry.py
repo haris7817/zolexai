@@ -114,6 +114,8 @@ class WorkflowRegistry:
         prompt_mode: str | None = None,
         dialogue_language: str | None = None,
         sound: bool | None = None,
+        auto_dialogue: bool | None = None,
+        maximum_speakers: int | None = None,
         performers: list[Any] | None = None,
     ) -> WorkflowDefinition:
         """Checks a submitted generation request against its workflow.
@@ -243,19 +245,44 @@ class WorkflowRegistry:
                 )
 
         # Prompt modes follow the lyrics policy exactly: a workflow that does
-        # not declare the control rejects the parameter, and the dependent
-        # language choice is only meaningful inside Director mode.
+        # not declare the control rejects the parameter.
+        # Auto Dialogue follows the same policy, and it is the SECOND control
+        # that makes a dialogue language meaningful — so the language check
+        # below asks whether either one is declared rather than only the
+        # prompt-mode toggle. Without that, Text to Video (no prompt modes,
+        # Auto Dialogue on) would 400 the exact request the client sends.
+        speaks = definition.settings.prompt_modes or definition.settings.auto_dialogue
+
+        if not definition.settings.auto_dialogue:
+            if auto_dialogue is not None:
+                problems.append(
+                    {
+                        "field": "auto_dialogue",
+                        "reason": "This tool does not offer automatic dialogue.",
+                    }
+                )
+            if maximum_speakers is not None:
+                problems.append(
+                    {
+                        "field": "maximum_speakers",
+                        "reason": "This tool does not offer automatic dialogue.",
+                    }
+                )
+        elif maximum_speakers is not None and not auto_dialogue:
+            # A speaker count with the switch off (or unstated) is a client
+            # that believes it asked for dialogue and did not. Saying so is
+            # the whole point of the change this arrived with.
+            problems.append(
+                {
+                    "field": "maximum_speakers",
+                    "reason": "A maximum speaker count needs auto_dialogue: true.",
+                }
+            )
+
         if not definition.settings.prompt_modes:
             if prompt_mode is not None:
                 problems.append(
                     {"field": "prompt_mode", "reason": "This tool does not offer prompt modes."}
-                )
-            if dialogue_language is not None:
-                problems.append(
-                    {
-                        "field": "dialogue_language",
-                        "reason": "This tool does not take a dialogue language.",
-                    }
                 )
         else:
             if prompt_mode is not None and prompt_mode not in PROMPT_MODES:
@@ -266,22 +293,34 @@ class WorkflowRegistry:
                         "allowed": list(PROMPT_MODES),
                     }
                 )
-            if dialogue_language is not None:
-                # Accepted in BOTH prompt modes since 28 Aug 2026. It was
-                # Director-only on the reasoning that only a plan writes
-                # dialogue — but the runtime generates audio for every video,
-                # from the same prompt, and with no language stated it picks
-                # one. The customer's report was that everything came back
-                # speaking something other than English, and the control that
-                # would have fixed it was refused with a 400.
-                if dialogue_language not in DIALOGUE_LANGUAGES:
-                    problems.append(
-                        {
-                            "field": "dialogue_language",
-                            "reason": "Unsupported dialogue language.",
-                            "allowed": list(DIALOGUE_LANGUAGES),
-                        }
-                    )
+
+        # Accepted in BOTH prompt modes since 28 Aug 2026. It was
+        # Director-only on the reasoning that only a plan writes dialogue —
+        # but the runtime generates audio for every video, from the same
+        # prompt, and with no language stated it picks one. The customer's
+        # report was that everything came back speaking something other than
+        # English, and the control that would have fixed it was refused with
+        # a 400.
+        if dialogue_language is not None:
+            if not speaks:
+                problems.append(
+                    {
+                        "field": "dialogue_language",
+                        "reason": "This tool does not take a dialogue language.",
+                    }
+                )
+            elif dialogue_language.strip().lower() not in DIALOGUE_LANGUAGES:
+                # Compared case-insensitively since 8 Sep 2026. The panel
+                # sends the lowercase value from its own list; the client's
+                # own integration sends "English", and a 400 on the letter E
+                # is a rejection nobody can read.
+                problems.append(
+                    {
+                        "field": "dialogue_language",
+                        "reason": "Unsupported dialogue language.",
+                        "allowed": list(DIALOGUE_LANGUAGES),
+                    }
+                )
 
         # The band follows the lyrics policy: a workflow that does not declare
         # the control rejects the parameter. Where it is declared, every entry

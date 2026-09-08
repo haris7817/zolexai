@@ -13,6 +13,8 @@ and these are the values a job puts in them.
 
 from __future__ import annotations
 
+import re
+
 #: Graph 02's negative prompt, verbatim. Short and scene-free, so it is also
 #: what Text to Video ships when a deployment says nothing.
 FIRST_LAST_FRAME_NEGATIVE = (
@@ -91,6 +93,94 @@ CHARACTER_REPLACEMENT_NEGATIVE = (
     "blacks, lighter skin, inconsistent face color, inconsistent hand color"
 )
 
+# ── The universal negative ─────────────────────────────────────────────────
+
+#: The client's universal negative prompt (8 Sep 2026), verbatim.
+#:
+#: It arrived with an instruction to paste it into the graph's empty negative
+#: box, which is not what this deployment needed — every workflow here already
+#: submits a negative prompt derived from the pack's own graphs. What it is
+#: worth is what it carries that ours did not: the temporal terms
+#: ("temporal flicker", "frame-to-frame inconsistency", "texture crawling"),
+#: the continuity terms ("unintended color changes", "paint color changes"),
+#: and the physics terms ("broken physics", "floating objects"). So it is
+#: composed IN FRONT of each workflow's own list rather than replacing it,
+#: and `_dedupe` drops the large overlap so no term is spent twice.
+#:
+#: What it will not do is track an object. Negative conditioning suppresses
+#: named failure modes; it does not give the model a handle on the thing that
+#: must stay the same. The identity clauses in the positive prompt still do
+#: that work, and this is stacked on top of them.
+UNIVERSAL_NEGATIVE = (
+    "temporal flicker, frame-to-frame inconsistency, identity drift, face "
+    "changes, body changes, clothing changes, unintended color changes, paint "
+    "color changes, color flicker, exposure flicker, shape morphing, geometry "
+    "warping, duplicated subjects, disappearing subjects, extra people, extra "
+    "objects, fused subjects, deformed anatomy, extra limbs, missing limbs, "
+    "malformed hands, extra fingers, distorted faces, unstable backgrounds, "
+    "background warping, texture crawling, floating objects, broken physics, "
+    "unnatural movement, jerky motion, camera jitter, camera teleportation, "
+    "abrupt scale changes, inconsistent lighting, inconsistent shadows, "
+    "inconsistent reflections, random scene changes, blurry details, "
+    "compression artifacts, unwanted text, captions, subtitles, logos, "
+    "watermarks"
+)
+
+#: Terms in the house negatives that name a STYLE rather than a fault.
+#:
+#: They belong in a negative prompt for a photoreal subject and are actively
+#: wrong for a drawn one: a Character Replacement job whose new character is
+#: a cartoon submits "cartoon, illustration, anime" as things to AVOID while
+#: the positive prompt asks for exactly that. The client's 8 Sep 2026 render
+#: is the case — a Simpsons character came back with a dark grey face — and
+#: this is the half of that report that lands in our pipeline, since the
+#: ReActor/SAM face lock they also blamed exists only in their own graph and
+#: has never run here.
+STYLE_TERMS = frozenset(
+    {
+        "cartoon",
+        "anime",
+        "illustration",
+        "cgi",
+        "cgi appearance",
+        "videogame look",
+        "artificial skin",
+        "plastic skin",
+        "waxy skin",
+    }
+)
+
+
+def _terms(text: str) -> list[str]:
+    return [term.strip() for term in text.split(",") if term.strip()]
+
+
+def _dedupe(terms: list[str]) -> str:
+    """First occurrence wins, comparison case-insensitive.
+
+    A term repeated across two lists is not stronger for being repeated; it
+    is one more token in a budget the encoder truncates, and the client's
+    universal list overlaps ours heavily by design.
+    """
+    seen: set[str] = set()
+    kept: list[str] = []
+    for term in terms:
+        key = term.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(term)
+    return ", ".join(kept)
+
+
+def compose_negative(*blocks: str, drop_style: bool = False) -> str:
+    """The blocks joined, deduplicated, style terms optionally removed."""
+    terms = [term for block in blocks if block for term in _terms(block)]
+    if drop_style:
+        terms = [term for term in terms if term.casefold() not in STYLE_TERMS]
+    return _dedupe(terms)
+
+
 DEFAULT_NEGATIVE: dict[str, str] = {
     "text-to-video": TEXT_TO_VIDEO_NEGATIVE,
     "image-to-video": FIRST_LAST_FRAME_NEGATIVE,
@@ -99,11 +189,30 @@ DEFAULT_NEGATIVE: dict[str, str] = {
 }
 
 
-def negative_for(workflow_id: str, execution: dict) -> str:
+def negative_for(
+    workflow_id: str, execution: dict, *, drop_style: bool = False
+) -> str:
+    """The negative prompt this job submits.
+
+    `execution.negative_prompt` still replaces the workflow's own list — that
+    is what a deployment override is for. What it no longer replaces is the
+    universal block, which is composed in front of whichever list wins unless
+    `execution.universal_negative` turns it off. A deployment that wants the
+    exact pre-8-Sep-2026 text sets that to false.
+
+    `drop_style` removes the terms that name a look rather than a fault, for
+    a subject that IS that look. See `STYLE_TERMS`.
+    """
     override = execution.get("negative_prompt")
-    if isinstance(override, str) and override.strip():
-        return override.strip()
-    return DEFAULT_NEGATIVE.get(workflow_id, FIRST_LAST_FRAME_NEGATIVE)
+    house = (
+        override.strip()
+        if isinstance(override, str) and override.strip()
+        else DEFAULT_NEGATIVE.get(workflow_id, FIRST_LAST_FRAME_NEGATIVE)
+    )
+    universal = execution.get("universal_negative")
+    if universal is not None and str(universal).strip().lower() in ("false", "no", "off", "0"):
+        return compose_negative(house, drop_style=drop_style)
+    return compose_negative(UNIVERSAL_NEGATIVE, house, drop_style=drop_style)
 
 
 #: The hands clause for CHAINED character replacement (7 Sep 2026). Measured
@@ -148,6 +257,68 @@ CHARACTER_REPLACEMENT_EXPOSURE = (
     "white balance from the first frame to the last. The character's face, "
     "neck, arms and hands keep exactly the brightness and colour they have in "
     "the first frame and never grow darker as the video goes on."
+)
+
+
+# ── Drawn characters ───────────────────────────────────────────────────────
+
+#: Words in a Character Replacement prompt that say the new character is not
+#: a photographed human.
+#:
+#: A heuristic, and named one. It exists because the alternative is asking a
+#: customer to classify their own reference picture, and because every switch
+#: it flips is one that does nothing useful on a drawn character and
+#: something harmful on one: the style terms in the negative prompt fight the
+#: look the prompt asked for, and the skin machinery
+#: (`worker/media/skin.py`) keys on the classic human skin chroma range —
+#: which a bright cartoon face sits close enough to for the gate to fire on
+#: it and pull it toward a human skin level.
+#:
+#: `execution.subject_style` overrides it in either direction, so a wrong
+#: guess is one deployment line to fix rather than a code change.
+STYLISED_PATTERNS = (
+    r"\bcartoons?\b",
+    r"\banime\b",
+    r"\bmanga\b",
+    r"\bcomic(?:\s*book)?\b",
+    r"\banimated\b",
+    r"\bcel[- ]?shaded\b",
+    r"\b2d\s+character\b",
+    r"\bclaymation\b",
+    r"\bstop[- ]motion\b",
+    r"\bpuppet\b",
+    r"\bmuppet\b",
+    r"\bcaricature\b",
+    r"\bsimpsons?\b",
+    r"\bpixar\b",
+    r"\bdisney\b",
+    r"\bdreamworks\b",
+    r"\bstudio ghibli\b",
+    r"\billustrat(?:ed|ion)\b",
+    r"\bhand[- ]drawn\b",
+    r"\bdrawn\b",
+)
+
+
+def looks_stylised(prompt: str) -> bool:
+    return any(re.search(pattern, prompt, re.IGNORECASE) for pattern in STYLISED_PATTERNS)
+
+
+#: The exposure lock for a drawn character.
+#:
+#: `CHARACTER_REPLACEMENT_EXPOSURE` names skin — "face, neck, arms and hands"
+#: — because it was written for the fault measured on a photographed person.
+#: A drawn character has none of those as the model understands them, and the
+#: same guarantee has to be asked for in terms the picture actually has:
+#: the character's own colours, flat and unshaded, holding what the first
+#: frame set. Relational for the same reason as its twin — it names no colour.
+CHARACTER_REPLACEMENT_EXPOSURE_STYLISED = (
+    "The light in the scene is the reference video's own: the same lighting "
+    "direction, the same shadows, the same exposure, contrast, saturation and "
+    "white balance from the first frame to the last. The character keeps "
+    "exactly the colours they have in the first frame - the same face colour, "
+    "the same hands, the same outfit, flat and evenly lit - and no part of "
+    "them ever grows darker, greyer or duller as the video goes on."
 )
 
 

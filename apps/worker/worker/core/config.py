@@ -588,6 +588,23 @@ class WorkerSettings(BaseSettings):
     the structure rules in the prompt are still followed.
     """
 
+    # ── LTX 2.5 guideline pack (client pack, 9 Sep 2026) ─────────────────
+
+    ltx25_guidelines_enabled: bool = False
+    """
+    Rewrite the customer's prompt to the client's LTX 2.5 guideline pack
+    before rendering. See `worker/prompt/ltx25/`.
+
+    Off by default, and this default is load-bearing rather than cautious.
+    The prompt text IS the product on these workflows, this rewrites all of
+    it through a language model, and the structuring it replaces carries GPU
+    measurements the pack has no equivalent of. It wants an A/B on a real
+    node before it becomes the default, not a deployment note.
+
+    `execution.ltx25_guidelines` overrides per job, which is what makes that
+    A/B one request rather than one redeploy.
+    """
+
     # ── Automatic dialogue (client pack, 7 Sep 2026) ─────────────────────
 
     auto_dialogue_enabled: bool = False
@@ -1180,6 +1197,20 @@ class WorkerSettings(BaseSettings):
     bounded offset, following the source performer's own skin level so real
     shadows stay. The GPU renders and the seeds are unchanged; a source
     within one window is untouched. `execution.skin_hold` overrides."""
+
+    character_replacement_delivery: str = "native"
+    """The frame the finished Character Replacement video is delivered at:
+    "native" (the generation canvas, unchanged) or "4k".
+
+    Client request, 8 Sep 2026: "let's use the same approach upscale to 4k
+    after video is done". It is the same lanczos-and-NVENC finish Text to
+    Video HD ships (`worker/media/upscale.py`), and it runs ONCE, after the
+    windows are joined and the source audio is laid over — one encode, one
+    audio stream, no seam. It buys nothing in detail: 4K here is the
+    generated frame enlarged, which is what the client asked for and what
+    their own package does at 1080p. Default "native" so no existing
+    deployment starts writing files four times the size without being told.
+    `execution.delivery` overrides."""
 
     character_replacement_free_after_chain: bool = True
     """Ask ComfyUI to release its memory after a CHAINED job (7 Sep 2026).

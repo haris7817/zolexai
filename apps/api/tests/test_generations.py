@@ -116,8 +116,11 @@ async def test_rejects_director_mode_on_image_to_video(client: AsyncClient) -> N
     )
     assert response.status_code == 422
     fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
-    # Parameter problems are reported before inputs are looked up.
-    assert fields == {"prompt_mode", "dialogue_language"}
+    # Parameter problems are reported before inputs are looked up. The
+    # language is NOT among them since 8 Sep 2026: Image to Video declares
+    # `settings.auto_dialogue`, which writes speech and so makes the language
+    # meaningful without any prompt mode.
+    assert fields == {"prompt_mode"}
 
 
 async def test_rejects_prompt_mode_on_a_workflow_without_the_control(
@@ -144,9 +147,16 @@ async def test_rejects_prompt_mode_on_a_workflow_without_the_control(
     assert "prompt_mode" in fields
 
 
-async def test_rejects_a_dialogue_language_outside_director_mode(
+async def test_accepts_a_dialogue_language_on_a_tool_that_writes_speech(
     client: AsyncClient, text_to_video_request: dict
 ) -> None:
+    """Text to Video has no prompt modes and still generates audio.
+
+    Until 8 Sep 2026 the language was gated on `settings.prompt_modes` alone,
+    so this exact request — the one the client's integration sends — came
+    back 422 on a field the tool does honour. `settings.auto_dialogue` opens
+    the same gate, for the same reason.
+    """
     request = {
         **text_to_video_request,
         "parameters": {
@@ -155,9 +165,94 @@ async def test_rejects_a_dialogue_language_outside_director_mode(
         },
     }
     response = await client.post("/api/v1/generations", json=request)
+    assert response.status_code == 202, response.text
+
+
+async def test_rejects_a_dialogue_language_on_a_tool_that_writes_none(
+    client: AsyncClient,
+) -> None:
+    """Extend Video declares neither control: present-and-unsupported is
+    still reported rather than silently dropped."""
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "workflow_id": "extend-video",
+            "prompt": "keep the shot going",
+            "parameters": {
+                "duration": "5s",
+                "aspect_ratio": "16:9",
+                "dialogue_language": "spanish",
+            },
+            "inputs": {"source_video": "00000000-0000-0000-0000-000000000000"},
+        },
+    )
     assert response.status_code == 422
     fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
     assert "dialogue_language" in fields
+
+
+async def test_auto_dialogue_reaches_the_worker_with_its_speaker_count(
+    client: AsyncClient, text_to_video_request: dict
+) -> None:
+    """The client's own request body, accepted and stored.
+
+    `{"auto_dialogue": true, "dialogue_language": "English",
+    "maximum_speakers": 4}` — including the capital E, which is compared
+    case-insensitively so a 400 on a letter cannot be what a customer sees.
+    """
+    request = {
+        **text_to_video_request,
+        "parameters": {
+            **text_to_video_request["parameters"],
+            "auto_dialogue": True,
+            "dialogue_language": "English",
+            "maximum_speakers": 4,
+        },
+    }
+    response = await client.post("/api/v1/generations", json=request)
+    assert response.status_code == 202, response.text
+
+
+async def test_rejects_auto_dialogue_on_a_tool_without_the_control(
+    client: AsyncClient,
+) -> None:
+    """Same policy as lyrics. Character Replacement continues a performance
+    the source video already has; inventing lines over it is not a thing this
+    tool does, and asking must not silently do nothing."""
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "workflow_id": "extend-video",
+            "prompt": "keep the shot going",
+            "parameters": {
+                "duration": "5s",
+                "aspect_ratio": "16:9",
+                "auto_dialogue": True,
+            },
+            "inputs": {"source_video": "00000000-0000-0000-0000-000000000000"},
+        },
+    )
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert "auto_dialogue" in fields
+
+
+async def test_rejects_a_speaker_count_without_the_switch(
+    client: AsyncClient, text_to_video_request: dict
+) -> None:
+    """A client that believes it asked for dialogue and did not is exactly
+    the failure this whole change is about."""
+    request = {
+        **text_to_video_request,
+        "parameters": {
+            **text_to_video_request["parameters"],
+            "maximum_speakers": 3,
+        },
+    }
+    response = await client.post("/api/v1/generations", json=request)
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert "maximum_speakers" in fields
 
 
 @pytest.mark.skip(reason="no workflow declares prompt modes since 5 Sep 2026; kept for rollback")

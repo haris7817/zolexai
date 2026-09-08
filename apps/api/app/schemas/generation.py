@@ -80,9 +80,23 @@ class GenerationParameters(BaseModel):
     workflows whose definition sets `settings.prompt_modes` accept it; absent
     means standard, so every existing client keeps its exact behaviour."""
     dialogue_language: str | None = Field(default=None, max_length=32)
-    """Language for the dialogue Director mode writes. `auto` (or absent)
-    follows the language of the idea itself. Only meaningful — and only
-    accepted — alongside `prompt_mode: director`."""
+    """Language the video's speech is in. `auto` (or absent) leaves it to the
+    deployment's `spoken_language`. Accepted by workflows that offer prompt
+    modes and by workflows that offer Auto Dialogue — both write speech, and
+    the language question is the same question either way."""
+
+    auto_dialogue: bool | None = Field(default=None)
+    """Whether the worker should write spoken lines into a prompt that has
+    none. Absent means the deployment's own default (off unless
+    `AUTO_DIALOGUE_ENABLED`), so every existing client keeps its exact
+    behaviour. Set explicitly, it is a promise: a job that asks for dialogue
+    and cannot be given any FAILS rather than delivering a silent video that
+    looks like a success. Only workflows whose definition sets
+    `settings.auto_dialogue` accept it."""
+    maximum_speakers: int | None = Field(default=None, ge=1, le=4)
+    """How many visible people Auto Dialogue may give words to. Four is the
+    client's validator's ceiling and the default; one pass holds one voice per
+    speaker and no more than this many convincingly."""
 
     performers: list[PerformerSpec] | None = Field(default=None, max_length=5)
     """The band, for workflows whose definition sets `settings.performers`

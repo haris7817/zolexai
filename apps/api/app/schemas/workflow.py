@@ -102,6 +102,18 @@ class SettingsSpec(BaseModel):
     """Whether the panel offers a sound on/off control — on every quality
     level (client round two, 27 Aug). A workflow that does not declare it rejects
     the `sound` parameter in `validate_request`, same policy as lyrics."""
+    auto_dialogue: bool = False
+    """Whether the panel offers the Auto Dialogue switch — and with it the
+    dialogue language and the maximum number of speakers.
+
+    Declared by the single-pass video workflows the worker's
+    `AUTO_DIALOGUE_WORKFLOWS` covers. A workflow that does not declare it
+    rejects `auto_dialogue` and `maximum_speakers` in `validate_request`,
+    same policy as lyrics.
+
+    Added 8 Sep 2026 after the client reported a delivered video with no
+    spoken lines: the worker had the feature, and nothing on the surface
+    could ask for it."""
     performers: bool = False
     """Whether the panel offers a band: a role and a description beside each
     `performer_N` picture input (Music Video on the client's music-video

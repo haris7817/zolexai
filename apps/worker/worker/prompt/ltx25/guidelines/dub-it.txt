@@ -1,0 +1,26 @@
+LTX-2.5 DUB-IT RULES
+
+USE WHEN
+Use only when an existing video with one visible speaker needs replacement speech. Do not use the normal text-to-video, image-to-video, multi-shot, or screenplay format.
+
+EXACT OUTPUT FORMAT
+[Speaker] is speaking [language/accent], saying: "[complete replacement dialogue]"
+
+REQUIREMENTS
+- Return one line only.
+- Include the complete replacement dialogue; the workflow does not translate it automatically.
+- Write the dialogue in the native script of the target language.
+- Use one speaker only because the beta workflow does not distinguish multiple speakers.
+- Keep the replacement close to the timing and approximate syllable length of the source speech.
+- Slightly longer replacement speech is safer than substantially shorter speech. Excessively long dialogue may skip words; dialogue that is too short may sound stretched or unnaturally slow.
+- Add emotion or delivery direction only when requested, keeping the one-line format.
+
+OFFICIALLY VALIDATED LANGUAGES LISTED IN THE GUIDE
+English, French, Spanish, German, Russian.
+
+DO NOT
+- Ask the Dub-It workflow to translate automatically.
+- Add a second speaker.
+- Add shot, camera, scene-generation, duration, resolution, FPS, or model-setting instructions.
+- Omit quotation marks around the replacement dialogue.
+

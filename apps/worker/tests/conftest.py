@@ -21,6 +21,8 @@ actually count.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -33,6 +35,45 @@ from worker.media import ffmpeg, tools_available
 
 needs_ffmpeg = pytest.mark.skipif(
     not tools_available(), reason="ffmpeg/ffprobe not installed"
+)
+
+
+def _can_encode_4k() -> bool:
+    """Whether this machine can software-encode a 3840x2160 frame right now.
+
+    Production encodes 4K on NVENC, which streams; the CPU fallback allocates
+    the frame and libx264 fails outright when the box is short of memory —
+    measured 8 Sep 2026 on a dev machine with 2.6 GB free, where 1920x1080 and
+    2560x1440 both encoded and 3840x2160 did not — and where, at 4K, one frame
+    encoded and twelve did not. That is an environment limit, not a fault in
+    the code under test, so the 4K delivery test skips on it rather than going
+    red.
+    """
+    if not tools_available():
+        return False
+    try:
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "testsrc=size=64x36:duration=1",
+             "-vf", "scale=3840:2160", "-pix_fmt", "yuv420p",
+             # The production settings, not a cheaper probe: it is x264's
+             # preset that decides how much it allocates, and "ultrafast"
+             # succeeds on a box where "fast" cannot.
+             "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+             # More than one frame, because that is where it actually
+             # breaks: a single 4K frame encodes on a box where twelve of
+             # them cannot, x264's lookahead holding the difference.
+             "-frames:v", "12",
+             "-f", "mp4", os.devnull],
+            check=True, capture_output=True, timeout=120,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return True
+
+
+needs_4k_encode = pytest.mark.skipif(
+    not _can_encode_4k(), reason="this machine cannot software-encode a 4K frame"
 )
 
 

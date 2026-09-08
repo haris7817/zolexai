@@ -1,0 +1,142 @@
+{
+  "schema_version": "1.0",
+  "scope": "Controlled vocabulary derived from the official LTX-2.5 prompt guide",
+  "prompt_forms": {
+    "single_shot": "One uninterrupted camera take with a continuous soundscape",
+    "multi_shot": "Two to four connected shots separated by explicitly named edits",
+    "screenplay": "Multiline form for dialogue-heavy or multi-beat scenes",
+    "dub_it": "One-speaker speech replacement for an existing video"
+  },
+  "continuous_camera_language": [
+    "follows",
+    "tracks",
+    "pans across",
+    "circles around",
+    "tilts upward",
+    "pushes in",
+    "pulls back",
+    "overhead view",
+    "handheld movement",
+    "over-the-shoulder",
+    "wide establishing shot",
+    "static frame"
+  ],
+  "editing_transitions": [
+    "a hard cut transitions to",
+    "the view cuts to",
+    "a match cut connects",
+    "the image dissolves into",
+    "fade-in",
+    "fade-out",
+    "seamless transition"
+  ],
+  "style_categories": {
+    "animation": [
+      "stop-motion",
+      "2D animation",
+      "3D animation",
+      "claymation",
+      "hand-drawn"
+    ],
+    "stylized": [
+      "comic book",
+      "cyberpunk",
+      "8-bit pixel",
+      "surreal",
+      "minimalist",
+      "painterly",
+      "illustrated"
+    ],
+    "cinematic": [
+      "period drama",
+      "film noir",
+      "fantasy",
+      "epic space opera",
+      "thriller",
+      "modern romance",
+      "experimental film",
+      "arthouse",
+      "documentary"
+    ]
+  },
+  "visual_details": {
+    "lighting": [
+      "flickering candles",
+      "neon glow",
+      "natural sunlight",
+      "dramatic shadows"
+    ],
+    "textures": [
+      "rough stone",
+      "smooth metal",
+      "worn fabric",
+      "glossy surfaces"
+    ],
+    "color_palette": [
+      "vibrant",
+      "muted",
+      "monochromatic",
+      "high contrast"
+    ],
+    "atmosphere": [
+      "fog",
+      "rain",
+      "dust",
+      "smoke",
+      "particles"
+    ]
+  },
+  "sound_and_voice": {
+    "ambient_sources": [
+      "coffeeshop noise",
+      "wind and rain",
+      "forest ambience with birds"
+    ],
+    "dialogue_delivery": [
+      "energetic announcer",
+      "resonant voice with gravitas",
+      "distorted radio-style voice",
+      "robotic monotone",
+      "childlike curiosity"
+    ],
+    "volume": [
+      "whisper",
+      "mutter",
+      "shout",
+      "scream"
+    ]
+  },
+  "film_characteristics": [
+    "film grain",
+    "lens flares",
+    "pixelated edges",
+    "jittery stop-motion"
+  ],
+  "scale_indicators": [
+    "expansive",
+    "epic",
+    "intimate",
+    "claustrophobic"
+  ],
+  "pacing_and_temporal_effects": [
+    "slow motion",
+    "time-lapse",
+    "rapid cuts",
+    "lingering shot",
+    "continuous shot",
+    "freeze-frame",
+    "sudden stop"
+  ],
+  "visual_effects": [
+    "particle systems",
+    "motion blur",
+    "depth of field"
+  ],
+  "semantic_rules": {
+    "camera_move": "Changes camera position or orientation while remaining in the current shot",
+    "edit_transition": "Ends the current shot and begins a newly framed shot",
+    "physical_emotion_cue": "An observable expression, gaze, posture, gesture, breath, or delivery",
+    "audio_continuity": "An explicit statement of what continues, changes, fades, drops, or stops across an edit"
+  }
+}
+
