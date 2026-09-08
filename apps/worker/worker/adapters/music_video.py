@@ -117,6 +117,7 @@ class MusicVideoAdapter:
                 settings=settings,
                 anchor_command=self._script_command("mv_anchor.py"),
                 render_command=self._script_command("mv_render.py"),
+                upscale_command=self._script_command("mv_upscale.py"),
                 ltx_python=self._ltx_python(),
                 ltx_models_root=settings.ltx_models_root,
             )

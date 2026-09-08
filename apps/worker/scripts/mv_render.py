@@ -1,4 +1,4 @@
-"""The music-video worker's render command: one shot on the audio tier.
+"""The music-video worker's render command: one shot, on either engine.
 
 The client's package (`zolex_music_worker`) calls this once per shot attempt
 with a request JSON and expects a decodable video at `--output`; it then
@@ -7,18 +7,21 @@ trims and normalises the clip itself. The request is the package's
 delivered frame count), the working size, the conditioning master and the
 shot's offset into it, and the raw 8k+1 frame window to render.
 
-Why a command of our own rather than the package's built-in direct LTX
-adapter, which launches the same CLI: the shot before this one may have
-been an anchor still, and ComfyUI keeps that model warm. This command frees
-ComfyUI's VRAM (cheap when it is already empty) before the 22B audio tier
-takes the card, and it is the one seam where a warm render service can
-replace the per-shot process later without touching the package.
+Two engines answer that contract, chosen by `MUSIC_VIDEO_RENDER_ENGINE`.
 
-The pipeline is the official `ltx_pipelines.a2vid_two_stage` — the dev
-transformer with the distilled LoRA, unquantized, this node's six model
-files — exactly the flags the platform's own audio tier sends
-(`adapters/ltx.py`, `_A2VID`), plus the package's own image conditioning:
-the anchor pinned at frame 0 at full strength.
+**cli** is the package's own path, the official
+`ltx_pipelines.a2vid_two_stage` process: the development transformer with
+the distilled LoRA, unquantized, 24 steps, this node's six model files, and
+the anchor pinned at frame 0. It frees ComfyUI's VRAM first, because the
+anchor stage left an image model warm there. Measured 96 s per 121-frame
+shot, about 35 s of which is starting the process and loading 51 GB.
+
+**comfy** submits Lightricks' own audio-to-video graph to the ComfyUI this
+node already runs (`worker/comfy/ltx_a2v.py`): the distilled transformer,
+8 steps, then the 2x latent upscale and a 3-step refine. The models stay
+resident between shots, so the per-shot loading disappears. Measured 24.2 s
+for the same shot. The song is conditioned on identically — encoded,
+frozen, denoised against — so what differs is speed and look.
 
 Usage:  mv_render.py --request REQUEST.json --output OUT.mp4
 """
@@ -27,12 +30,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
+import math
 import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def _log(message: str, **fields: object) -> None:
@@ -124,6 +132,124 @@ def build_argv(request: dict, output: Path) -> tuple[list[str], Path]:
     return argv, settings.ltx_repo_dir
 
 
+def _snap(frames: int) -> int:
+    """Up to the model's 8k+1 lattice."""
+    return int(math.ceil(max(1, frames - 1) / 8) * 8 + 1)
+
+
+def _stage(client, path: Path, prefix: str) -> str:
+    """Puts a file where ComfyUI can load it, once, under a content name.
+
+    Named by digest so the conditioning master is transferred on the first
+    shot and recognised on the other forty. When the worker shares a
+    filesystem with the service a copy is enough; otherwise it goes over
+    HTTP like every other input.
+    """
+    from worker.core.config import settings
+
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    name = f"{prefix}_{digest}{path.suffix.lower()}"
+    input_dir = settings.ltx_comfy_input_dir
+    if input_dir:
+        target = Path(input_dir) / name
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+        return name
+    return asyncio.run(client.upload_input(path, name=name))
+
+
+def render_on_comfy(request: dict, output: Path) -> None:
+    """One shot through Lightricks' audio-to-video graph on the warm ComfyUI."""
+    from worker.adapters.base import AdapterJob
+    from worker.comfy.client import ComfyClient, ComfyError
+    from worker.comfy.ltx_a2v import compile_a2v, missing_nodes
+    from worker.core.config import settings
+
+    shot = request["shot"]
+    fps = int(request.get("fps") or 24)
+    delivered = int(request["delivered_frames"])
+    frames = _snap(delivered) if settings.music_video_tight_frames else int(request["raw_frames"])
+    attempt = int(request.get("attempt") or 1)
+    seed = (int(shot.get("seed") or 0) + attempt - 1) & 0x7FFFFFFF
+
+    client = ComfyClient(
+        settings.ltx_comfy_base_url,
+        request_timeout=settings.ltx_comfy_request_timeout,
+        poll_seconds=settings.ltx_comfy_poll_seconds,
+    )
+    absent = missing_nodes(asyncio.run(client.node_classes()))
+    if absent:
+        raise SystemExit(f"mv_render: this ComfyUI lacks the nodes {absent}")
+
+    # The anchor stage left an image model resident. Free once per job, on
+    # the first shot, rather than before every shot: the whole gain here is
+    # that the video model stays loaded from one shot to the next.
+    marker = output.parents[3] / ".comfy-freed"
+    if not marker.exists():
+        _free_comfy()
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("freed before the first shot\n", encoding="utf-8")
+
+    anchor = _stage(client, Path(shot["anchor_image"]), "zolex_mv_anchor")
+    audio = _stage(client, Path(request["audio"]), "zolex_mv_audio")
+
+    api = compile_a2v(
+        positive=str(shot["prompt"]),
+        negative=str(settings.music_video_negative_prompt),
+        audio=audio,
+        image=anchor,
+        audio_start_seconds=float(request.get("audio_start_seconds") or 0.0),
+        seconds=frames / fps,
+        frames=frames,
+        width=int(request["width"]),
+        height=int(request["height"]),
+        fps=float(fps),
+        seed=seed,
+        filename_prefix=f"zolexai/mv/{shot['id']}-{seed}",
+        image_strength=float(settings.music_video_image_strength),
+    )
+
+    started = time.monotonic()
+    _log("starting", engine="comfy", shot=shot.get("id"), frames=frames,
+         delivered=delivered, size=f"{request['width']}x{request['height']}", attempt=attempt)
+    job = AdapterJob(
+        job_id=str(shot["id"]),
+        workflow_id="music-video",
+        workflow_version="1",
+        prompt=str(shot["prompt"]),
+        parameters={},
+    )
+    try:
+        prompt_id = asyncio.run(client.submit(api, client_id=f"mv-{shot['id']}"))
+        history = asyncio.run(
+            client.wait(job, prompt_id, timeout_seconds=settings.ltx_comfy_generation_timeout)
+        )
+    except ComfyError as exc:
+        raise SystemExit(f"mv_render: {exc.internal_detail}") from exc
+
+    found = None
+    for node_output in (history.get("outputs") or {}).values():
+        for item in (
+            (node_output.get("videos") or [])
+            + (node_output.get("gifs") or [])
+            + (node_output.get("images") or [])
+        ):
+            found = item
+    if not found:
+        raise SystemExit("mv_render: ComfyUI finished without a video output")
+    asyncio.run(
+        client.download_output(
+            filename=str(found.get("filename")),
+            subfolder=str(found.get("subfolder") or ""),
+            output_type=str(found.get("type") or "output"),
+            dest=output,
+        )
+    )
+    _log("finished", engine="comfy", shot=shot.get("id"),
+         seconds=round(time.monotonic() - started, 1), prompt_id=prompt_id)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--request", required=True, type=Path)
@@ -132,6 +258,14 @@ def main() -> None:
     request = json.loads(args.request.read_text(encoding="utf-8"))
     output = Path(str(request.get("output") or args.output)).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+
+    from worker.core.config import settings
+
+    if settings.music_video_render_engine == "comfy":
+        render_on_comfy(request, output)
+        if not output.is_file():
+            raise SystemExit(f"mv_render: no file at {output}")
+        return
 
     _free_comfy()
     argv, cwd = build_argv(request, output)

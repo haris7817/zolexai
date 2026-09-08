@@ -88,7 +88,7 @@ def _settings(**overrides):
         music_video_whisper_device="cuda",
         music_video_whisper_compute_type="float16",
         music_video_whisper_download_root=None,
-        music_video_upscale_backend="cuda",
+        music_video_upscale_backend="command",
         music_video_upscale_cq=18,
         music_video_upscale_timeout=1800,
         ltx_unquantized_offload="cpu",
@@ -217,6 +217,7 @@ def test_the_config_points_every_backend_at_this_node(tmp_path: Path) -> None:
         settings=_settings(),
         anchor_command=["py", "anchor", "{request_json}", "{output}"],
         render_command=["py", "render", "{request_json}", "{output}"],
+        upscale_command=["py", "upscale", "{request_json}", "{output}"],
         ltx_python="/ltx/.venv/bin/python",
         ltx_models_root=Path("/models/ltx-2.5"),
     )
@@ -225,7 +226,8 @@ def test_the_config_points_every_backend_at_this_node(tmp_path: Path) -> None:
     assert config.render_command == ["py", "render", "{request_json}", "{output}"]
     assert config.anchor_backend == "command"
     assert config.anchor_command == ["py", "anchor", "{request_json}", "{output}"]
-    assert config.upscale_backend == "cuda"
+    assert config.upscale_backend == "command"
+    assert config.upscale_command == ["py", "upscale", "{request_json}", "{output}"]
     assert config.transcription_backend == "faster_whisper"
     assert config.reference_vision_backend == "disabled"
     assert config.ltx_num_inference_steps == 24
@@ -249,7 +251,7 @@ def test_the_execution_block_overrides_steps_and_the_shot_ladder(tmp_path: Path)
     )
     config = build_config(
         job, work_root=tmp_path, settings=_settings(ltx_unquantized_offload="none"),
-        anchor_command=["a"], render_command=["r"],
+        anchor_command=["a"], render_command=["r"], upscale_command=["u"],
         ltx_python="python", ltx_models_root=Path("/m"),
     )
     config.validate()
@@ -266,7 +268,7 @@ def test_a_deployment_render_command_wins_over_the_shipped_script(tmp_path: Path
         settings=_settings(
             music_video_render_command=json.dumps(["/srv/warm", "{request_json}", "{output}"])
         ),
-        anchor_command=["a"], render_command=["shipped"],
+        anchor_command=["a"], render_command=["shipped"], upscale_command=["u"],
         ltx_python="python", ltx_models_root=Path("/m"),
     )
     assert config.render_command == ["/srv/warm", "{request_json}", "{output}"]

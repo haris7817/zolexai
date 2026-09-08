@@ -183,6 +183,7 @@ def build_config(
     settings: Any,
     anchor_command: list[str],
     render_command: list[str],
+    upscale_command: list[str],
     ltx_python: str,
     ltx_models_root: Path,
 ) -> Any:
@@ -202,7 +203,10 @@ def build_config(
       * **lyrics**: faster-whisper in-process, the model this deployment
         caches; `disabled` makes a lyric-driven prompt fail early with the
         package's own message rather than render an unrelated mood video.
-      * **finish**: FFmpeg CUDA Lanczos + NVENC, the package's default.
+      * **finish**: `scripts/mv_upscale.py`, the package's own FFmpeg CUDA
+        Lanczos and NVENC recipe with the frame count stated rather than
+        `-shortest`, which is what makes a long job land on its exact
+        length.
 
     Per-job `execution` keys override the shot ladder and the step count,
     the same shape the other runtimes use.
@@ -249,6 +253,7 @@ def build_config(
         render_backend=render_backend,
         render_command=render_command if render_backend == "command" else None,
         upscale_backend=upscale_backend,
+        upscale_command=upscale_command if upscale_backend == "command" else None,
         upscale_gpu_id="0",
         upscale_timeout_seconds=int(settings.music_video_upscale_timeout),
         upscale_cq=int(settings.music_video_upscale_cq),

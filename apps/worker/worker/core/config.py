@@ -935,6 +935,44 @@ class WorkerSettings(BaseSettings):
     (a warm render service, the package's recommended path at scale), with
     the package's placeholders (`{request_json}`, `{output}`, …)."""
 
+    music_video_render_engine: Literal["cli", "comfy"] = "cli"
+    """Which engine `scripts/mv_render.py` uses for a shot.
+
+    `cli` launches the official `ltx_pipelines.a2vid_two_stage` process: the
+    development transformer plus the distilled LoRA, unquantized, 24 steps.
+    Measured 8 Sep 2026: 96 s per 121-frame shot, of which about 35 s is
+    process start and weight loading, every shot.
+
+    `comfy` submits Lightricks' own audio-to-video graph to the warm ComfyUI
+    instead (`worker/comfy/ltx_a2v.py`): the distilled transformer, 8 steps
+    on the same schedule the client's FAST 1080 graph uses, then the 2x
+    latent upscale and a 3-step refine. Measured the same day on the same
+    anchor and the same second of the song: **24.2 s** per 121-frame shot,
+    38.4 s at 193 and 49 s at 241, repeatable to two seconds, with the song
+    arriving on the clip at 0.998 correlation to the source.
+
+    The conditioning is identical either way — the audio is encoded, frozen
+    with a zero noise mask and denoised against — so this is a speed and a
+    LOOK decision, not a change to whether the model hears the song. It
+    stays `cli` until the client has seen both."""
+
+    music_video_tight_frames: bool = True
+    """Render only the frames a shot delivers, snapped up to the model's
+    8k+1 lattice, rather than the package's 121-frame floor.
+
+    That floor is a property of the CLI decoder — 121 is the smallest count
+    measured safe on this card for `a2vid_two_stage` — and the package
+    applies it to every shot, so a 4.4-second shot renders 121 frames to
+    deliver 105. On the ComfyUI path the tiled decoder has no such floor.
+    The package trims to the delivered count either way, which is what its
+    own render contract promises, so this changes nothing about the result
+    and drops about an eighth of the work. `comfy` engine only."""
+
+    music_video_image_strength: float = 0.7
+    """How hard the anchor still is written into the shot's first frame on
+    the `comfy` engine. Lightricks' own audio-to-video graph ships 0.7 for
+    the first stage and 1.0 for the refine; the CLI path pins 1.0."""
+
     music_video_negative_prompt: str = (
         "identity drift, face change, deformed hands, extra fingers, extra limbs, "
         "duplicate person, cropped head, cropped feet, flicker, exposure pulsing, "
@@ -998,9 +1036,15 @@ class WorkerSettings(BaseSettings):
     """Where faster-whisper keeps its weights (3.1 GB for large-v3). Set on
     the node so a worker restart never downloads."""
 
-    music_video_upscale_backend: Literal["cuda", "cpu"] = "cuda"
-    """The 4K finishing pass: FFmpeg `scale_cuda` + NVENC (verified on the
-    node 8 Sep 2026), or libx264 on the CPU for a machine without them."""
+    music_video_upscale_backend: Literal["command", "cuda", "cpu"] = "command"
+    """The 4K finishing pass.
+
+    `command` runs `scripts/mv_upscale.py`, which states the frame count and
+    passes timestamps through. The package's built-in `cuda` path uses
+    `-shortest` instead and loses the tail of a long job: measured 8 Sep
+    2026, a 3-minute master of 4,319 frames delivered 4,315 and the
+    package's own QA refused it, while a 40-second job was exact. `cuda`
+    and `cpu` are the package's own paths, kept for comparison."""
     music_video_upscale_cq: int = 18
     music_video_upscale_timeout: int = 1800
 
