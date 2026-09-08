@@ -102,6 +102,11 @@ class SettingsSpec(BaseModel):
     """Whether the panel offers a sound on/off control — on every quality
     level (client round two, 27 Aug). A workflow that does not declare it rejects
     the `sound` parameter in `validate_request`, same policy as lyrics."""
+    performers: bool = False
+    """Whether the panel offers a band: a role and a description beside each
+    `performer_N` picture input (Music Video on the client's music-video
+    worker, 8 Sep 2026). A workflow that does not declare it rejects the
+    `performers` parameter in `validate_request`, same policy as lyrics."""
 
 
 class CapabilitiesSpec(BaseModel):

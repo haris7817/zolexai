@@ -19,14 +19,11 @@ prompt:
   # purple suit on a rooftop to a woman in a pink one, filmed from far enough
   # away that no face was ever legible.
   #
-  # The worker now defends against the second case — it keeps the performer
-  # framed and restates who they are every section — but nothing downstream
-  # can recover a description the customer never gave. Asking for one at the
-  # point of typing is the cheapest fix available and the only one that
-  # addresses the cause.
-  placeholder: "Who is on screen, and where — e.g. a woman with long curly
-    dark hair in an orange satin shirt, singing at a vintage microphone in a
-    dim lounge"
+  # Since the client's music-video worker (8 Sep 2026) the performers can be
+  # supplied as pictures below, and a direction that says "according to the
+  # lyrics" has the song transcribed and every scene written from its words.
+  placeholder: "What kind of video, and where — e.g. make me a cinematic video
+    according to the lyrics of the song, on a night rooftop over the city"
   # See text-to-video.yaml — effectively unlimited, capped only because an
   # unbounded request body is a denial-of-service surface.
   max_length: 20000
@@ -41,8 +38,7 @@ inputs:
     # afterwards. The video is generated in sections across the whole track, so
     # length is the single thing that decides how much work the job is — and
     # the size cap alone permits an hour of audio, which is a job that cannot
-    # finish. Worker-side the ceiling is LTX_MAX_SOURCE_SECONDS; keep the two
-    # in step.
+    # finish. Worker-side the ceiling is the music-video worker's own 300 s.
     help: Up to 5 minutes. The video is generated to match your whole track.
     accept: ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg"]
     # 200 matches the platform's audio ceiling (see MAX_SIZE_BYTES in
@@ -51,6 +47,47 @@ inputs:
     # 50-85 MB. Bytes were never the work bound anyway; the 5-minute LENGTH
     # rule above is, and it is enforced before any compute is spent.
     max_size_mb: 200
+
+  # ── The band (client's music-video worker v1.8.0, 8 Sep 2026) ──────────
+  #
+  # Up to five performers, one picture each. The slot number pairs the
+  # picture with its role and description in the `performers` parameter
+  # (`settings.performers` below). A clear front-facing photo per member is
+  # what the worker's own guidance asks for; a member may also be described
+  # without a picture, and with no performers at all the worker creates a
+  # fictional adult lead. Solo and duet coverage, rotating solos and
+  # full-band wides follow from how many are given.
+  - role: performer_1
+    kind: image
+    required: false
+    label: PERFORMER 1
+    drop_hint: a photo of the first performer
+    help: Optional. One clear front-facing photo per band member, up to five.
+    max_size_mb: 50
+  - role: performer_2
+    kind: image
+    required: false
+    label: PERFORMER 2
+    drop_hint: a photo of the second performer
+    max_size_mb: 50
+  - role: performer_3
+    kind: image
+    required: false
+    label: PERFORMER 3
+    drop_hint: a photo of the third performer
+    max_size_mb: 50
+  - role: performer_4
+    kind: image
+    required: false
+    label: PERFORMER 4
+    drop_hint: a photo of the fourth performer
+    max_size_mb: 50
+  - role: performer_5
+    kind: image
+    required: false
+    label: PERFORMER 5
+    drop_hint: a photo of the fifth performer
+    max_size_mb: 50
 
 # Duration is automatic (CR-007): the final video matches the full uploaded
 # track — a 30-second song yields a 30-second video, a 4-minute song a 4-minute
@@ -65,6 +102,14 @@ settings:
   motion_strength: false
   prompt_adherence: false
   seed: false
+  # The song's own words, pasted (plain lines, LRC or SRT). Optional: a
+  # direction that asks to follow the lyrics has them transcribed from the
+  # track when none are pasted; pasted lyrics always win, and the language
+  # choice tells the transcriber what to listen for.
+  lyrics: true
+  # Role and description beside each performer picture — `performers` in the
+  # request, validated against the `performer_N` roles above.
+  performers: true
 
 capabilities:
   download: true
@@ -83,85 +128,40 @@ execution:
   runtime: mock
 
   # Deterministic prompt structuring — see text-to-video.yaml for the full
-  # note and apps/worker/worker/longform/enhance.py for the rules.
+  # note and apps/worker/worker/longform/enhance.py for the rules. Read by
+  # the CLI runtime only; the music-video worker writes its own prompts.
   prompt_structuring: true
 
-  # ── Revised continuity block (OFF — GPU A/B first) ──
-  #
-  # prompt_structuring_v2: true
-  #
-  # Same switch as text-to-video.yaml (see the full note there); on this
-  # workflow it also stops section 1 being told to continue from a
-  # predecessor frame it does not have. Byte-identical while off.
-
-  # The longest job the product has. A four-minute track is eight visual
-  # sections plus assembly and muxing, and the default 30-minute budget would
-  # kill it around section three — after the compute had already been spent.
+  # The longest job the product has. A four-minute track is fifty-odd shots
+  # plus anchors, assembly and a 4K finish, and the default 30-minute budget
+  # would kill it long before the end — after the compute had been spent.
   timeout_seconds: 7200
 
   # Visual cuts are pulled back onto a rise in the track's energy where one is
-  # available, so a section change lands on a hit rather than mid-phrase. This
-  # is event alignment, not beat tracking; set it false for evenly spaced
-  # sections. See worker/longform/timing.py.
+  # available, so a section change lands on a hit rather than mid-phrase.
+  # CLI runtime only; the music-video worker cuts on its own transient
+  # analysis and on lyric boundaries.
   align_cuts_to_audio: true
 
-  # ── Audio conditioning (opt-in) ──────────────────────────────────────────
+  # ── Which engine ──────────────────────────────────────────────────────────
   #
-  # By default the MODEL NEVER HEARS THE SONG. The track decides the length and
-  # where the cuts land; the picture is drawn from the prompt alone and the song
-  # is laid over the finished result. That is why a singer in the output does
-  # not move their mouth in time with the vocal — it is structural, not a
-  # prompting problem, and no wording fixes it.
+  # The deployment overlay (deploy/vps-local.sh) writes the runtime:
   #
-  # `audio_conditioning: true` renders each section on the audio tier instead,
-  # handing it the master track seeked to that section's own moment in the song
-  # (the pipeline takes an offset, so the master is never sliced or re-encoded).
-  # This is the same mechanism the client's reference engine uses, and it is
-  # what makes audio-driven performance possible at all.
+  #   ltx           the CLI adapter's own music video — prompt-only picture
+  #                 in 20 s sections, the song laid over the result, or the
+  #                 audio tier with `audio_conditioning: true`. The rollback.
+  #   music_video   the client's music-video worker (v1.8.0): shots of 2–5 s
+  #                 cut on the music and the lyrics, an anchor still per shot
+  #                 with the performers' real faces, an audio-conditioned LTX
+  #                 pass per shot, one 4K finish. Keys it reads:
   #
-  #   audio_conditioning: true
+  #                   inference_steps      stage-1 steps per shot (node default 24)
+  #                   shot_target_seconds / shot_min_seconds / shot_max_seconds
+  #                   lyric_mode           automatic | always | off
+  #                   render_backend       command | ltx | mock
+  #                   anchor_backend       command | reference | mock
   #
-  # WHAT IT COSTS. Measured on the RTX PRO 6000 at 1024x576 — 213s for a
-  # 20.04-second pass, reproduced 17 Aug and 21 Aug 2026, so **10.6x real
-  # time**. Against the default tier's measured 3.6x (from real production
-  # jobs: a 300s track in 1085s, a 240s track in 863s), that is about three
-  # times the compute. A five-minute song is ~53 minutes of GPU. It fits the
-  # 2-hour budget above and it changes the unit cost of the workflow, which is
-  # why this is a pricing decision and not simply switched on.
-  #
-  # WHY it costs that: the audio tier cannot run quantized (the distilled LoRA
-  # it requires clashes with FP8/NVFP4 fusion), where the default tier serving
-  # today's 3.6x runs NVFP4. Three times the cost is what "the model can hear
-  # the song" costs on this hardware, and the knobs barely move it — the
-  # guidance passes batch into ONE transformer call, so dropping one is not
-  # worth a quarter. `--offload none` is the largest measured lever (23-30%)
-  # and needs VRAM this card does not have spare.
-  #
-  # RELIABILITY, which matters more than the cost. The tier passed 6/6 at a
-  # steady 208s with the GPU to itself, and failed 5 of 15 times at the same
-  # frame count when the card was shared. A five-minute video is 15 CONSECUTIVE
-  # passes and the chain has no per-pass retry, so per-pass reliability has to
-  # be near 1. Read the 21 Aug research note before switching this on.
-  #
-  # WHAT IT DELIVERS, honestly: visuals that move with the music, and a
-  # performer whose mouth follows the vocal. It is NOT verified phoneme-accurate
-  # lip-sync.
-  #
-  #   audio_pass_seconds:  section length on the audio tier. Default is 481
-  #                        frames' own duration (20.0417s) — a MEASURED landing
-  #                        rather than a round number, so the planner's nominal
-  #                        window is a count the decoder is known to survive.
-  #                        The distilled tier's 60s does not transfer.
-  #   inference_steps:     stage-1 denoising steps (pipeline default 30). The
-  #                        one lever that moves wall time; a quality trade.
-  #   a2v_guidance_scale:  how hard the model is pushed toward the audio
-  #                        (pipeline default 3.0; 1.0 disables it entirely).
-  #                        LTX's own help: "higher values may increase lipsync
-  #                        quality".
-  #   guidance_scale / stg_scale: CFG and spatio-temporal guidance. Cheap to
-  #                        drop and they cost picture quality, not speed.
-  #
-  # Requires the dev transformer and the distilled LoRA on the node.
+  # See docs/internal/music-video-worker.md.
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

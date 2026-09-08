@@ -6,6 +6,14 @@ the existing music pipeline. The three definitions are pinned by sha256 to
 the bytes committed before the milestone began (926d2e3), so any edit to
 them — deliberate or a stash-pop accident — fails here before it ships.
 Updating a hash is a decision, not a fix: it needs the client's word.
+
+Music Video's pin moved once, on the client's word: on 8 Sep 2026 they
+delivered their own music-video worker (v1.8.0, "bands/groups of up to
+five people", ZIP sha256 5c512aec…) to be integrated as this tool. The
+definition gained five optional performer pictures, the band and lyrics
+controls, and nothing else; the CLI runtime still serves it unchanged
+wherever a deployment routes it there. Video to Video and Music keep their
+original pins.
 """
 
 from __future__ import annotations
@@ -20,7 +28,8 @@ DEFINITIONS = Path(app_settings.workflow_definitions_dir)
 
 PINNED_SHA256 = {
     "video-to-video.yaml": "9782ffbe4e356e0f6998ba6b59ea843a8cf6b2272f875da456433368196a6b4b",
-    "music-video.yaml": "8f6bee1231984f738f7df7dbdc6bdf4e42e8cd9906e9c2b9431aa1650c05d136",
+    # 8 Sep 2026: the client's music-video worker (see the module note).
+    "music-video.yaml": "f612372d14f68ab2a642ff923bae9af8ed7617d7d27c36f185644f35482bc476",
     "music.yaml": "7e1be469c5df332086e88c9088c454497fd83fdfb199f2a6e01b4773fa322f11",
 }
 
@@ -60,7 +69,12 @@ def test_music_video_and_music_contracts_unchanged() -> None:
     registry = load_registry(DEFINITIONS)
     music_video = registry.get_public("music-video")
     assert music_video.duration_mode == "source"
-    assert [spec.role for spec in music_video.inputs] == ["source_audio"]
+    # The song is still the one required input; the five performer pictures
+    # (client's music-video worker, 8 Sep 2026) are optional additions.
+    assert [spec.role for spec in music_video.inputs if spec.required] == ["source_audio"]
+    assert [spec.role for spec in music_video.inputs] == [
+        "source_audio", "performer_1", "performer_2", "performer_3", "performer_4", "performer_5",
+    ]
     assert music_video.supported_aspect_ratios == ["16:9", "9:16", "1:1"]
     assert music_video.capabilities.extend is False
     music = registry.get_public("music")

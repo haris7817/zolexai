@@ -114,6 +114,7 @@ class WorkflowRegistry:
         prompt_mode: str | None = None,
         dialogue_language: str | None = None,
         sound: bool | None = None,
+        performers: list[Any] | None = None,
     ) -> WorkflowDefinition:
         """Checks a submitted generation request against its workflow.
 
@@ -280,6 +281,40 @@ class WorkflowRegistry:
                             "reason": "Unsupported dialogue language.",
                             "allowed": list(DIALOGUE_LANGUAGES),
                         }
+                    )
+
+        # The band follows the lyrics policy: a workflow that does not declare
+        # the control rejects the parameter. Where it is declared, every entry
+        # must name a slot the definition has a picture input for, once —
+        # so the API and the panel agree on how many members a band can have
+        # without either keeping its own count.
+        if performers is not None:
+            if not definition.settings.performers:
+                problems.append(
+                    {"field": "performers", "reason": "This tool does not take performers."}
+                )
+            else:
+                slots = [getattr(item, "slot", None) for item in performers]
+                unknown_slots = sorted(
+                    {slot for slot in slots if f"performer_{slot}" not in definition.known_roles}
+                )
+                if unknown_slots:
+                    problems.append(
+                        {
+                            "field": "performers",
+                            "reason": "This tool does not have those performer slots.",
+                            "unknown_slots": unknown_slots,
+                            "allowed_slots": sorted(
+                                int(role.removeprefix("performer_"))
+                                for role in definition.known_roles
+                                if role.startswith("performer_")
+                                and role.removeprefix("performer_").isdigit()
+                            ),
+                        }
+                    )
+                if len(slots) != len(set(slots)):
+                    problems.append(
+                        {"field": "performers", "reason": "Each performer slot may appear once."}
                     )
 
         missing = [role for role in definition.required_roles if role not in input_roles]

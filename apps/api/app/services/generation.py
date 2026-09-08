@@ -130,6 +130,7 @@ class GenerationService:
             prompt_mode=params.prompt_mode,
             dialogue_language=params.dialogue_language,
             sound=params.sound,
+            performers=params.performers,
         )
 
         assets_by_id = await self._validate_inputs(user, request, definition)

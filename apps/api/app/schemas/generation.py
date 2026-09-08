@@ -13,6 +13,28 @@ from app.core.enums import JobStatus
 RoleName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=48)]
 
 
+class PerformerSpec(BaseModel):
+    """One member of the band a Music Video is about (client package
+    v1.8.0, 8 Sep 2026: "bands/groups of up to five people").
+
+    `slot` pairs this entry with the picture in the `performer_{slot}` input
+    role, so a member's face, role and description travel together without a
+    new column: the picture is an input like any other, and the words ride
+    in the parameters. A member may be described without a picture (the
+    worker then creates a fictional identity from the description) and a
+    picture may arrive without an entry (a plain performer)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    slot: int = Field(ge=1, le=5)
+    role: str = Field(default="performer", max_length=48)
+    """`lead_vocalist`, `guitarist`, `drummer`, `dj`… — free text; the
+    worker's prompts turn recognised instrument roles into instrument
+    actions instead of singing."""
+    description: str = Field(default="", max_length=300)
+    """What must stay the same on this person — wardrobe, jewellery."""
+
+
 class GenerationParameters(BaseModel):
     """The creative settings. Which of these apply is decided by the workflow.
 
@@ -61,6 +83,12 @@ class GenerationParameters(BaseModel):
     """Language for the dialogue Director mode writes. `auto` (or absent)
     follows the language of the idea itself. Only meaningful — and only
     accepted — alongside `prompt_mode: director`."""
+
+    performers: list[PerformerSpec] | None = Field(default=None, max_length=5)
+    """The band, for workflows whose definition sets `settings.performers`
+    (Music Video since the client's music-video worker, 8 Sep 2026). Absent
+    means no named performers — the worker invents a fictional adult lead —
+    so every existing client keeps its exact behaviour."""
 
 
 class GenerationCreateRequest(BaseModel):
