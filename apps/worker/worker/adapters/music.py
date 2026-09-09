@@ -82,7 +82,10 @@ from worker.music import (
     write_lyrics,
 )
 from worker.music.fallback import is_available
+from typing import Any
+
 from worker.music.gates import LyricsValidationFailed
+from worker.music.trim import choose_window, cut_window
 from worker.music.report import customer_result, job_report, write_report
 from worker.music.verify import VerificationReport, verify_song
 from worker.music.workflow import WORKFLOW_VERSION, LyricsOptions, prepare_song
@@ -241,6 +244,8 @@ class MusicAdapter:
         fade: float,
         total_seconds: float,
         output: Path,
+        *,
+        extra_tolerance: float = 0.0,
     ):
         """Crossfade, loudness-match and validate the rendered sections."""
         await reporter.stitching("Putting your track together…")
@@ -257,7 +262,7 @@ class MusicAdapter:
                 OutputExpectation(
                     expect_audio=True,
                     expected_seconds=total_seconds,
-                    tolerance_seconds=duration_tolerance(total_seconds, floor=2.0),
+                    tolerance_seconds=duration_tolerance(total_seconds, floor=2.0) + extra_tolerance,
                 ),
             )
         except FfmpegError as exc:
@@ -283,13 +288,15 @@ class MusicAdapter:
         language: Language | None,
         total_seconds: float,
     ) -> AdapterResult:
-        """Lyrics → gates → (dry run stops here) → audio → verify → retry.
+        """Outline → lyrics → gates → (dry run stops) → longer take → cut
+        around the singing → verify (coverage, breaks, recall, reference)
+        → retry with a new seed → deliver or fail per policy.
 
         The sheet is written once and kept across retries; what a retry
         changes is the seed and the firmness of the production brief,
         because the model's arrangement — not the words — is what varies
-        between takes (measured Aug 2026: the same sheet gave 52.8% and
-        87.7% sung time on different runs).
+        between takes. The cut is what makes the intro and the tail the
+        model insists on stop counting against the song (10 Sep 2026).
         """
         options = LyricsOptions.from_job(job)
         supplied = bool(str(job.parameters.get("lyrics") or "").strip())
@@ -324,20 +331,33 @@ class MusicAdapter:
 
         requested_language = job.parameters.get("lyrics_language")
 
+        # ── Reference conditioning is mandatory when a reference exists ──
+        conditioning: dict[str, Any] | None = None
+        reference_file: Path | None = None
+        if prepared.reference is not None:
+            reference_file = self._reference_audio(job) or self._fetched_reference(work)
+            if not getattr(provider, "supports_reference", False) or reference_file is None:
+                raise self._failure_for(
+                    "REFERENCE_CONDITIONING_FAILED",
+                    f"provider {provider.name!r} cannot condition on a reference, or the file is gone",
+                )
+            conditioning = {
+                "reference_audio_loaded": True,
+                "reference_embedding_created": True,
+                "reference_conditioning_applied": True,
+                "reference_duration": round(prepared.reference.duration_seconds, 1),
+                "target_bpm": prepared.reference.bpm,
+                "target_key": (prepared.reference.key or "").replace(" ", "_") or None,
+                "strength": options.reference_strength,
+            }
+            logger.info("music_reference_conditioning", extra=conditioning)
+
         if options.dry_run:
             report = job_report(
-                job_id=job.job_id,
-                prompt=job.prompt,
-                prepared=prepared,
-                options=options,
-                verification=None,
-                retries=0,
-                retry_reasons=[],
-                status="planned",
-                failure_code=None,
-                requested_language=requested_language,
-                requested_seconds=total_seconds,
-                actual_seconds=None,
+                job_id=job.job_id, prompt=job.prompt, prepared=prepared, options=options,
+                verification=None, retries=0, retry_reasons=[], status="planned", failure_code=None,
+                requested_language=requested_language, requested_seconds=total_seconds,
+                actual_seconds=None, conditioning=conditioning,
             )
             path = write_report(work, report)
             self._log_report(report)
@@ -350,10 +370,17 @@ class MusicAdapter:
                 retriable=False,
             )
 
+        # ── The take is longer than the song so the cut can choose ──────
+        render_seconds = total_seconds
+        if options.trim:
+            # The provider's ceiling is per generation; `_plan_sections`
+            # splits a longer take into sections, so the take itself is
+            # not capped by it.
+            render_seconds = total_seconds * options.overshoot + options.overshoot_seconds
         fade = max(0.0, float(settings.music_crossfade_seconds))
-        sections = self._plan_sections(job, provider, total_seconds, fade)
+        sections = self._plan_sections(job, provider, render_seconds, fade)
         attempts = 1 + options.max_retries
-        best: tuple[VerificationReport, Path, object] | None = None
+        best: tuple[VerificationReport, Path, object, dict[str, Any] | None, dict[str, Any] | None] | None = None
         retry_reasons: list[str] = []
         caption = prepared.caption or job.prompt
 
@@ -361,64 +388,110 @@ class MusicAdapter:
             job.raise_if_cancelled()
             rendered = await self._render_sections(
                 job, reporter, provider, sections, plan, prepared.sheet, language,
-                caption=caption, bpm=prepared.bpm, attempt=attempt, model_hears_reference=False,
+                caption=caption, bpm=prepared.bpm, key=prepared.key, attempt=attempt,
+                model_hears_reference=True, reference_strength=options.reference_strength,
             )
-            output = job.workspace / ("output.mp3" if attempt == 0 else f"output-take{attempt + 1}.mp3")
-            info = await self._assemble(job, reporter, rendered, fade, total_seconds, output)
+            suffix = "" if attempt == 0 else f"-take{attempt + 1}"
+            raw = job.workspace / f"take{suffix}.mp3"
+            output = job.workspace / f"output{suffix}.mp3"
+            # The longer take is an intermediate; each crossfade join loses
+            # a little beyond its planned fade, and the delivered file is
+            # validated exactly after the cut.
+            info = await self._assemble(
+                job, reporter, rendered, fade, render_seconds, raw,
+                extra_tolerance=1.0 * max(0, len(sections) - 1) if options.trim else 0.0,
+            )
 
+            # ── Cut the requested length around the singing ─────────────
+            await reporter.finalizing("Fitting the song around the vocals…")
+            window_dict: dict[str, Any] | None = None
+            if options.trim and abs(render_seconds - total_seconds) > 0.5:
+                spans = await cancellable(job, self._sung_spans(raw, brief.language))
+                window = choose_window(
+                    spans, source_seconds=float(info.duration_seconds or render_seconds), target_seconds=total_seconds
+                )
+                await cancellable(job, cut_window(raw, output, window))
+                window_dict = window.to_dict()
+                logger.info("music_take_cut", extra=window_dict)
+            else:
+                output = raw
+            try:
+                info = await verify_output(
+                    output,
+                    OutputExpectation(
+                        expect_audio=True, expected_seconds=total_seconds,
+                        tolerance_seconds=duration_tolerance(total_seconds, floor=2.0),
+                    ),
+                )
+            except FfmpegError as exc:
+                raise AdapterError(
+                    "This track could not be completed. Please try again.",
+                    internal_detail=f"cut validation failed: {exc}",
+                ) from exc
+
+            # ── Measure ─────────────────────────────────────────────────
             await reporter.finalizing("Checking the vocals…")
             verification = await cancellable(
                 job,
                 verify_song(
-                    output,
-                    prepared.timed,
-                    language=brief.language,
-                    expected_seconds=total_seconds,
+                    output, prepared.timed, language=brief.language, expected_seconds=total_seconds,
                     duration_seconds=float(info.duration_seconds or total_seconds),
-                    coverage_target=options.coverage_target,
-                    recall_threshold=options.recall_threshold,
+                    coverage_target=options.coverage_target, recall_threshold=options.recall_threshold,
                     duration_tolerance_seconds=duration_tolerance(total_seconds, floor=2.0),
+                    max_break_seconds=options.max_break_seconds,
                 ),
             )
+            comparison_dict: dict[str, Any] | None = None
+            errors = list(verification.errors)
+            if prepared.reference is not None:
+                comparison = await cancellable(job, self._compare(prepared.reference, output, verification, options))
+                comparison_dict = comparison.to_dict()
+                mismatch = (
+                    comparison.bpm_ok is False
+                    or comparison.key_ok is False
+                    or comparison.similarity < options.reference_similarity_threshold
+                )
+                if mismatch:
+                    errors.append(("REFERENCE_MISMATCH", f"similarity {comparison.similarity:.0%}; " + "; ".join(comparison.reasons)))
+            passed = not errors
+            score = verification.score() + (comparison_dict["similarity"] if comparison_dict else 0.0)
             logger.info(
                 "music_verified",
                 extra={
                     "attempt": attempt + 1,
-                    "passed": verification.passed,
+                    "passed": passed,
                     "measured_vocal_coverage": verification.measured_vocal_coverage,
                     "coverage_method": verification.coverage_method,
+                    "longest_break_seconds": verification.longest_break_seconds,
                     "lyric_recall": verification.lyric_recall,
                     "recall_method": verification.recall_method,
                     "language_detected": verification.language_detected,
-                    "errors": [code for code, _ in verification.errors],
+                    "window": window_dict,
+                    "reference": comparison_dict,
+                    "errors": [code for code, _ in errors],
                 },
             )
-            if best is None or verification.score() > best[0].score():
-                best = (verification, output, info)
-            if verification.passed:
+            if best is None or score > best[0].score() + (best[4]["similarity"] if best[4] else 0.0):
+                best = (verification, output, info, window_dict, comparison_dict)
+                best_errors = errors
+            if passed:
                 break
-            retry_reasons.append("; ".join(f"{code}: {detail}" for code, detail in verification.errors))
+            retry_reasons.append("; ".join(f"{code}: {detail}" for code, detail in errors))
             if attempt + 1 < attempts:
                 caption = self._reinforced_caption(prepared.caption or job.prompt, verification)
                 await reporter.report("generating", 30, "Re-recording the vocals…")
 
         assert best is not None
-        verification, output, info = best
-        failure_code = None if verification.passed else verification.errors[0][0]
-        delivering = verification.passed or options.verify_policy == "deliver_best"
+        verification, output, info, window_dict, comparison_dict = best
+        failure_code = None if not best_errors else best_errors[0][0]
+        delivering = not best_errors or options.verify_policy == "deliver_best"
         report = job_report(
-            job_id=job.job_id,
-            prompt=job.prompt,
-            prepared=prepared,
-            options=options,
-            verification=verification,
-            retries=len(retry_reasons),
-            retry_reasons=retry_reasons,
-            status="completed" if verification.passed else ("delivered_with_warnings" if delivering else "failed"),
-            failure_code=failure_code,
-            requested_language=requested_language,
-            requested_seconds=total_seconds,
-            actual_seconds=getattr(info, "duration_seconds", None),
+            job_id=job.job_id, prompt=job.prompt, prepared=prepared, options=options,
+            verification=verification, retries=len(retry_reasons), retry_reasons=retry_reasons,
+            status="completed" if not best_errors else ("delivered_with_warnings" if delivering else "failed"),
+            failure_code=failure_code, requested_language=requested_language,
+            requested_seconds=total_seconds, actual_seconds=getattr(info, "duration_seconds", None),
+            window=window_dict, comparison=comparison_dict, conditioning=conditioning,
         )
         write_report(work, report)
         self._log_report(report)
@@ -431,13 +504,66 @@ class MusicAdapter:
             )
 
         await reporter.uploading()
+        result = customer_result(
+            prepared, verification, retries=len(retry_reasons), window=window_dict, comparison=comparison_dict
+        )
+        if best_errors and options.verify_policy == "deliver_best":
+            result["warnings"] = list(dict.fromkeys(result.get("warnings", []) + [d for _, d in best_errors]))
         return AdapterResult(
             path=output,
             content_type="audio/mpeg",
             kind="audio",
             duration_seconds=getattr(info, "duration_seconds", None),
-            report=customer_result(prepared, verification, retries=len(retry_reasons)),
+            report=result,
         )
+
+    @staticmethod
+    def _fetched_reference(work: Path) -> Path | None:
+        folder = work / "reference"
+        if not folder.is_dir():
+            return None
+        files = [p for p in folder.glob("reference.*") if p.suffix not in {".part", ".ytdl", ".json"}]
+        return files[0] if files else None
+
+    @staticmethod
+    async def _sung_spans(path: Path, language: str) -> list[tuple[float, float]] | None:
+        """Where the singing is, for the cut: the stem, else the transcript."""
+        from worker.media.vocals import spans_from_envelope, vocal_activity
+        from worker.music.transcribe import transcribe
+
+        spans = await vocal_activity(path)
+        if spans is not None:
+            return spans
+        transcript = await transcribe(path, language=language)
+        if transcript is None or not transcript.words:
+            return None
+        hop = 0.05
+        last = max(w.end for w in transcript.words)
+        env = [0.0] * (int(last / hop) + 2)
+        for w in transcript.words:
+            for i in range(int(w.start / hop), min(len(env), int(w.end / hop) + 1)):
+                env[i] = 1.0
+        return spans_from_envelope(env, abs_floor=0.5, rel_fraction=0.5)
+
+    @staticmethod
+    async def _compare(reference, output: Path, verification: VerificationReport, options: LyricsOptions):
+        """The finished song measured the same way the reference was."""
+        from worker.media import audio_envelope
+        from worker.music.keys import analyse_tempo_and_key
+        from worker.music.reference import ReferenceProfile, compare_to_reference, energy_curve
+
+        tempo, key = await analyse_tempo_and_key(output)
+        envelope = await audio_envelope(output, hop_seconds=0.05)
+        candidate = ReferenceProfile(
+            source="candidate", duration_seconds=verification.duration_seconds,
+            bpm=tempo.bpm if tempo else None, tempo_stability=tempo.confidence if tempo else None,
+            time_signature="4/4", energy_curve=tuple(energy_curve(envelope)), section_boundaries=(),
+            vocal_density=verification.measured_vocal_coverage, vocal_cadence=None, words_per_second=None,
+            language=verification.language_detected, language_probability=verification.language_probability,
+            mood_hint="", key=key.name if key else None, mode=key.mode if key else None,
+            key_confidence=key.confidence if key else None,
+        )
+        return compare_to_reference(reference, candidate, bpm_tolerance=options.reference_bpm_tolerance)
 
     @staticmethod
     def _reinforced_caption(caption: str, verification: VerificationReport) -> str:
@@ -525,6 +651,25 @@ class MusicAdapter:
             "OUTPUT_DURATION_MISMATCH": (
                 "This track could not be completed. Please try again.",
                 True,
+            ),
+            "INSTRUMENTAL_BREAK_TOO_LONG": (
+                "The song came back with a long instrumental break in the middle of the vocals, "
+                "even after re-recording. Please try again.",
+                True,
+            ),
+            "LYRIC_QUALITY_FAILED": (
+                "We could not write lyrics that read naturally enough in the language you chose. "
+                "Please try again, or paste your own lyrics.",
+                True,
+            ),
+            "REFERENCE_MISMATCH": (
+                "The song did not match the reference track's tempo, key or feel closely enough, "
+                "even after re-recording. Please try again.",
+                True,
+            ),
+            "REFERENCE_CONDITIONING_FAILED": (
+                "The reference track could not be applied to the music model on this server.",
+                False,
             ),
         }
         message, retriable = messages.get(
@@ -864,6 +1009,8 @@ class MusicAdapter:
         bpm: int | None = None,
         attempt: int = 0,
         model_hears_reference: bool = True,
+        key: str | None = None,
+        reference_strength: float | None = None,
     ) -> list[Path]:
         total = len(sections)
         rendered: list[Path] = []
@@ -890,7 +1037,8 @@ class MusicAdapter:
                 # states it, and "nobody stated it" was the whole bug.
                 language=language.code if language else None,
                 bpm=bpm if bpm is not None else _optional_int(job.parameters.get("bpm")),
-                key=_optional_str(job.parameters.get("key")),
+                key=key or _optional_str(job.parameters.get("key")),
+                reference_strength=reference_strength,
                 # Deterministic per section: a retried job reproduces its own
                 # song rather than handing the user a different one. A v2
                 # verification retry is a different take on purpose, so it
@@ -907,7 +1055,7 @@ class MusicAdapter:
                 # and can reproduce its melody, which the client's originality
                 # rule forbids. There the reference shapes the blueprint and
                 # the brief (tempo, energy, cadence) and nothing else.
-                reference_audio=self._reference_audio(job) if model_hears_reference else None,
+                reference_audio=(self._reference_audio(job) or self._fetched_reference(job.workspace / "lyrics")) if model_hears_reference else None,
             )
 
             async def report(fraction: float, low: int = low, high: int = high) -> None:

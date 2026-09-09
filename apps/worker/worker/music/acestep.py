@@ -216,10 +216,45 @@ class AceStepProvider:
             payload["use_random_seed"] = False
             payload["seed"] = int(request.seed)
 
+        if request.time_signature:
+            payload["time_signature"] = request.time_signature
+
         if request.reference_audio is not None:
-            payload["reference_audio"] = str(request.reference_audio)
+            # The service's field is `reference_audio_path` (its request
+            # parser; the older `reference_audio` key was silently ignored),
+            # the path must sit under the system temp dir, and the task
+            # stays `text2music` with a style-transfer strength: `cover`
+            # would reproduce the reference's melody, which the originality
+            # rule forbids. `audio_cover_strength` defaults to 1.0 in the
+            # service — a full cover — so it is always sent.
+            payload["task_type"] = "text2music"
+            payload["reference_audio_path"] = str(self._staged_reference(request.reference_audio))
+            strength = 0.3 if request.reference_strength is None else float(request.reference_strength)
+            payload["audio_cover_strength"] = max(0.05, min(0.6, strength))
 
         return payload
+
+    supports_reference: bool = True
+    """Whether a reference track conditions the audio here. The workflow
+    refuses a reference job on a provider that cannot, rather than
+    generating an unrelated song (client rule, 10 Sep 2026)."""
+
+    @staticmethod
+    def _staged_reference(path: Path) -> Path:
+        """A copy of the reference the service is allowed to read.
+
+        The service accepts only paths under the system temp directory.
+        The copy is keyed by content hash so a retried job reuses it.
+        """
+        import hashlib
+        import shutil
+        import tempfile
+
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:24]
+        staged = Path(tempfile.gettempdir()) / f"zolexai-ref-{digest}{path.suffix or '.audio'}"
+        if not staged.exists():
+            shutil.copyfile(path, staged)
+        return staged
 
     def _vocal_language(self, code: str) -> str:
         """The platform's canonical language code, as this model names it.

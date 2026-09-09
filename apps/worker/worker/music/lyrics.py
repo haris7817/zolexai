@@ -460,6 +460,10 @@ class LyricBrief:
     syllables_per_line: int = 0
     """Rough syllables a line should carry, from the blueprint's delivery
     speed. Zero means unstated."""
+    outline_text: str = ""
+    """The narrative outline (worker/music/quality.py) the song must follow:
+    theme, narrator, addressee, emotion, conflict, development, final
+    message, hook. Empty means none was made."""
 
     @classmethod
     def from_prompt(cls, prompt: str, *, genre: str | None = None) -> LyricBrief:

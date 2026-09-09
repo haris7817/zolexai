@@ -38,8 +38,17 @@ def job_report(
     requested_language: str | None,
     requested_seconds: float,
     actual_seconds: float | None,
+    window: dict[str, Any] | None = None,
+    comparison: dict[str, Any] | None = None,
+    conditioning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
+        "outline": prepared.outline.to_dict() if prepared.outline else None,
+        "lyric_quality": prepared.verdict.to_dict() if prepared.verdict else None,
+        "quality_repairs": prepared.quality_repairs,
+        "window": window,
+        "reference_comparison": comparison,
+        "reference_conditioning": conditioning,
         "workflow_version": WORKFLOW_VERSION,
         "job_id": job_id,
         "request_sha256": prepared.request_sha256,
@@ -88,6 +97,8 @@ def customer_result(
     *,
     retries: int,
     dry_run: bool = False,
+    window: dict[str, Any] | None = None,
+    comparison: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     warnings = [p.detail for p in prepared.preflight.warnings]
     if verification is not None:
@@ -139,6 +150,19 @@ def customer_result(
         "rhyme_scheme": prepared.rhyme.scheme,
         "rhyme_validator_confidence": prepared.rhyme.confidence,
         "reference_used": prepared.reference is not None,
+        "reference_bpm": prepared.reference.bpm if prepared.reference else None,
+        "reference_key": prepared.reference.key if prepared.reference else None,
+        "reference_similarity": None if not comparison else comparison.get("similarity"),
+        "song_bpm": None if not comparison else comparison.get("candidate_bpm"),
+        "song_key": None if not comparison else comparison.get("candidate_key"),
+        "intro_seconds": None if not window else window.get("intro_seconds"),
+        "outro_seconds": None if not window else window.get("outro_seconds"),
+        "longest_break_seconds": (
+            None if verification is None or verification.longest_break_seconds is None
+            else round(verification.longest_break_seconds, 1)
+        ),
+        "coherence": None if not prepared.verdict or not prepared.verdict.measured else round(prepared.verdict.coherence, 2),
+        "grammar": None if not prepared.verdict or not prepared.verdict.measured else round(prepared.verdict.grammar, 2),
         "originality_check": "failed" if prepared.preflight.shared_phrases else "passed",
         "retries": retries,
         "warnings": warnings,

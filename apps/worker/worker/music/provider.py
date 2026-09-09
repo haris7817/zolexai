@@ -84,6 +84,14 @@ class MusicRequest:
     reference_audio: Path | None = None
     """Optional track whose character should guide the result."""
 
+    reference_strength: float | None = None
+    """How strongly the reference conditions the audio, 0..1. The music
+    lyrics workflow sends the reference as a STYLE reference — tempo, key,
+    groove, timbre, energy — at a strength well below a cover, so the
+    melody and words stay original (client rule, 10 Sep 2026)."""
+
+    time_signature: str | None = None
+
     takes: int = 1
     """How many alternatives to ask for. Providers may return fewer."""
 

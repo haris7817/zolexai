@@ -189,7 +189,8 @@ def preflight(
         (warnings if supplied else errors).append(problem)
 
     filler = timed.filler_ratio
-    if lines and filler > max_filler_ratio:
+    # Same half-percent tolerance as coverage: filler is its mirror image.
+    if lines and filler > max_filler_ratio + 0.005:
         filler_lines = [line.text for line in timed.lines if line.filler]
         problem = Problem(
             "FILLER_ABOVE_LIMIT",
@@ -215,6 +216,10 @@ def preflight(
             and _confidence_rank(rhyme.confidence) >= _confidence_rank(strict_rhyme_min_confidence)
         )
         (errors if enforce else warnings).append(problem)
+
+    if rhyme.meter_failing:
+        names = ", ".join(f"[{g.section}] group {g.label}: {g.meter_reason}" for g in rhyme.meter_failing[:4])
+        warnings.append(Problem("METER", f"{len(rhyme.meter_failing)} rhyme group(s) differ by more than a syllable — {names}"))
 
     shared = shared_phrases(lines, reference_lines)
     if shared:

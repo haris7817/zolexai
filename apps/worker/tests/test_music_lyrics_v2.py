@@ -424,3 +424,122 @@ def test_rhyme_labels_a_writer_annotated_are_not_sung() -> None:
 
     sheet = "[verse]\nMorning breeze dances through the flow (A)\nKids chase shadows on the lines [B]\nplain line\n[chorus]\nhold on (rhyme A)"
     assert strip_labels(sheet) == "[verse]\nMorning breeze dances through the flow\nKids chase shadows on the lines\nplain line\n[chorus]\nhold on"
+
+
+
+# ── 10 Sep 2026: enforced intro/outro, breaks, quality, reference ────────
+
+
+def test_the_cut_window_starts_just_before_the_first_sung_note() -> None:
+    from worker.music.trim import choose_window
+
+    # A 150 s take with singing from 12 s to 128 s, cut to 120 s.
+    window = choose_window([(12.0, 60.0), (63.0, 125.0)], source_seconds=150.0, target_seconds=120.0)
+    assert window.seconds == pytest.approx(120.0)
+    assert window.intro_seconds == pytest.approx(2.5)
+    assert window.end >= 125.0  # the last sung note is inside
+    # No spans: the head of the take.
+    head = choose_window(None, source_seconds=150.0, target_seconds=120.0)
+    assert (head.start, head.end) == (0.0, 120.0)
+    # Singing longer than the window: the beginning wins.
+    long = choose_window([(5.0, 145.0)], source_seconds=150.0, target_seconds=60.0)
+    assert long.start == pytest.approx(2.5)
+
+
+@needs_ffmpeg
+async def test_a_longer_take_is_cut_to_the_requested_length_around_the_vocals(workspace: Path, monkeypatch) -> None:
+    async def spans_from_12s(path):
+        from worker.media import probe_media
+
+        duration = float((await probe_media(path)).duration_seconds or 0.0)
+        # The long take sings from 12 s; the cut output from its first second.
+        return [(12.0, duration - 3.0)] if duration > 70 else [(1.0, duration - 1.0)]
+
+    monkeypatch.setattr("worker.media.vocals.vocal_activity", spans_from_12s)
+    monkeypatch.setattr("worker.music.verify.vocal_activity", spans_from_12s)
+
+    async def no_transcript(path, *, language):
+        return None
+
+    monkeypatch.setattr("worker.music.verify.transcribe", no_transcript)
+    provider = FakeProvider()
+    result, _ = await collect(music_job(workspace, "1m"), MusicAdapter(provider, writer=TemplateLyricsWriter()))
+    assert provider.requests[0].duration_seconds >= 75.0
+    assert result.duration_seconds == pytest.approx(60.0, abs=2.0)
+    assert result.report["intro_seconds"] == pytest.approx(2.5, abs=0.1)
+
+
+def test_an_instrumental_break_inside_the_singing_is_a_named_failure() -> None:
+    from worker.music.verify import _longest_break
+
+    assert _longest_break([(2.0, 30.0), (36.5, 60.0)]) == pytest.approx(6.5)
+    assert _longest_break([(2.0, 58.0)]) == 0.0
+
+
+def test_rhyming_lines_must_also_be_the_same_length() -> None:
+    sections = [("verse", ["walking home tonight", "light", "call me on the phone", "alone"])]
+    report = validate_rhymes(sections, code="en", scheme="AABB", mode="strict")
+    # The rhymes pass; the meter is reported and repaired, never a refusal.
+    assert report.pass_rate == 1.0
+    assert report.meter_pass_rate == 0.0
+    assert all("syllable" in g.meter_reason for g in report.meter_failing)
+    relaxed = validate_rhymes(sections, code="en", scheme="AABB", mode="strict", max_syllable_delta=None)
+    assert relaxed.meter_pass_rate == 1.0
+
+
+def test_tempo_and_key_helpers() -> None:
+    from worker.music.keys import Key, bpm_matches, key_from_chroma, parse_key
+
+    assert parse_key("B major") == Key("B", "major", 1.0)
+    assert parse_key("Bb Major").tonic == "A#"
+    assert parse_key("F# minor").mode == "minor"
+    assert bpm_matches(92, 93) and bpm_matches(92, 184) and not bpm_matches(92, 136)
+    # A chroma with only C, E and G energy is C major.
+    chroma = [0.0] * 12
+    chroma[0], chroma[4], chroma[7] = 0.5, 0.3, 0.2
+    key = key_from_chroma(chroma)
+    assert key is not None and key.tonic == "C" and key.mode == "major"
+
+
+def test_a_song_in_the_wrong_key_and_tempo_does_not_match_its_reference() -> None:
+    from worker.music.reference import ReferenceProfile, compare_to_reference
+
+    def profile(bpm, key, mode):
+        return ReferenceProfile(
+            source="x", duration_seconds=60, bpm=bpm, tempo_stability=0.8, time_signature="4/4",
+            energy_curve=(0.5, 0.6, 0.7, 0.8), section_boundaries=(), vocal_density=0.8,
+            vocal_cadence=None, words_per_second=None, language=None, language_probability=None,
+            mood_hint="", key=key, mode=mode,
+        )
+
+    reference = profile(92, "B major", "major")
+    far = compare_to_reference(reference, profile(136, "A major", "major"))
+    close = compare_to_reference(reference, profile(93, "B major", "major"))
+    assert far.bpm_ok is False and far.key_ok is False and far.similarity < 0.85
+    assert close.bpm_ok and close.key_ok and close.similarity >= 0.85
+
+
+def test_the_quality_verdict_turns_objections_into_repairs() -> None:
+    from worker.music.quality import Verdict
+
+    verdict = Verdict(coherence=0.7, grammar=0.99, problems=((3, "changes subject"),))
+    assert not verdict.passes()
+    assert "line 3" in verdict.instructions()[0]
+    assert Verdict(1.0, 1.0, (), measured=False).passes()
+
+
+def test_the_provider_sends_a_reference_as_a_style_transfer_not_a_cover(tmp_path: Path) -> None:
+    from worker.music.acestep import AceStepProvider
+    from worker.music.provider import MusicRequest
+
+    reference = tmp_path / "ref.mp3"
+    reference.write_bytes(b"ID3fake")
+    payload = AceStepProvider().build_payload(
+        MusicRequest(prompt="x", duration_seconds=60, lyrics="[verse]\nhi", reference_audio=reference,
+                     reference_strength=0.3, bpm=92, key="B major")
+    )
+    assert payload["task_type"] == "text2music"
+    assert payload["audio_cover_strength"] == pytest.approx(0.3)
+    assert payload["reference_audio_path"].endswith(".mp3")
+    assert "reference_audio" not in payload
+    assert payload["bpm"] == 92 and payload["key_scale"] == "B major"

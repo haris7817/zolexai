@@ -94,6 +94,19 @@ class FallbackLyricsWriter:
         self._writers = list(writers)
         self._last: LyricsWriter | None = None
 
+    async def ask_json(self, system: str, user: str, *, max_tokens: int = 1200, effort: str | None = None) -> dict | None:
+        """The first available member that can answer a JSON question.
+
+        The outline and the quality judge (worker/music/quality.py) ask
+        through the chain; without this the chain hid the ability and the
+        judge reported itself unmeasured on every live job (10 Sep 2026).
+        """
+        for writer in self._writers:
+            ask = getattr(writer, "ask_json", None)
+            if ask is not None and is_available(writer):
+                return await ask(system, user, max_tokens=max_tokens, effort=effort)
+        return None
+
     async def rewrite_lines(self, brief, plan, sheet: str, instructions: list[str]) -> str | None:
         """A targeted repair by whichever member wrote the sheet.
 

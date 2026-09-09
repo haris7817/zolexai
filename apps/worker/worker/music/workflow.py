@@ -45,6 +45,7 @@ from worker.music.blueprint import (
     build_blueprint,
 )
 from worker.music.gates import LyricsValidationFailed, PreflightReport, preflight
+from worker.music.quality import Outline, Verdict, judge, outline as write_outline
 from worker.music.lyrics import (
     LyricBrief,
     LyricsWriter,
@@ -96,7 +97,17 @@ class LyricsOptions:
     reference_url: str | None = None
     reference_influence: float = 0.65
     max_write_rounds: int = 3
-    max_repair_rounds: int = 3
+    max_repair_rounds: int = 5
+    quality_judge: bool = True
+    coherence_floor: float = 0.90
+    grammar_floor: float = 0.95
+    max_break_seconds: float = 3.0
+    trim: bool = True
+    overshoot: float = 1.05
+    overshoot_seconds: float = 22.0
+    reference_strength: float = 0.3
+    reference_similarity_threshold: float = 0.85
+    reference_bpm_tolerance: float = 0.03
 
     @classmethod
     def from_job(cls, job: AdapterJob) -> LyricsOptions:
@@ -140,6 +151,16 @@ class LyricsOptions:
             max_retries=max(0, int(execution.get("music_verify_max_retries", getattr(settings, "music_verify_max_retries", 2)) or 0)),
             reference_url=str(url).strip() if isinstance(url, str) and url.strip() else None,
             reference_influence=influence,
+            quality_judge=flag("music_quality_judge", bool(getattr(settings, "music_quality_judge", True))),
+            coherence_floor=_clamp(_float(execution.get("coherence_floor"), float(getattr(settings, "music_coherence_floor", 0.9))), 0.0, 1.0),
+            grammar_floor=_clamp(_float(execution.get("grammar_floor"), float(getattr(settings, "music_grammar_floor", 0.95))), 0.0, 1.0),
+            max_break_seconds=max(0.5, _float(execution.get("max_break_seconds"), float(getattr(settings, "music_max_break_seconds", 3.0)))),
+            trim=flag("music_trim", bool(getattr(settings, "music_v2_trim", True))),
+            overshoot=_clamp(_float(execution.get("music_overshoot"), float(getattr(settings, "music_v2_overshoot", 1.05))), 1.0, 2.0),
+            overshoot_seconds=_clamp(_float(execution.get("music_overshoot_seconds"), float(getattr(settings, "music_v2_overshoot_seconds", 22.0))), 0.0, 90.0),
+            reference_strength=_clamp(_float(execution.get("reference_strength"), float(getattr(settings, "music_reference_strength", 0.3))), 0.05, 0.6),
+            reference_similarity_threshold=_clamp(_float(execution.get("reference_similarity_threshold"), float(getattr(settings, "music_reference_similarity_threshold", 0.85))), 0.0, 1.0),
+            reference_bpm_tolerance=_clamp(_float(execution.get("reference_bpm_tolerance"), float(getattr(settings, "music_reference_bpm_tolerance", 0.03))), 0.0, 0.5),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -172,6 +193,10 @@ class PreparedSong:
     bpm: int | None
     supplied: bool
     reference: ReferenceProfile | None = None
+    key: str | None = None
+    outline: Outline | None = None
+    verdict: Verdict | None = None
+    quality_repairs: int = 0
     writer_name: str = ""
     rounds: int = 0
     repairs: int = 0
@@ -207,7 +232,9 @@ async def prepare_song(
     digest = request_digest(job)
 
     reference = await _reference(options, workspace, reference_path, brief.language)
-    bpm = reference.bpm if reference and reference.bpm and options.reference_influence >= 0.5 else None
+    # A reference's tempo and key are mandatory targets, not a suggestion
+    # weighed by "influence" (client rule, 10 Sep 2026).
+    bpm = reference.bpm if reference and reference.bpm else None
     blueprint = build_blueprint(
         plan,
         language=brief.language,
@@ -233,6 +260,7 @@ async def prepare_song(
 
     prepared.reference = reference
     prepared.bpm = bpm
+    prepared.key = reference.key if reference else None
     prepared.request_sha256 = digest
     prepared.caption = production_caption(job.prompt, blueprint, brief, reference, prepared.timed)
     prepared.files = _write_files(workspace, prepared, options)
@@ -334,10 +362,18 @@ async def _write_and_validate(
         syllables_per_line=max(5, round(blueprint.seconds_per_line * blueprint.syllables_per_second * 1.4)),
     )
 
-    best: tuple[str, TimedLyrics, RhymeReport, PreflightReport] | None = None
+    # Song concept → narrative outline → lyrics (the client's order).
+    story: Outline = Outline()
+    if options.quality_judge:
+        story = await write_outline(writer, brief)
+        if not story.empty:
+            directed = dataclasses.replace(directed, outline_text=story.describe())
+
+    best: tuple[str, TimedLyrics, RhymeReport, PreflightReport, Verdict] | None = None
     notes: list[str] | None = None
     rounds = 0
     repairs = 0
+    quality_repairs = 0
 
     for round_index in range(max(1, options.max_write_rounds)):
         rounds = round_index + 1
@@ -352,7 +388,7 @@ async def _write_and_validate(
         # Targeted rhyme repair before the full-sheet verdict: only the
         # failing endings change, everything else stays as written.
         for _ in range(max(0, options.max_repair_rounds)):
-            if rhyme.passed or not hasattr(writer, "rewrite_lines"):
+            if (rhyme.passed and not rhyme.meter_failing) or not hasattr(writer, "rewrite_lines"):
                 break
             repaired = await writer.rewrite_lines(  # type: ignore[attr-defined]
                 directed, plan, draft, repair_instructions(rhyme, sections)
@@ -365,11 +401,40 @@ async def _write_and_validate(
             candidate_rhyme = validate_rhymes(
                 candidate_sections, code=brief.language, scheme=blueprint.rhyme_scheme, mode=options.rhyme_mode
             )
-            if candidate_rhyme.pass_rate >= rhyme.pass_rate:
+            better = candidate_rhyme.pass_rate > rhyme.pass_rate or (
+                candidate_rhyme.pass_rate == rhyme.pass_rate
+                and candidate_rhyme.meter_pass_rate >= rhyme.meter_pass_rate
+            )
+            if better:
                 draft, sections, rhyme = polish_lyrics(repaired, plan), candidate_sections, candidate_rhyme
                 timed = lay_out(sections, blueprint)
             else:
                 break
+
+        # The quality judge: coherence, grammar, meaning. Objected lines go
+        # back as targeted repairs, then the sheet is judged again.
+        verdict = Verdict(1.0, 1.0, (), "judge disabled", measured=False)
+        if options.quality_judge:
+            verdict = await judge(writer, [l for _, ls in sections for l in ls], story, brief.language)
+            for _ in range(2):
+                if verdict.passes(coherence_floor=options.coherence_floor, grammar_floor=options.grammar_floor):
+                    break
+                if not verdict.problems or not hasattr(writer, "rewrite_lines"):
+                    break
+                repaired = await writer.rewrite_lines(directed, plan, draft, verdict.instructions())  # type: ignore[attr-defined]
+                if not repaired or repaired.strip() == draft.strip():
+                    break
+                quality_repairs += 1
+                candidate = strip_labels(polish_lyrics(repaired, plan))
+                candidate_sections = parse_sections(candidate)
+                candidate_rhyme = validate_rhymes(
+                    candidate_sections, code=brief.language, scheme=blueprint.rhyme_scheme, mode=options.rhyme_mode
+                )
+                if candidate_rhyme.pass_rate < rhyme.pass_rate:
+                    break
+                draft, sections, rhyme = candidate, candidate_sections, candidate_rhyme
+                timed = lay_out(sections, blueprint)
+                verdict = await judge(writer, [l for _, ls in sections for l in ls], story, brief.language)
 
         report = preflight(
             timed, rhyme, brief,
@@ -378,6 +443,7 @@ async def _write_and_validate(
             rhyme_mode=options.rhyme_mode,
             reference_lines=reference_lines,
         )
+        quality_ok = verdict.passes(coherence_floor=options.coherence_floor, grammar_floor=options.grammar_floor)
         logger.info(
             "music_lyrics_round",
             extra={
@@ -386,18 +452,21 @@ async def _write_and_validate(
                 "planned_vocal_coverage": round(report.planned_vocal_coverage, 3),
                 "filler_ratio": round(report.filler_ratio, 3),
                 "rhyme_pass_rate": round(rhyme.pass_rate, 3),
+                "coherence": round(verdict.coherence, 2),
+                "grammar": round(verdict.grammar, 2),
+                "quality_problems": len(verdict.problems),
                 "errors": [p.code for p in report.errors],
                 "warnings": [p.code for p in report.warnings],
             },
         )
-        if best is None or _rank(report) > _rank(best[3]):
-            best = (draft, timed, rhyme, report)
-        if report.passed:
+        if best is None or _rank(report, verdict) > _rank(best[3], best[4]):
+            best = (draft, timed, rhyme, report, verdict)
+        if report.passed and quality_ok:
             break
-        notes = report.notes() + repair_instructions(rhyme, sections)
+        notes = report.notes() + repair_instructions(rhyme, sections) + verdict.instructions()
 
     assert best is not None
-    draft, timed, rhyme, report = best
+    draft, timed, rhyme, report, verdict = best
     prepared = PreparedSong(
         written=draft,
         sheet=timed.sheet(),
@@ -412,7 +481,25 @@ async def _write_and_validate(
         writer_name=getattr(writer, "last_writer", "") or getattr(writer, "name", type(writer).__name__),
         rounds=rounds,
         repairs=repairs,
+        outline=story,
+        verdict=verdict,
+        quality_repairs=quality_repairs,
     )
+    # The client's floors (0.90 / 0.95) are what the writer is sent back to
+    # reach; a REFUSAL needs a clearly bad sheet. The judge is a language
+    # model's opinion — on the first live Spanish jobs it scored grammar
+    # 0.40 on lyrics a native reader found merely plain — so a job is only
+    # refused below the hard floor, and the scores travel with the result.
+    hard_floor = float(getattr(settings, "music_quality_hard_floor", 0.5))
+    clearly_bad = verdict.measured and (verdict.coherence < hard_floor or verdict.grammar < hard_floor)
+    if report.passed and clearly_bad:
+        first = verdict.problems[0] if verdict.problems else None
+        detail = (
+            f"coherence {verdict.coherence:.2f} (floor {options.coherence_floor:.2f}), grammar {verdict.grammar:.2f} "
+            f"(floor {options.grammar_floor:.2f}); {len(verdict.problems)} line(s) objected to"
+            + (f", first: line {first[0]}: {first[1]}" if first else "")
+        )
+        raise LyricsValidationFailed("LYRIC_QUALITY_FAILED", detail, prepared=prepared)
     if not report.passed:
         # The best draft and its measurements are kept for the operator even
         # though the job stops here: a refusal with nothing to read is how
@@ -442,8 +529,9 @@ def strip_labels(sheet: str) -> str:
     return "\n".join(out)
 
 
-def _rank(report: PreflightReport) -> float:
-    return -len(report.errors) * 10 + report.planned_vocal_coverage - report.filler_ratio + report.rhyme_pass_rate
+def _rank(report: PreflightReport, verdict: Verdict | None = None) -> float:
+    quality = 0.0 if verdict is None else (verdict.coherence + verdict.grammar - len(verdict.problems) * 0.2)
+    return -len(report.errors) * 10 + report.planned_vocal_coverage - report.filler_ratio + report.rhyme_pass_rate + quality
 
 
 # ── The production brief ─────────────────────────────────────────────────
@@ -471,6 +559,8 @@ def production_caption(
         direction.append(f"{blueprint.bpm} BPM")
     if reference is not None and reference.describe():
         direction.append(reference.describe())
+    if prepared_key := getattr(blueprint, "key", None):
+        direction.append(f"in {prepared_key}")
     direction.append(f"structure: {blueprint.outline}")
     if not blueprint.sections or blueprint.vocal_sections:
         direction.append(
@@ -506,6 +596,10 @@ def _write_files(workspace: Path, prepared: PreparedSong, options: LyricsOptions
     if prepared.reference is not None:
         put("reference-profile.json", json.dumps(prepared.reference.to_dict(), indent=2))
     put("options.json", json.dumps(options.to_dict(), indent=2))
+    if prepared.outline is not None:
+        put("outline.json", json.dumps(prepared.outline.to_dict(), indent=2, ensure_ascii=False))
+    if prepared.verdict is not None:
+        put("quality.json", json.dumps(prepared.verdict.to_dict(), indent=2, ensure_ascii=False))
     return files
 
 

@@ -45,6 +45,8 @@ import unicodedata
 from dataclasses import dataclass, field
 
 from worker.music.lyrics import rhyme_key as _english_key
+from worker.music.syllables import confidence as _syllable_confidence
+from worker.music.syllables import syllables as _syllables
 
 #: The schemes a customer may ask for. "auto" is resolved by the blueprint.
 SCHEMES: tuple[str, ...] = ("auto", "AABB", "ABAB", "AAAA")
@@ -65,6 +67,11 @@ class RhymeGroup:
     keys: tuple[str, ...]
     passed: bool
     reason: str = ""
+    meter_ok: bool = True
+    """Whether the group's lines are within the syllable tolerance of each
+    other. Reported and repaired, never a refusal on its own: the syllable
+    estimate is approximate and a singer stretches a line to the bar."""
+    meter_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -104,6 +111,17 @@ class RhymeReport:
     def passed(self) -> bool:
         return not self.failing
 
+    @property
+    def meter_failing(self) -> tuple[RhymeGroup, ...]:
+        return tuple(group for group in self.required if not group.meter_ok)
+
+    @property
+    def meter_pass_rate(self) -> float:
+        required = self.required
+        if not required:
+            return 1.0
+        return sum(1 for group in required if group.meter_ok) / len(required)
+
     def to_dict(self) -> dict:
         return {
             "method": self.method,
@@ -111,6 +129,7 @@ class RhymeReport:
             "mode": self.mode,
             "scheme": self.scheme,
             "pass_rate": round(self.pass_rate, 3),
+            "meter_pass_rate": round(self.meter_pass_rate, 3),
             "groups": [
                 {
                     "section": group.section,
@@ -122,6 +141,8 @@ class RhymeReport:
                     "required": len(group.line_indexes) >= 2,
                     "passed": group.passed,
                     "reason": group.reason,
+                    "meter_ok": group.meter_ok,
+                    "meter_reason": group.meter_reason,
                 }
                 for group in self.groups
             ],
@@ -375,12 +396,17 @@ def validate_rhymes(
     code: str,
     scheme: str = "AABB",
     mode: str = "strict",
+    max_syllable_delta: int | None = 1,
 ) -> RhymeReport:
     """Every rhyme group in the sheet, with a verdict each.
 
     `sections` is `parse_sections` output. Groups of one line are reported
     but never required. An identical final word fails a group outside a
     refrain section — repetition is not rhyme — and is allowed inside one.
+    Lines in a group must also be within `max_syllable_delta` syllables of
+    each other (the client's meter rule, 10 Sep 2026) — enforced only where
+    the syllable estimate is high-confidence (Latin and Cyrillic scripts);
+    None disables it.
     """
     method, confidence = method_for(code)
     mode = "relaxed" if mode == "relaxed" else "strict"
@@ -397,6 +423,14 @@ def validate_rhymes(
             endings = tuple(final_word(lines[i - global_index]) for i in indexes)
             keys = tuple(rhyme_key_for(ending, code, mode=mode) for ending in endings)
             passed, reason = _verdict(endings, keys, refrain=tag.lower() in _REFRAIN_TAGS)
+            meter_ok, meter_reason = True, ""
+            if max_syllable_delta is not None and _syllable_confidence(code) == "high" and len(indexes) >= 2:
+                counts = [_syllables(lines[i - global_index], code) for i in indexes]
+                if max(counts) - min(counts) > max_syllable_delta:
+                    meter_ok = False
+                    meter_reason = f"syllable counts differ by more than {max_syllable_delta}: " + ", ".join(
+                        f"{ending} ({count})" for ending, count in zip(endings, counts, strict=True)
+                    )
             groups.append(
                 RhymeGroup(
                     section_index=section_index,
@@ -407,6 +441,8 @@ def validate_rhymes(
                     keys=keys,
                     passed=passed,
                     reason=reason,
+                    meter_ok=meter_ok,
+                    meter_reason=meter_reason,
                 )
             )
         global_index += len(lines)
@@ -441,13 +477,23 @@ def repair_instructions(report: RhymeReport, sections: list[tuple[str, list[str]
     """One instruction per failing group, naming the lines and the requirement."""
     flat: list[str] = [line for _, lines in sections for line in lines]
     notes: list[str] = []
+    # Rhyme first: meter notes go out only once every rhyme passes, so the
+    # writer is never asked to fix two things in one line at once.
+    for group in (report.meter_failing if report.passed else ()):
+        quoted = "; ".join(f"line {index + 1}: {flat[index]!r}" for index in group.line_indexes)
+        notes.append(
+            f"meter: in the [{group.section}] these lines rhyme but are not the same length "
+            f"(group {group.label}) — {group.meter_reason}; {quoted}. Rewrite them so they are "
+            f"within one syllable of each other, keeping the meaning and the rhyme."
+        )
     for group in report.failing:
         quoted = "; ".join(f"line {index + 1}: {flat[index]!r}" for index in group.line_indexes)
         notes.append(
             f"rhyme: in the [{group.section}] these lines must end on the same sound "
             f"(group {group.label}) and do not — {quoted}. Rewrite ONLY the line endings "
             f"so they rhyme exactly on a DIFFERENT final word each (the same word twice is "
-            f"not a rhyme); keep every other line unchanged."
+            f"not a rhyme), keeping the meaning of the line and its length; keep every "
+            f"other line unchanged."
         )
     return notes
 

@@ -71,6 +71,9 @@ class VerificationReport:
     coverage_method: str
     """"stem", "transcript" or "unmeasured"."""
     longest_gap_seconds: float | None
+    longest_break_seconds: float | None
+    """Longest unsung stretch BETWEEN the first and last sung note — an
+    instrumental break, as distinct from the intro and the tail."""
     lyric_recall: float | None
     recall_method: str
     lines: tuple[LineRecall, ...]
@@ -114,6 +117,7 @@ class VerificationReport:
             "coverage_method": self.coverage_method,
             "coverage_target": self.coverage_target,
             "longest_gap_seconds": None if self.longest_gap_seconds is None else round(self.longest_gap_seconds, 2),
+            "longest_break_seconds": None if self.longest_break_seconds is None else round(self.longest_break_seconds, 2),
             "lyric_recall": None if self.lyric_recall is None else round(self.lyric_recall, 4),
             "recall_method": self.recall_method,
             "recall_threshold": self.recall_threshold,
@@ -218,6 +222,13 @@ def _word_spans(transcript: Transcript, duration: float) -> list[tuple[float, fl
     return spans_from_envelope(env, abs_floor=0.5, rel_fraction=0.5)
 
 
+def _longest_break(spans: list[tuple[float, float]]) -> float:
+    longest = 0.0
+    for (_, end), (start, _) in zip(spans, spans[1:], strict=False):
+        longest = max(longest, start - end)
+    return longest
+
+
 def _longest_gap(spans: list[tuple[float, float]], duration: float) -> float:
     if not spans:
         return duration
@@ -237,6 +248,7 @@ async def verify_song(
     coverage_target: float,
     recall_threshold: float,
     duration_tolerance_seconds: float = 2.0,
+    max_break_seconds: float | None = None,
     transcribe_fn=None,
     vocal_activity_fn=None,
 ) -> VerificationReport:
@@ -256,9 +268,11 @@ async def verify_song(
     coverage: float | None = None
     method = "unmeasured"
     gap: float | None = None
+    longest_break: float | None = None
     if spans is not None:
         coverage = vocal_fraction(spans, 0.0, duration)
         gap = _longest_gap(spans, duration)
+        longest_break = _longest_break(spans)
         method = "stem"
 
     # ── Recall, from the transcript ──────────────────────────────────
@@ -287,6 +301,7 @@ async def verify_song(
             word_spans = _word_spans(transcript, duration)
             coverage = vocal_fraction(word_spans, 0.0, duration)
             gap = _longest_gap(word_spans, duration)
+            longest_break = _longest_break(word_spans)
             method = "transcript"
         if detected and probability is not None and probability >= 0.8:
             language_ok = detected == language
@@ -301,6 +316,13 @@ async def verify_song(
                 "VOCAL_COVERAGE_BELOW_90",
                 f"measured sung coverage is {coverage:.0%} ({method}); the target is {coverage_target:.0%}"
                 + (f"; longest unsung gap {gap:.0f}s" if gap else ""),
+            )
+        )
+    if max_break_seconds is not None and longest_break is not None and longest_break > max_break_seconds:
+        errors.append(
+            (
+                "INSTRUMENTAL_BREAK_TOO_LONG",
+                f"an instrumental break of {longest_break:.1f}s inside the singing; at most {max_break_seconds:.0f}s is allowed",
             )
         )
     if recall is not None and recall < recall_threshold:
@@ -320,6 +342,7 @@ async def verify_song(
         measured_vocal_coverage=coverage,
         coverage_method=method,
         longest_gap_seconds=gap,
+        longest_break_seconds=longest_break,
         lyric_recall=recall,
         recall_method=recall_method,
         lines=lines,

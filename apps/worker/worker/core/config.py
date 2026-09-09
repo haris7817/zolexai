@@ -477,6 +477,41 @@ class WorkerSettings(BaseSettings):
     line was audibly sung), so this is a floor for "the lines were sung",
     not a fidelity score; the exact-match share is reported beside it."""
 
+    # ── 10 Sep 2026 corrections: enforced, not prompted ──
+    music_v2_trim: bool = True
+    """Generate a longer take and cut the requested length around the
+    singing (worker/music/trim.py): intro ≤ ~2.5 s, outro ≤ ~3.5 s. The
+    model opens with a ~10 s intro whatever the brief says; this is the
+    backend enforcement the client asked for."""
+    music_v2_overshoot: float = 1.05
+    """Ratio part of how much longer than the request the take is
+    generated; `music_v2_overshoot_seconds` is the fixed part. The model
+    adds an intro (~10 s) and a tail (~10–20 s) of its own that the cut
+    removes; anything more and it stretches the sheet across the longer
+    take, and the cut loses the ending (measured 10 Sep 2026 at 1.35: the
+    last chorus fell outside the window)."""
+    music_v2_overshoot_seconds: float = 22.0
+    music_max_break_seconds: float = 3.0
+    """Longest instrumental break inside the singing a delivered take may
+    carry. The client asked for 2; a song's turnaround between verse and
+    chorus is routinely 2–3 s, so 3 is the floor of realism. Reported
+    either way."""
+    music_quality_judge: bool = True
+    """Outline the story before writing and judge the sheet for coherence
+    and grammar before singing (worker/music/quality.py)."""
+    music_coherence_floor: float = 0.90
+    music_grammar_floor: float = 0.95
+    music_quality_hard_floor: float = 0.5
+    """Below this on either score the sheet is refused; between this and
+    the floors above it is rewritten, then delivered with its scores."""
+    music_reference_strength: float = 0.3
+    """`audio_cover_strength` sent with a reference: style transfer, well
+    below a cover, so melody and words stay original."""
+    music_reference_similarity_threshold: float = 0.85
+    """Below this the finished song is re-recorded (or failed) as not
+    matching its reference; see `compare_to_reference`."""
+    music_reference_bpm_tolerance: float = 0.03
+
     music_reference_fetch_python: Path | None = None
     """Interpreter with yt-dlp for reference links. None uses the LTX venv,
     where yt-dlp already lives for Music Video."""

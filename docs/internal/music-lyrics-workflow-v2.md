@@ -156,3 +156,58 @@ line, with the retry doing real work.
 Recall counts a line heard with some words changed (Whisper on sung
 vocals: 40% exact on takes where every line was audibly present); the
 exact-match share is in the report. Threshold 0.5.
+
+## 10 Sep 2026 — the client's three corrections, enforced in the backend
+
+Their findings on a delivered 2-minute Spanish song: singing from 0:12 to
+1:35, ~25 s instrumental tail, ~70% sung; some lines unnatural; rhymes
+inconsistent; and a reference-audio song at 136 BPM A major against a
+92 BPM B major reference. Three mandatory fixes, all landed the same day:
+
+**1. Coverage, intro, outro and breaks — cut, not asked.** The model opens
+with a ~10 s intro and ends with a tail whatever the brief says, so
+`worker/music/trim.py` generates a take ~22 s + 5% longer than the song
+and cuts the requested length starting 2.5 s before the first sung note
+(stem spans; transcript spans without a separator), fading at the cuts.
+`verify.py` gained an `INSTRUMENTAL_BREAK_TOO_LONG` gate
+(`music_max_break_seconds`, 3 s). Measured live afterwards: 2-min Spanish
+**93.6% sung, intro 2.5 s, longest break 2.4 s, first take**. Overshoot as
+a ratio (1.35) made the model stretch the sheet across the longer take and
+the cut lost the last chorus — hence the fixed-seconds form.
+
+**2. Reference audio conditions the model.** The dormant `reference_audio`
+payload key was never read by the service; the real fields are
+`reference_audio_path` (under the system temp dir), `task_type: text2music`
+and `audio_cover_strength` (0.3 — style transfer; 1.0 would be a cover).
+`worker/music/keys.py` measures BPM (onset + envelope autocorrelation) and
+key (Krumhansl–Schmuckler on a numpy chroma) for the reference and for the
+finished song; the reference's BPM and key are sent as `bpm`/`key_scale`;
+`compare_to_reference` scores tempo (3% tolerance, octave-aware), key,
+energy-curve shape and sung density into a similarity, and a mismatch is a
+retry reason (`REFERENCE_MISMATCH`). The mandated log record
+(`reference_audio_loaded`, `reference_embedding_created`,
+`reference_conditioning_applied`, `reference_duration`, `target_bpm`,
+`target_key`) is written as `music_reference_conditioning`, and a provider
+that cannot condition refuses the job (`REFERENCE_CONDITIONING_FAILED`).
+Measured live: reference 71 BPM F major → song **71 BPM**, key heard as F
+minor — the parallel-mode ambiguity chroma cannot settle on a dense mix, so
+same-tonic mode disagreement scores partial rather than failing.
+
+**3. Lyric quality and flow engine** (`worker/music/quality.py`). Order is
+now concept → narrative outline → lyrics → rhyme/meter → judge → music →
+transcription. The outline (theme, narrator, addressee, emotion, conflict,
+development, final message, hook) goes into the writer's brief; a
+native-editor judge scores coherence and grammar and names the lines with
+real errors, which go back as targeted repairs (twice), with the client's
+floors (0.90 / 0.95) as the rewrite triggers. Refusal only below a hard
+floor (0.5): the judge is a language model's opinion and scored 0.15
+grammar on plain Spanish before its rubric was narrowed to errors, not
+taste. Rhyme groups are also checked for syllable parity (±1) —
+reported and repaired, never a refusal, and always after rhyme.
+The writer chain now delegates `ask_json` and `rewrite_lines` (without
+which the judge was silently unmeasured), and an empty answer at the
+length limit retries once with a doubled budget.
+
+Live after all of it, reference-conditioned 2-min Spanish: 93% sung,
+intro 2.5 s, no breaks, recall 100%, rhyme 100%, coherence 0.94, grammar
+0.89, three takes.

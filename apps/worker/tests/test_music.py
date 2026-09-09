@@ -634,7 +634,10 @@ async def test_a_one_minute_request_produces_a_verified_one_minute_track(
     assert provider.requests[0].prompt.startswith(
         "an upbeat pop song about summer in Lahore, hopeful, female vocals"
     )
-    assert provider.requests[0].duration_seconds == pytest.approx(60.0)
+    # Since 10 Sep 2026 the v2 workflow renders a LONGER take and cuts the
+    # requested length around the singing (worker/music/trim.py), so the
+    # request is at least the song's length; the delivered file is exact.
+    assert provider.requests[0].duration_seconds >= 60.0
 
     progress = [value for _, value, _ in reported]
     assert progress == sorted(progress)

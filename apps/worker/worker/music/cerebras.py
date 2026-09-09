@@ -236,6 +236,12 @@ def _user_prompt(brief: LyricBrief, plan: SongPlan, notes: list[str] | None) -> 
     ]
     if brief.perspective:
         lines.append(f"PERSPECTIVE: {brief.perspective}")
+    if brief.outline_text:
+        lines.append(
+            "STORY OUTLINE — every verse continues this one story, in this order; no "
+            "unrelated lines, no contradictions, no filler chosen only to rhyme:\n"
+            + brief.outline_text
+        )
     if brief.rhyme_scheme:
         lines.append(
             f"RHYME SCHEME: {brief.rhyme_scheme} within every section. Rhymes must be "
@@ -247,7 +253,8 @@ def _user_prompt(brief: LyricBrief, plan: SongPlan, notes: list[str] | None) -> 
         lines.append(
             f"LINE LENGTH: about {brief.syllables_per_line} syllables per line, every line "
             "a full sung phrase — no one-word lines, no 'oh oh', 'yeah yeah', 'la la', "
-            "humming or sound effects."
+            "humming or sound effects. Two lines that rhyme with each other must be within "
+            "one syllable of the same length, so they sit on the same musical phrase."
         )
     if brief.clean:
         lines.append("CONTENT: clean — no profanity, no explicit content.")
@@ -413,6 +420,59 @@ class CerebrasLyricsWriter:
 
         raise LyricsWriteFailed(" || ".join(problems) or "no attempt succeeded")
 
+    # ── Any JSON question (outline, quality judge) ───────────────────────
+
+    async def ask_json(self, system: str, user: str, *, max_tokens: int = 1200, effort: str | None = None) -> dict | None:
+        """One question, one JSON object back, or None on any failure.
+
+        The lyric quality engine (worker/music/quality.py) plans an outline
+        and judges a sheet through this. Same endpoint, key and model as the
+        writing; the answer is parsed leniently (the first {...} in the
+        text) because a reasoning model sometimes wraps it in prose.
+        """
+        if not self.available:
+            return None
+        payload = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_completion_tokens": max_tokens + _REASONING_HEADROOM * (2 if effort == "medium" else 1),
+            **{k: (effort or v) for k, v in self._reasoning().items()},
+            "temperature": 0.3,
+            "stream": False,
+        }
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=self._timeout,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                transport=self._transport,
+            ) as client:
+                response = await client.post("/v1/chat/completions", json=payload)
+        except httpx.HTTPError as exc:
+            logger.warning("cerebras_ask_failed", extra={"detail": type(exc).__name__})
+            return None
+        if response.status_code >= 400:
+            logger.warning("cerebras_ask_failed", extra={"status": response.status_code})
+            return None
+        try:
+            text = _strip_fences(_first_message(response.json()))
+        except (json.JSONDecodeError, ValueError):
+            return None
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            data = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+
     # ── Targeted repair (v2 lyrics workflow) ─────────────────────────────
 
     async def rewrite_lines(
@@ -544,10 +604,22 @@ class CerebrasLyricsWriter:
         reinforce: bool,
     ) -> tuple[str, dict[str, Any]]:
         """One request. Raises `LyricsWriteFailed` with the bucket set."""
+        return await self._complete_with_budget(brief, plan, notes, reinforce, self._max_completion_tokens(plan, brief))
+
+    async def _complete_with_budget(
+        self,
+        brief: LyricBrief,
+        plan: SongPlan,
+        notes: list[str] | None,
+        reinforce: bool,
+        budget: int,
+        *,
+        grown: bool = False,
+    ) -> tuple[str, dict[str, Any]]:
         payload = {
             "model": self._model,
             "messages": self._messages(brief, plan, notes, reinforce),
-            "max_completion_tokens": self._max_completion_tokens(plan, brief),
+            "max_completion_tokens": budget,
             **self._reasoning(),
             # Lyrics are a creative task and a deterministic writer produces
             # the same song for every customer with a similar prompt. High
@@ -599,6 +671,21 @@ class CerebrasLyricsWriter:
 
         text = _first_message(body)
         if not text.strip():
+            # A reasoning model that spent the whole allowance thinking
+            # returns an empty message with finish_reason "length". One more
+            # try with double the room, then it is a real failure. Measured
+            # 10 Sep 2026: the outline and reference direction in the brief
+            # pushed gpt-oss-120b past a 4100-token budget at low effort.
+            finish = ""
+            try:
+                finish = str(body["choices"][0].get("finish_reason") or "")
+            except (KeyError, IndexError, TypeError, AttributeError):
+                pass
+            if finish == "length" and not grown:
+                logger.info("cerebras_budget_doubled", extra={"budget": budget})
+                return await self._complete_with_budget(
+                    brief, plan, notes, reinforce, min(16000, budget * 2), grown=True
+                )
             raise LyricsWriteFailed(
                 "lyrics service returned an empty message", retriable=True
             )
