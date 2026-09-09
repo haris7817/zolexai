@@ -30,6 +30,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -341,7 +342,7 @@ async def _write_and_validate(
     for round_index in range(max(1, options.max_write_rounds)):
         rounds = round_index + 1
         try:
-            draft = polish_lyrics(await writer.write(directed, plan, notes), plan)
+            draft = strip_labels(polish_lyrics(await writer.write(directed, plan, notes), plan))
         except (NoLyricsWriterAvailable, UnsupportedLyricLanguage):
             raise
         sections = parse_sections(draft)
@@ -359,6 +360,7 @@ async def _write_and_validate(
             if not repaired or repaired.strip() == draft.strip():
                 break
             repairs += 1
+            repaired = strip_labels(repaired)
             candidate_sections = parse_sections(polish_lyrics(repaired, plan))
             candidate_rhyme = validate_rhymes(
                 candidate_sections, code=brief.language, scheme=blueprint.rhyme_scheme, mode=options.rhyme_mode
@@ -418,6 +420,26 @@ async def _write_and_validate(
         first = report.errors[0]
         raise LyricsValidationFailed(first.code, first.detail, prepared=prepared)
     return prepared
+
+
+_LABEL = re.compile(r"\s*[\(\[]\s*(?:rhyme\s*)?[A-Za-z]\d?\s*[\)\]]\s*$")
+
+
+def strip_labels(sheet: str) -> str:
+    """Removes a rhyme-group label a writer wrote at the end of a line.
+
+    Asked for an AABB scheme, the hosted model sometimes annotates its own
+    work — "Morning breeze dances through the flow (A)" — and the music
+    model would sing the "A" (seen on the first live 5-minute song, 9 Sep
+    2026). Tags and the words themselves are untouched.
+    """
+    out: list[str] = []
+    for line in sheet.splitlines():
+        if line.strip().startswith("["):
+            out.append(line)
+        else:
+            out.append(_LABEL.sub("", line))
+    return "\n".join(out)
 
 
 def _rank(report: PreflightReport) -> float:

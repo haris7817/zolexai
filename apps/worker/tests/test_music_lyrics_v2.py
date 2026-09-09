@@ -417,3 +417,10 @@ def test_the_customer_result_stays_within_the_apis_bound() -> None:
     result = customer_result(prepared, None, retries=0)
     assert len(json.dumps(result, ensure_ascii=False).encode("utf-8")) <= RESULT_MAX_BYTES
     assert "lyrics" in result and "lyrics_lrc" in result
+
+
+def test_rhyme_labels_a_writer_annotated_are_not_sung() -> None:
+    from worker.music.workflow import strip_labels
+
+    sheet = "[verse]\nMorning breeze dances through the flow (A)\nKids chase shadows on the lines [B]\nplain line\n[chorus]\nhold on (rhyme A)"
+    assert strip_labels(sheet) == "[verse]\nMorning breeze dances through the flow\nKids chase shadows on the lines\nplain line\n[chorus]\nhold on"

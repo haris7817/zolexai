@@ -240,7 +240,8 @@ def _user_prompt(brief: LyricBrief, plan: SongPlan, notes: list[str] | None) -> 
         lines.append(
             f"RHYME SCHEME: {brief.rhyme_scheme} within every section. Rhymes must be "
             "exact on the stressed vowel and everything after it, in the song's own "
-            "language — never rhyme a word with itself."
+            "language — never rhyme a word with itself. Do not write the scheme "
+            "letters or any annotation on the lines: only the words to be sung."
         )
     if brief.syllables_per_line:
         lines.append(
