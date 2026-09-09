@@ -470,10 +470,12 @@ class WorkerSettings(BaseSettings):
     new seed and a firmer production brief; the sheet is kept. Cheap on the
     current model (a four-minute song renders in seconds)."""
 
-    music_lyric_recall_threshold: float = 0.6
-    """Fraction of lines the transcript must contain as written. Sung
-    vocals transcribe imperfectly in every language, so this is a floor for
-    "the words were sung", not a fidelity score."""
+    music_lyric_recall_threshold: float = 0.5
+    """Fraction of lines the transcript must contain — heard as written or
+    with some words changed. Sung vocals transcribe imperfectly in every
+    language (measured 9 Sep 2026: 40% exact on Spanish takes where every
+    line was audibly sung), so this is a floor for "the lines were sung",
+    not a fidelity score; the exact-match share is reported beside it."""
 
     music_reference_fetch_python: Path | None = None
     """Interpreter with yt-dlp for reference links. None uses the LTX venv,
@@ -482,6 +484,11 @@ class WorkerSettings(BaseSettings):
     music_reference_fetch_timeout: float = 300.0
     music_reference_max_bytes: int = 200 * 1024 * 1024
     music_reference_max_seconds: int = 600
+
+    cerebras_lyrics_reasoning_effort: str = "low"
+    """`reasoning_effort` sent to reasoning models (gpt-oss, qwen) for lyric
+    writing. "low" measured 9 Sep 2026: the default effort burned the whole
+    output budget thinking and returned nothing. "none" sends no field."""
 
     music_lyrics_writer: str = "cerebras,template"
     """

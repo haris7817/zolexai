@@ -60,6 +60,16 @@ class Transcript:
 def _model(name: str, device: str, compute_type: str, download_root: str | None):
     from faster_whisper import WhisperModel  # heavy; imported on first use only
 
+    # CTranslate2 dlopens cuBLAS/cuDNN by name and the pip wheels sit where
+    # the loader never looks; the music-video path already solved this
+    # (measured 8 Sep 2026: model loads, first transcription dies on
+    # libcublas.so.12) by pre-loading the wheels' libraries. Same fix here.
+    try:
+        from worker.musicvideo import prepare_whisper_libraries
+
+        prepare_whisper_libraries()
+    except Exception as exc:  # a node without the wheels: CPU or system CUDA
+        logger.info("music_whisper_libraries_skipped", extra={"detail": str(exc)[:200]})
     return WhisperModel(name, device=device, compute_type=compute_type, download_root=download_root)
 
 

@@ -275,8 +275,13 @@ async def verify_song(
         if timed.lines:
             aligned = align_lines(timed, transcript, code=language)
             lines = tuple(aligned)
-            matched = sum(1 for line in aligned if line.status == "matched")
-            recall = matched / len(aligned)
+            # Recall is "the line was sung", so a line heard with some words
+            # changed counts. Whisper on sung vocals is reliable for whether a
+            # verse appeared and weak on the exact words (runbook §36.6;
+            # measured 9 Sep 2026 on Spanish takes: 40% exact, every line
+            # audibly present). The exact-match share is still reported.
+            heard = sum(1 for line in aligned if line.status in {"matched", "substituted"})
+            recall = heard / len(aligned)
             recall_method = "transcript"
         if coverage is None and transcript.words:
             word_spans = _word_spans(transcript, duration)
@@ -288,7 +293,9 @@ async def verify_song(
             if not language_ok:
                 warnings.append(("LANGUAGE_MISMATCH", f"the transcriber heard {detected!r}, not {language!r}"))
 
-    if coverage is not None and coverage < coverage_target:
+    # The same hair of tolerance the preflight gives: the stem envelope is
+    # measured in 50 ms hops, and a take at 89.7% is the target reached.
+    if coverage is not None and coverage < coverage_target - 0.005:
         errors.append(
             (
                 "VOCAL_COVERAGE_BELOW_90",

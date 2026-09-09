@@ -114,12 +114,16 @@ _TOKENS_PER_LINE = 60
 #: this reserve existed; with it, the same model passes all fourteen. Sized
 #: above the highest reasoning cost observed, because the failure is silent and
 #: the over-allocation is free.
-_REASONING_HEADROOM = 900
+_REASONING_HEADROOM = 2500
+#: Raised from 900 on 9 Sep 2026: with the v2 lyrics workflow's fuller brief
+#: (per-section counts, scheme, syllables, POV) gpt-oss-120b spent more than
+#: the old reserve thinking and returned two empty messages in a row on a
+#: Spanish request (GPU node, direct test). Unused allowance costs nothing.
 
 #: Floor and ceiling on the output allowance, so a 1-minute song still has room
 #: to finish a thought and a 5-minute one cannot run away.
-_MIN_TOKENS = 1400
-_MAX_TOKENS = 4000
+_MIN_TOKENS = 3200
+_MAX_TOKENS = 7000
 
 
 # ── The brief, as the model reads it ─────────────────────────────────────
@@ -436,7 +440,9 @@ class CerebrasLyricsWriter:
             "is, character for character. No commentary, no code fences."
         )
         user = (
-            "LYRIC SHEET:\n" + sheet.strip() + "\n\nFIX THESE, AND NOTHING ELSE:\n"
+            "Here is the sheet, between the markers. Return only the sheet — no "
+            "markers, no headings, nothing before the first section tag.\n"
+            "<<<\n" + sheet.strip() + "\n>>>\n\nFIX THESE, AND NOTHING ELSE:\n"
             + "\n".join(f"- {note}" for note in instructions)
         )
         payload = {
@@ -445,7 +451,10 @@ class CerebrasLyricsWriter:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "max_completion_tokens": self._max_completion_tokens(plan),
+            "max_completion_tokens": self._max_completion_tokens(plan, brief),
+            # A repair is a small, exact task: a little more thought than a
+            # full draft gets, still bounded by the same reserve.
+            **{k: ("medium" if v == "low" else v) for k, v in self._reasoning().items()},
             "temperature": min(self._temperature, 0.6),
             "stream": False,
         }
@@ -472,7 +481,10 @@ class CerebrasLyricsWriter:
             return None
         if not text.strip() or written_in(text, brief.language.strip().lower() or "en") is False:
             return None
-        return _merge_rewrite(sheet, text, instructions)
+        merged = _merge_rewrite(sheet, text, instructions)
+        if merged is None:
+            logger.info("cerebras_rewrite_discarded", extra={"reason": "shape changed"})
+        return merged
 
     # ── HTTP ─────────────────────────────────────────────────────────────
 
@@ -493,14 +505,34 @@ class CerebrasLyricsWriter:
             {"role": "user", "content": _user_prompt(brief, plan, notes)},
         ]
 
-    def _max_completion_tokens(self, plan: SongPlan) -> int:
+    def _reasoning(self) -> dict[str, str]:
+        """`reasoning_effort` for the models that think before they write.
+
+        Measured 9 Sep 2026 on the GPU node against the v2 lyrics brief:
+        `gpt-oss-120b` at its default effort spent the WHOLE 3200-token
+        allowance reasoning about Spanish rhymes and returned an empty
+        message twice; at `low` it reasoned for ~1250 tokens and wrote the
+        sheet in a second. Sent only for model families known to accept the
+        field, because a model that does not returns 400.
+        """
+        effort = (getattr(settings, "cerebras_lyrics_reasoning_effort", "low") or "").strip().lower()
+        if not effort or effort == "none":
+            return {}
+        if self._model.startswith(("gpt-oss", "qwen")):
+            return {"reasoning_effort": effort}
+        return {}
+
+    def _max_completion_tokens(self, plan: SongPlan, brief: LyricBrief | None = None) -> int:
         """The output allowance: room for the song, plus room to think.
 
         The headroom is added rather than assumed to fit inside the per-line
         figure, because it is not proportional to the song — a reasoning model
         deliberates about as much for a one-minute song as a five-minute one.
         """
-        wanted = plan.line_budget * _TOKENS_PER_LINE + _REASONING_HEADROOM
+        lines = plan.line_budget
+        if brief is not None and brief.section_targets:
+            lines = max(lines, sum(count for _, count in brief.section_targets))
+        wanted = lines * _TOKENS_PER_LINE + _REASONING_HEADROOM
         return max(_MIN_TOKENS, min(_MAX_TOKENS, wanted))
 
     async def _complete(
@@ -514,7 +546,8 @@ class CerebrasLyricsWriter:
         payload = {
             "model": self._model,
             "messages": self._messages(brief, plan, notes, reinforce),
-            "max_completion_tokens": self._max_completion_tokens(plan),
+            "max_completion_tokens": self._max_completion_tokens(plan, brief),
+            **self._reasoning(),
             # Lyrics are a creative task and a deterministic writer produces
             # the same song for every customer with a similar prompt. High
             # enough to vary, low enough to keep following the structure rules.
@@ -573,29 +606,41 @@ class CerebrasLyricsWriter:
         return _strip_fences(text), usage
 
 
-def _merge_rewrite(original: str, rewritten: str, instructions: list[str]) -> str:
+def _merge_rewrite(original: str, rewritten: str, instructions: list[str]) -> str | None:
     """Keeps the original for every line the repair was not asked to touch.
 
     Line numbers in the instructions ("line 7: ...") name which sheet lines
-    may change. If the model returned a different number of lines the whole
-    rewrite is returned as-is and the caller's validation decides.
+    may change. The rewrite must have the SAME shape as the original — the
+    same tags in the same order with the same line counts — or it is
+    discarded (None): a model that echoes the prompt's labels or drops a
+    verse would otherwise reach the timeline as a one-line section
+    (measured 9 Sep 2026: "[verse] LYRIC SHEET:" collapsed every verse of a
+    3-minute song to a single line).
     """
     import re as _re
 
+    from worker.music.lyrics import parse_sections
+
     allowed = {int(m) - 1 for note in instructions for m in _re.findall(r"line (\d+):", note)}
-    before = [line for line in original.splitlines() if line.strip() and not line.strip().startswith("[")]
-    after = [line for line in rewritten.splitlines() if line.strip() and not line.strip().startswith("[")]
-    if len(before) != len(after) or not allowed:
-        return rewritten
+    # Anything before the first tag is preamble the model was told not to write.
+    lines = rewritten.splitlines()
+    start = next((i for i, line in enumerate(lines) if _re.match(r"^\s*\[[^\]]+\]\s*$", line)), None)
+    if start is None:
+        return None
+    cleaned = "\n".join(line for line in lines[start:] if line.strip() not in {"<<<", ">>>"})
+    before = parse_sections(original)
+    after = parse_sections(cleaned)
+    if [(tag, len(ls)) for tag, ls in before] != [(tag, len(ls)) for tag, ls in after]:
+        return None
     merged: list[str] = []
     index = 0
-    for raw in rewritten.splitlines():
-        if not raw.strip() or raw.strip().startswith("["):
-            merged.append(raw)
-            continue
-        merged.append(raw if index in allowed else before[index])
-        index += 1
-    return "\n".join(merged)
+    for (tag, old_lines), (_, new_lines) in zip(before, after, strict=True):
+        merged.append(f"[{tag}]")
+        for old_line, new_line in zip(old_lines, new_lines, strict=True):
+            merged.append(new_line if index in allowed else old_line)
+            index += 1
+        merged.append("")
+    return "\n".join(merged).strip()
 
 
 def _first_message(body: Any) -> str:

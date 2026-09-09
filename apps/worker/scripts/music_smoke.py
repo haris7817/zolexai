@@ -53,6 +53,12 @@ async def main() -> int:
     execution: dict[str, object] = {"runtime": "music"}
     if os.getenv("MAX_SEGMENT_SECONDS"):
         execution["max_segment_seconds"] = int(os.environ["MAX_SEGMENT_SECONDS"])
+    if os.getenv("EXECUTION_JSON"):
+        # Any execution knob, e.g. the v2 lyrics workflow's
+        # {"seconds_per_line": 3, "music_verify_policy": "deliver_best"}.
+        import json
+
+        execution.update(json.loads(os.environ["EXECUTION_JSON"]))
 
     parameters: dict[str, object] = {"duration": duration}
     # The controls a customer can set. Passed through here so the smoke test

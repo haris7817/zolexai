@@ -446,7 +446,8 @@ def repair_instructions(report: RhymeReport, sections: list[tuple[str, list[str]
         notes.append(
             f"rhyme: in the [{group.section}] these lines must end on the same sound "
             f"(group {group.label}) and do not — {quoted}. Rewrite ONLY the line endings "
-            f"so they rhyme exactly; keep every other line unchanged."
+            f"so they rhyme exactly on a DIFFERENT final word each (the same word twice is "
+            f"not a rhyme); keep every other line unchanged."
         )
     return notes
 

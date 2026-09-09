@@ -89,13 +89,13 @@ class LyricsOptions:
     point_of_view: str = "auto"
     clean: bool = True
     dry_run: bool = False
-    recall_threshold: float = 0.6
+    recall_threshold: float = 0.5
     verify_policy: str = "fail"
     max_retries: int = 2
     reference_url: str | None = None
     reference_influence: float = 0.65
     max_write_rounds: int = 3
-    max_repair_rounds: int = 2
+    max_repair_rounds: int = 3
 
     @classmethod
     def from_job(cls, job: AdapterJob) -> LyricsOptions:
@@ -134,7 +134,7 @@ class LyricsOptions:
             point_of_view=pov,
             clean=flag("clean_mode", True),
             dry_run=flag("dry_run", False) or flag("music_dry_run", False),
-            recall_threshold=_clamp(_float(execution.get("lyric_recall_threshold"), float(getattr(settings, "music_lyric_recall_threshold", 0.6))), 0.0, 1.0),
+            recall_threshold=_clamp(_float(execution.get("lyric_recall_threshold"), float(getattr(settings, "music_lyric_recall_threshold", 0.5))), 0.0, 1.0),
             verify_policy=str(execution.get("music_verify_policy") or getattr(settings, "music_verify_policy", "fail")),
             max_retries=max(0, int(execution.get("music_verify_max_retries", getattr(settings, "music_verify_max_retries", 2)) or 0)),
             reference_url=str(url).strip() if isinstance(url, str) and url.strip() else None,
@@ -218,10 +218,17 @@ async def prepare_song(
     reference_lines = reference.transcript_lines if reference else ()
 
     supplied = str(job.parameters.get("lyrics") or "").strip()
-    if supplied:
-        prepared = _measure_supplied(supplied, blueprint, brief, options, reference_lines)
-    else:
-        prepared = await _write_and_validate(plan, blueprint, brief, writer, options, reference, reference_lines)
+    try:
+        if supplied:
+            prepared = _measure_supplied(supplied, blueprint, brief, options, reference_lines)
+        else:
+            prepared = await _write_and_validate(plan, blueprint, brief, writer, options, reference, reference_lines)
+    except LyricsValidationFailed as failure:
+        if failure.prepared is not None:
+            failure.prepared.reference = reference
+            failure.prepared.request_sha256 = digest
+            failure.prepared.files = _write_files(workspace, failure.prepared, options)
+        raise
 
     prepared.reference = reference
     prepared.bpm = bpm
@@ -389,11 +396,7 @@ async def _write_and_validate(
 
     assert best is not None
     draft, timed, rhyme, report = best
-    if not report.passed:
-        first = report.errors[0]
-        raise LyricsValidationFailed(first.code, first.detail)
-
-    return PreparedSong(
+    prepared = PreparedSong(
         written=draft,
         sheet=timed.sheet(),
         blueprint=blueprint,
@@ -408,6 +411,13 @@ async def _write_and_validate(
         rounds=rounds,
         repairs=repairs,
     )
+    if not report.passed:
+        # The best draft and its measurements are kept for the operator even
+        # though the job stops here: a refusal with nothing to read is how
+        # the first 3-minute failure on the node went unexplained.
+        first = report.errors[0]
+        raise LyricsValidationFailed(first.code, first.detail, prepared=prepared)
+    return prepared
 
 
 def _rank(report: PreflightReport) -> float:

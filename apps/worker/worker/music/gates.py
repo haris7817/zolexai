@@ -41,9 +41,12 @@ SIMILARITY_NGRAM = 5
 
 
 class LyricsValidationFailed(Exception):
-    def __init__(self, code: str, detail: str) -> None:
+    def __init__(self, code: str, detail: str, *, prepared: Any = None) -> None:
         self.code = code
         self.detail = detail
+        self.prepared = prepared
+        """The best draft with its measurements, when one exists — written
+        to the workspace by the workflow so a refusal can be read."""
         super().__init__(f"{code}: {detail}")
 
 

@@ -92,6 +92,21 @@ class FallbackLyricsWriter:
 
     def __init__(self, writers: list[LyricsWriter]) -> None:
         self._writers = list(writers)
+        self._last: LyricsWriter | None = None
+
+    async def rewrite_lines(self, brief, plan, sheet: str, instructions: list[str]) -> str | None:
+        """A targeted repair by whichever member wrote the sheet.
+
+        The v2 lyrics workflow repairs failing rhyme groups by asking the
+        writer to change only the named lines. Without this delegation the
+        chain hid that ability (measured 9 Sep 2026: zero repairs on every
+        production job, every rhyme failure final). None when the member
+        that answered cannot repair, which the workflow treats as "no repair".
+        """
+        rewrite = getattr(self._last, "rewrite_lines", None)
+        if rewrite is None:
+            return None
+        return await rewrite(brief, plan, sheet, instructions)
 
     @property
     def writers(self) -> list[LyricsWriter]:
@@ -218,6 +233,7 @@ class FallbackLyricsWriter:
                 },
             )
             self.last_writer = label
+            self._last = writer
             return text
 
         raise NoLyricsWriterAvailable(

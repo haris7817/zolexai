@@ -185,10 +185,11 @@ def resolve_scheme(scheme: str | None, genre: str) -> str:
     chosen = (scheme or "auto").strip().upper()
     if chosen != "AUTO":
         return chosen
-    if genre in {"rap", "hip-hop", "drill", "trap", "grime"}:
-        return "AABB"
-    if genre in {"country", "folk", "pop", "rock", "indie"}:
-        return "ABAB"
+    # Couplets, whatever the genre. Measured 9 Sep 2026 on the GPU node: a
+    # hosted writer asked for ABAB in Spanish failed the strict validator
+    # after three drafts and their repairs, while AABB — each line rhyming
+    # with its neighbour — is the scheme every writer gets right. ABAB and
+    # AAAA remain available when a customer asks for them by name.
     return "AABB"
 
 
