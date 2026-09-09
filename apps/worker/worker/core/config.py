@@ -1071,6 +1071,40 @@ class WorkerSettings(BaseSettings):
     music_video_upscale_cq: int = 18
     music_video_upscale_timeout: int = 1800
 
+    music_video_enforce_prompt: bool = True
+    """
+    Hold the client's music-video planner to the customer's prompt
+    (`worker/musicvideo/enforce.py`).
+
+    ON by default, and this is the one place in the music-video adapter where
+    the default is not "leave their package alone" -- because leaving it alone
+    is the fault. Their `director.expand_direction` reads the prompt only to
+    pick a genre profile; every location, palette and camera move comes from a
+    table, and not one noun the customer wrote reaches a shot. A customer
+    asked for a Beverly Hills penthouse full of hay bales and got a shoreline
+    (client report, 9 Sep 2026). `execution.music_video_enforce: false` turns
+    it off per job, which is also the A/B.
+    """
+
+    music_video_brief_writer: bool = True
+    """
+    Read the prompt into a creative brief with the hosted writer (the same
+    Cerebras/Gemma chain Auto Dialogue uses) before falling back to the
+    regex extractor. The writer splits beats more cleanly; the extractor is
+    the guarantee -- it keeps the customer's sentences verbatim -- and the
+    writer's brief is merged OVER it, never instead of it. Off means regex
+    only, which costs nothing and still reaches every word.
+    """
+
+    music_video_reference_vision: bool = False
+    """
+    Analyse a pasted reference video with Qwen2.5-VL-3B as well as the
+    package's built-in visual metrics. The model is not installed on the
+    node (9 Sep 2026); the metrics alone give shot rhythm, palette and
+    motion, which is what the treatment actually consumes. Turn on once the
+    weights are there.
+    """
+
     music_video_lyric_mode: Literal["automatic", "always", "off"] = "automatic"
     """When lyrics are transcribed: `automatic` only for a prompt that says
     so ("according to the lyrics"), `always` for every song, `off` never.

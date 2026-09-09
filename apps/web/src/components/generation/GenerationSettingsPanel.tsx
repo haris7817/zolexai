@@ -349,6 +349,36 @@ export function GenerationSettingsPanel({
           </>
         ) : null}
 
+        {/* ── Reference video link (Music Video, 9 Sep 2026) ────────────
+            A public YouTube/Vimeo link whose camera language and cut rhythm
+            the treatment borrows. The worker takes the filmmaking grammar
+            only — never the people, places or shot order. */}
+        {workflow.settings.reference_video ? (
+          <>
+            <SectionLabel as="label" htmlFor="zx-reference-video-url">
+              Reference video (optional)
+            </SectionLabel>
+            <input
+              id="zx-reference-video-url"
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              {...form.register("referenceVideoUrl")}
+              placeholder="Paste a YouTube or Vimeo link whose camera style and pacing you want"
+              aria-invalid={Boolean(errors.referenceVideoUrl)}
+              className={cn(
+                "bg-zx-surface border-zx-border text-zx-text rounded-zx-md focus:border-zx-border-active w-full border px-[13px] py-3 text-[13px] leading-[1.55] outline-none transition-colors duration-150",
+                errors.referenceVideoUrl ? "border-zx-error/60 mb-[6px]" : "mb-4",
+              )}
+            />
+            {errors.referenceVideoUrl ? (
+              <p role="alert" className="text-zx-error mb-4 text-[11.5px] font-semibold">
+                {errors.referenceVideoUrl.message}
+              </p>
+            ) : null}
+          </>
+        ) : null}
+
         {/* ── Lyrics — rendered only when the workflow declares the control.
             The customer's own words are never rewritten; empty means the
             platform writes them, and the language choice applies to THAT. */}

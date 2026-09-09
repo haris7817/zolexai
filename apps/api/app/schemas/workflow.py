@@ -114,6 +114,11 @@ class SettingsSpec(BaseModel):
     Added 8 Sep 2026 after the client reported a delivered video with no
     spoken lines: the worker had the feature, and nothing on the surface
     could ask for it."""
+    reference_video: bool = False
+    """Whether the panel offers a reference-video link (Music Video, 9 Sep
+    2026): a public URL whose camera language and cut rhythm the treatment
+    borrows. A workflow that does not declare it rejects
+    `reference_video_url` in `validate_request`, same policy as lyrics."""
     performers: bool = False
     """Whether the panel offers a band: a role and a description beside each
     `performer_N` picture input (Music Video on the client's music-video

@@ -67,6 +67,14 @@ settings:
   motion_strength: false
   prompt_adherence: false
   seed: false
+  # Sound on/off (client report, 9 Sep 2026: Extend offered no audio choice
+  # at all). Each continuation pass writes its OWN soundtrack from the
+  # prompt and is edge-faded onto the source's at the seam, which is not
+  # the source's music continuing -- so a customer extending a clip with a
+  # track under it had no way to say "no new audio". Off drops the audio
+  # stream from the delivered file; the same switch every other video tool
+  # has, with the same meaning.
+  sound: true
 
 capabilities:
   download: true

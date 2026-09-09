@@ -469,3 +469,65 @@ async def test_malformed_cursor_is_rejected_cleanly(client: AsyncClient) -> None
     response = await client.get("/api/v1/generations?cursor=not-a-cursor")
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_failed"
+
+
+# ── Reference video links ──────────────────────────────────────────────────
+
+
+async def test_music_video_accepts_a_youtube_reference_link(client: AsyncClient) -> None:
+    """Client request, 9 Sep 2026: paste a link, borrow its camera."""
+    response = await client.post(
+        "/api/v1/generations",
+        json={
+            "workflow_id": "music-video",
+            "prompt": "a rooftop performance at dusk",
+            "parameters": {
+                "aspect_ratio": "16:9",
+                "reference_video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            },
+            "inputs": {"source_audio": "00000000-0000-0000-0000-000000000000"},
+        },
+    )
+    # Parameters are judged before inputs are looked up: the fabricated
+    # asset is the only thing left to complain about.
+    assert response.status_code in (404, 422), response.text
+    details = response.json()["error"].get("details") or {}
+    fields = {f["field"] for f in details.get("fields", [])}
+    assert "reference_video_url" not in fields
+
+
+async def test_a_reference_link_must_be_https_on_a_supported_host(client: AsyncClient) -> None:
+    for bad in (
+        "http://www.youtube.com/watch?v=x",
+        "https://drive.google.com/file/d/abc",
+        "https://user:pw@vimeo.com/123",
+    ):
+        response = await client.post(
+            "/api/v1/generations",
+            json={
+                "workflow_id": "music-video",
+                "prompt": "a rooftop performance at dusk",
+                "parameters": {"aspect_ratio": "16:9", "reference_video_url": bad},
+                "inputs": {"source_audio": "00000000-0000-0000-0000-000000000000"},
+            },
+        )
+        assert response.status_code == 422, bad
+        fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+        assert "reference_video_url" in fields, bad
+
+
+async def test_a_reference_link_is_refused_where_no_tool_declares_it(
+    client: AsyncClient, text_to_video_request: dict
+) -> None:
+    request = {
+        **text_to_video_request,
+        "parameters": {
+            **text_to_video_request["parameters"],
+            "reference_video_url": "https://youtu.be/dQw4w9WgXcQ",
+        },
+    }
+    response = await client.post("/api/v1/generations", json=request)
+    assert response.status_code == 422
+    fields = {f["field"] for f in response.json()["error"]["details"]["fields"]}
+    assert "reference_video_url" in fields
+

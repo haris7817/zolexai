@@ -98,6 +98,13 @@ class GenerationParameters(BaseModel):
     client's validator's ceiling and the default; one pass holds one voice per
     speaker and no more than this many convincingly."""
 
+    reference_video_url: str | None = Field(default=None, max_length=2048)
+    """A public video the customer wants the CAMERA of -- angles, composition,
+    pacing -- on workflows whose definition sets `settings.reference_video`
+    (Music Video, 9 Sep 2026). HTTPS, on a host the worker can fetch
+    (YouTube, Vimeo). Its people, places and shot order are never copied:
+    the worker's originality policy takes only the filmmaking grammar."""
+
     performers: list[PerformerSpec] | None = Field(default=None, max_length=5)
     """The band, for workflows whose definition sets `settings.performers`
     (Music Video since the client's music-video worker, 8 Sep 2026). Absent

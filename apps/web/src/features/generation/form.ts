@@ -68,6 +68,10 @@ export interface GenerationFormValues {
   /** How many visible people Auto Dialogue may give words to. Holds its
    *  value while the switch is off, exactly like `dialogueLanguage`. */
   maximumSpeakers: number;
+  /** A public video link whose camera language and cut rhythm the music
+   *  video borrows — never its people or places. Empty when none. Only
+   *  meaningful when the workflow declares `settings.reference_video`. */
+  referenceVideoUrl: string;
   /** role → asset id. null while an optional input is unfilled. */
   inputs: Record<string, string | null>;
   /** picture input role (`performer_N`) → that band member's role and
@@ -115,6 +119,10 @@ const DEFAULT_PERFORMER: PerformerFormValue = { role: "performer", description: 
  * four it starts reusing them.
  */
 export const MAX_SPEAKERS = 4;
+
+/** Hosts the worker's reference downloader accepts. Kept in step with the
+ *  API's `REFERENCE_VIDEO_HOSTS` by hand. */
+export const REFERENCE_VIDEO_HOSTS = ["youtube.com", "youtu.be", "vimeo.com"] as const;
 
 /**
  * Languages the spoken track can be written in — Director mode's plan and
@@ -282,6 +290,33 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
       .min(1, "At least one person has to speak.")
       .max(MAX_SPEAKERS, `One pass holds at most ${MAX_SPEAKERS} voices.`),
 
+    // The same shape the API enforces, so a customer learns here that a
+    // Drive link will not work rather than twenty minutes into a render.
+    referenceVideoUrl: z.string().superRefine((value, ctx) => {
+      const text = value.trim();
+      if (!text) return;
+      if (!workflow.settings.reference_video) {
+        ctx.addIssue({ code: "custom", message: "Not available for this tool." });
+        return;
+      }
+      let host = "";
+      try {
+        const url = new URL(text);
+        if (url.protocol !== "https:") {
+          ctx.addIssue({ code: "custom", message: "Use an https:// link." });
+          return;
+        }
+        host = url.hostname.toLowerCase();
+      } catch {
+        ctx.addIssue({ code: "custom", message: "That does not look like a link." });
+        return;
+      }
+      const ok = REFERENCE_VIDEO_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+      if (!ok) {
+        ctx.addIssue({ code: "custom", message: "Only YouTube and Vimeo links are supported." });
+      }
+    }),
+
     // Required roles are enforced here, which is what makes Video to Video's
     // OPTIONAL reference image work with no bespoke rule (directive §14).
     inputs: z
@@ -365,6 +400,7 @@ export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
     dialogueLanguage: offersSpeech(workflow) ? DIALOGUE_LANGUAGES[0] : null,
     autoDialogue: false,
     maximumSpeakers: MAX_SPEAKERS,
+    referenceVideoUrl: "",
     inputs: Object.fromEntries(workflow.inputs.map((input) => [input.role, null])),
     performers: Object.fromEntries(
       performerInputs(workflow).map((input) => [input.role, { ...DEFAULT_PERFORMER }]),
@@ -479,6 +515,7 @@ export function preserveValues(
     maximumSpeakers: workflow.settings.auto_dialogue
       ? previous.maximumSpeakers
       : defaults.maximumSpeakers,
+    referenceVideoUrl: workflow.settings.reference_video ? previous.referenceVideoUrl : "",
     aspectRatio:
       previous.aspectRatio && workflow.supported_aspect_ratios.includes(previous.aspectRatio)
         ? previous.aspectRatio
@@ -579,6 +616,10 @@ export function toCreateInput(
         ? values.autoDialogue
           ? { auto_dialogue: true, maximum_speakers: values.maximumSpeakers }
           : { auto_dialogue: false }
+        : {}),
+      // No link is expressed by ABSENCE, like everything else optional here.
+      ...(workflow.settings.reference_video && values.referenceVideoUrl.trim()
+        ? { reference_video_url: values.referenceVideoUrl.trim() }
         : {}),
       // No band is expressed by ABSENCE, so a request from a client that
       // has never heard of performers is byte-identical to one with five
@@ -684,5 +725,9 @@ export function valuesFromJob(
       parameters.maximum_speakers <= MAX_SPEAKERS
         ? parameters.maximum_speakers
         : defaults.maximumSpeakers,
+    referenceVideoUrl:
+      workflow.settings.reference_video && typeof parameters.reference_video_url === "string"
+        ? parameters.reference_video_url
+        : defaults.referenceVideoUrl,
   };
 }

@@ -29,7 +29,10 @@ DEFINITIONS = Path(app_settings.workflow_definitions_dir)
 PINNED_SHA256 = {
     "video-to-video.yaml": "9782ffbe4e356e0f6998ba6b59ea843a8cf6b2272f875da456433368196a6b4b",
     # 8 Sep 2026: the client's music-video worker (see the module note).
-    "music-video.yaml": "f612372d14f68ab2a642ff923bae9af8ed7617d7d27c36f185644f35482bc476",
+    # music-video.yaml re-pinned 9 Sep 2026: the client asked for a
+    # reference-video link box (`settings.reference_video: true`). Only
+    # that line changed; the inputs, ladder and execution block did not.
+    "music-video.yaml": "f8605c0f74ee6e76806535f52b54f5ef923fe75370cfd70220caad3af43bfd42",
     "music.yaml": "7e1be469c5df332086e88c9088c454497fd83fdfb199f2a6e01b4773fa322f11",
 }
 

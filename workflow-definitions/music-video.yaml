@@ -100,6 +100,11 @@ supported_quality_levels: []
 settings:
   quality: false
   motion_strength: false
+  # A reference-video link (client request, 9 Sep 2026): a public YouTube or
+  # Vimeo URL whose camera language, composition and cut rhythm the treatment
+  # borrows. Never its people, places or shot order -- the worker's
+  # originality policy takes the filmmaking grammar only.
+  reference_video: true
   prompt_adherence: false
   seed: false
   # The song's own words, pasted (plain lines, LRC or SRT). Optional: a

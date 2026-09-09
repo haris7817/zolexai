@@ -135,6 +135,9 @@ export const workflowSchema = z.object({
     // same reason as `lyrics` — the flag that reached every client as
     // `false` because one reader was never taught it.
     auto_dialogue: z.boolean().default(false),
+    // Music Video (9 Sep 2026): a reference-video link box. Defaulted for the
+    // same reason as `lyrics`.
+    reference_video: z.boolean().default(false),
     // Music Video's band (the client's music-video worker, 8 Sep 2026): a
     // role and a description beside each `performer_N` picture input, sent
     // as the `performers` parameter. Defaulted likewise.

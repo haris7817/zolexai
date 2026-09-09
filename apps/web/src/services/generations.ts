@@ -33,6 +33,9 @@ export interface CreateGenerationInput {
     auto_dialogue?: boolean;
     /** Sent only alongside `auto_dialogue: true`; the API rejects it alone. */
     maximum_speakers?: number;
+    /** A public YouTube/Vimeo link whose camera the treatment borrows, on
+     *  workflows declaring `settings.reference_video`. Sent only when given. */
+    reference_video_url?: string;
     /** The band, on workflows declaring `settings.performers`: one entry per
      *  member, paired with the `performer_{slot}` picture input. Sent only
      *  when at least one member is given. */

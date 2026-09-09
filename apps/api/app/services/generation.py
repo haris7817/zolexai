@@ -132,6 +132,7 @@ class GenerationService:
             sound=params.sound,
             auto_dialogue=params.auto_dialogue,
             maximum_speakers=params.maximum_speakers,
+            reference_video_url=params.reference_video_url,
             performers=params.performers,
         )
 

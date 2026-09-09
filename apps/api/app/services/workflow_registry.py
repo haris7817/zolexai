@@ -116,6 +116,7 @@ class WorkflowRegistry:
         sound: bool | None = None,
         auto_dialogue: bool | None = None,
         maximum_speakers: int | None = None,
+        reference_video_url: str | None = None,
         performers: list[Any] | None = None,
     ) -> WorkflowDefinition:
         """Checks a submitted generation request against its workflow.
@@ -279,6 +280,22 @@ class WorkflowRegistry:
                 }
             )
 
+        # A reference link follows the lyrics policy: a workflow that does not
+        # declare the control rejects the parameter. Where it is declared the
+        # URL has to be one the worker will actually fetch -- HTTPS, on a host
+        # its downloader allows -- so a customer learns here, not twenty
+        # minutes into a render, that a Drive link does not work.
+        if reference_video_url is not None:
+            if not definition.settings.reference_video:
+                problems.append(
+                    {
+                        "field": "reference_video_url",
+                        "reason": "This tool does not take a reference video link.",
+                    }
+                )
+            else:
+                problems.extend(_reference_url_problems(reference_video_url))
+
         if not definition.settings.prompt_modes:
             if prompt_mode is not None:
                 problems.append(
@@ -393,6 +410,33 @@ class WorkflowRegistry:
 #: `settings.prompt_modes`. Absent means `standard`, so existing clients are
 #: untouched by the feature existing.
 PROMPT_MODES: tuple[str, ...] = ("standard", "director")
+
+#: Hosts the worker's reference downloader accepts (its own default list).
+#: Kept in step by hand; the worker checks again and refuses anything else,
+#: so a mismatch here fails loudly rather than silently.
+REFERENCE_VIDEO_HOSTS: tuple[str, ...] = ("youtube.com", "youtu.be", "vimeo.com")
+
+
+def _reference_url_problems(url: str) -> list[dict[str, Any]]:
+    from urllib.parse import urlparse
+
+    text = url.strip()
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    allowed = any(host == h or host.endswith(f".{h}") for h in REFERENCE_VIDEO_HOSTS)
+    if parsed.scheme.casefold() != "https" or not host:
+        return [{"field": "reference_video_url", "reason": "Use an https:// link."}]
+    if parsed.username or parsed.password:
+        return [{"field": "reference_video_url", "reason": "The link cannot carry credentials."}]
+    if not allowed:
+        return [
+            {
+                "field": "reference_video_url",
+                "reason": "Only YouTube and Vimeo links are supported.",
+                "allowed": list(REFERENCE_VIDEO_HOSTS),
+            }
+        ]
+    return []
 
 #: Languages Director mode will write dialogue in. "auto" follows the idea's
 #: own language; the named five are the set the video runtime's vendor

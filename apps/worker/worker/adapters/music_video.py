@@ -51,6 +51,7 @@ from worker.adapters.base import (
 from worker.comfy.client import evict_comfy_vram
 from worker.core.config import settings
 from worker.core.logging import get_logger
+from worker.dialogue.provider import default_providers
 from worker.longform import StageReporter
 from worker.media import FfmpegError, OutputExpectation, verify_output
 from worker.musicvideo import (
@@ -59,6 +60,14 @@ from worker.musicvideo import (
     ensure_vendored_package,
     prepare_whisper_libraries,
     progress_for,
+)
+from worker.musicvideo.brief import extract_brief
+from worker.musicvideo.enforce import (
+    DryRunComplete,
+    Enforcement,
+    activate,
+    deactivate,
+    install,
 )
 
 logger = get_logger(__name__)
@@ -163,7 +172,19 @@ class MusicVideoAdapter:
         status_path = work_root / job.job_id / "status.json"
         cancel_path = work_root / job.job_id / "CANCEL"
 
-        task = asyncio.ensure_future(asyncio.to_thread(run_job, request, config))
+        # The platform's planner in front of the package's (see
+        # worker/musicvideo/enforce.py): the customer's prompt becomes a
+        # brief, the brief is written into every shot, and the plan is
+        # refused before any GPU time if a mandatory element is missing.
+        # The context variable rides into the worker thread with
+        # `asyncio.to_thread`, and an unset context leaves the package
+        # exactly as vendored.
+        enforcement = await self._enforcement(job, work_root)
+        token = activate(enforcement) if enforcement is not None else None
+        dry_run = bool(enforcement and enforcement.dry_run)
+        task = asyncio.ensure_future(
+            asyncio.to_thread(run_job, request, config, plan_only=dry_run)
+        )
         cancelled = False
         try:
             while not task.done():
@@ -174,6 +195,19 @@ class MusicVideoAdapter:
                     cancel_path.write_text("cancel requested\n", encoding="utf-8")
                 await self._report(reporter, status_path)
             result = task.result()
+        except DryRunComplete as exc:
+            # An operator's preflight, not a customer outcome: the plan was
+            # composed, validated and written, and nothing was rendered.
+            logger.info(
+                "music_video_dry_run",
+                extra={"job_id": job.job_id, "report": str(exc.report), **exc.summary},
+            )
+            raise AdapterError(
+                "Dry run complete — the plan was validated and nothing was rendered. "
+                f"Report: {exc.report}",
+                internal_detail=f"music-video dry run: {exc.summary}",
+                retriable=False,
+            ) from exc
         except CancelledError as exc:
             raise JobCancelled(str(exc)) from exc
         except ValidationError as exc:
@@ -203,6 +237,8 @@ class MusicVideoAdapter:
                 internal_detail=f"music-video {type(exc).__name__}: {exc}",
             ) from exc
         finally:
+            if token is not None:
+                deactivate(token)
             if not task.done():
                 task.cancel()
             if settings.ltx_comfy_free_after_job:
@@ -272,6 +308,56 @@ class MusicVideoAdapter:
             return
         state, progress, message, details = step
         await reporter.report(state, progress, message, details)  # type: ignore[arg-type]
+
+    async def _enforcement(self, job: AdapterJob, work_root: Path) -> Enforcement | None:
+        """The brief and the switches for this job, or None to run the
+        package untouched.
+
+        `execution.music_video_enforce` overrides the deployment setting;
+        `execution.music_video_shot_mode: single_shot` forces the locked
+        single-shot planner when the prompt did not say so in words;
+        `execution.music_video_dry_run` stops at the GPU boundary with the
+        trace written.
+        """
+        raw = job.execution.get("music_video_enforce")
+        enabled = (
+            bool(settings.music_video_enforce_prompt)
+            if raw is None or str(raw).strip() == ""
+            else str(raw).strip().lower() not in ("false", "no", "off", "0")
+        )
+        if not enabled:
+            logger.info("music_video_enforcement_skipped", extra={"job_id": job.job_id})
+            return None
+        install()
+        providers = default_providers() if settings.music_video_brief_writer else []
+        brief = await extract_brief(job.prompt, providers=providers, job_id=job.job_id)
+        mode = str(job.execution.get("music_video_shot_mode") or "").strip().lower()
+        if mode in ("single_shot", "single-shot", "locked", "locked_single_shot"):
+            brief.single_shot = True
+        elif mode in ("multi_shot", "multi-shot", "multi"):
+            brief.single_shot = False
+        dry = str(job.execution.get("music_video_dry_run") or "").strip().lower()
+        enforcement = Enforcement(
+            brief=brief,
+            job_id=job.job_id,
+            workflow_version=str(job.workflow_version),
+            trace_dir=work_root / job.job_id,
+            dry_run=dry in ("true", "yes", "on", "1"),
+        )
+        logger.info(
+            "music_video_brief",
+            extra={
+                "job_id": job.job_id,
+                "source": brief.source,
+                "locations": len(brief.locations),
+                "props": len(brief.props),
+                "events": len(brief.events),
+                "mandatory": len(brief.mandatory),
+                "single_shot": brief.single_shot,
+                "dry_run": enforcement.dry_run,
+            },
+        )
+        return enforcement
 
     @staticmethod
     def _customer_message(exc: Exception) -> str:

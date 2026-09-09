@@ -160,6 +160,15 @@ def build_request(job: AdapterJob, audio_path: Path, *, lyric_mode: str) -> dict
     code = language_code(job.parameters.get("lyrics_language"))
     if code:
         payload["lyrics_language"] = code
+    # A pasted reference link (client request, 9 Sep 2026). The package
+    # fetches it with yt-dlp, measures its shot rhythm, palette and motion,
+    # and the treatment takes its camera language and cut style from that --
+    # never its people, places or shot order (their originality policy). The
+    # API has already checked the scheme and the host; the package checks
+    # them again, which is fine.
+    reference_url = job.parameters.get("reference_video_url")
+    if isinstance(reference_url, str) and reference_url.strip():
+        payload["reference_video_url"] = reference_url.strip()
     return payload
 
 
@@ -268,12 +277,20 @@ def build_config(
         transcription_download_root=Path(download_root) if download_root else None,
         transcription_beam_size=5,
         transcription_timeout_seconds=1800,
-        # Reference-video style matching is part of the package but not of
-        # this product's Music Video form; the vision model it wants is not
-        # installed and nothing sends a reference, so it stays off.
-        reference_vision_backend="disabled",
-        reference_fetch_backend="command",
-        reference_fetch_command=["false"],
+        # Reference-video style matching (client request, 9 Sep 2026). The
+        # package fetches a pasted link with yt-dlp through the interpreter
+        # named here and, with the vision backend disabled, measures the clip
+        # with its own built-in metrics -- shot rhythm, palette, motion --
+        # which is everything the treatment consumes. Qwen2.5-VL is opt-in
+        # (`music_video_reference_vision`) because the weights are not on
+        # the node. A job that sends no link never reaches any of this.
+        reference_vision_backend=(
+            "qwen2_5_vl"
+            if getattr(settings, "music_video_reference_vision", False)
+            else "disabled"
+        ),
+        reference_fetch_backend="yt_dlp",
+        reference_fetch_python=ltx_python,
         ltx_python=ltx_python,
         ltx_module="ltx_pipelines.a2vid_two_stage",
         ltx_transformer_path=ltx_models_root
