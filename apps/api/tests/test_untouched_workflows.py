@@ -33,7 +33,11 @@ PINNED_SHA256 = {
     # reference-video link box (`settings.reference_video: true`). Only
     # that line changed; the inputs, ladder and execution block did not.
     "music-video.yaml": "f8605c0f74ee6e76806535f52b54f5ef923fe75370cfd70220caad3af43bfd42",
-    "music.yaml": "7e1be469c5df332086e88c9088c454497fd83fdfb199f2a6e01b4773fa322f11",
+    # music.yaml re-pinned 9 Sep 2026: the client specified the Music Lyrics
+    # Workflow v2.0 for this tool — `settings.lyrics_workflow: true`, an
+    # optional `reference_audio` input and execution-comment docs. The
+    # ladder, the prompt block and the runtime line did not change.
+    "music.yaml": "6857975216d54a6313313441b10f6ae65cffc8608bee30864d350938f4a98889",
 }
 
 

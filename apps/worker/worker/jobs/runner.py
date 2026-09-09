@@ -176,6 +176,7 @@ class JobRunner:
                 duration_seconds=result.duration_seconds,
                 width=result.width,
                 height=result.height,
+                result=result.report,
             )
             if not response.get("accepted", False):
                 raise LeaseLost(response.get("reason", "completion rejected"))

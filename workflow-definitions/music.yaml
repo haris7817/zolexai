@@ -15,7 +15,23 @@ prompt:
   # unbounded request body is a denial-of-service surface.
   max_length: 20000
 
-inputs: []
+inputs:
+  # ── Reference audio (Music Lyrics Workflow v2.0, 9 Sep 2026) ────────────
+  #
+  # Optional. A song the new one should be LIKE: the worker measures its
+  # tempo, energy curve, section changes, how much of it is sung and how fast,
+  # and writes an original song to that shape. Its lyrics, melody and voice
+  # are never reused — a sheet sharing a run of words with it is refused
+  # before any audio is made. A link (`reference_audio_url`) is the other way
+  # to supply one; an upload wins when both are given.
+  - role: reference_audio
+    kind: audio
+    required: false
+    label: REFERENCE TRACK
+    drop_hint: a song to match the feel of
+    help: Optional. Up to 10 minutes. We match its tempo, energy and pacing — never its words or melody.
+    accept: ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg", "audio/flac"]
+    max_size_mb: 200
 
 # The user picks a song length in minutes (CR-009) — music-appropriate, not
 # video-style second presets. The 5-minute ceiling is PROVISIONAL: the safe
@@ -38,6 +54,14 @@ settings:
   # whatever language the sheet is in, 50+ supported) and a language choice
   # for generated lyrics.
   lyrics: true
+  # Music Lyrics Workflow v2.0 (client specification, 9 Sep 2026): rhyme
+  # scheme and mode, point of view, clean mode, a reference-audio link and a
+  # dry run. Lyrics are written first, validated (90% sung coverage planned,
+  # strict language-aware rhyme, filler under 10%, language, originality),
+  # only then sung; the finished track is transcribed and measured, and a
+  # take that falls short is re-recorded. The lyrics, LRC/SRT timing and the
+  # coverage numbers come back on the job as `result`.
+  lyrics_workflow: true
 
 capabilities:
   download: true
@@ -62,6 +86,15 @@ execution:
   # A five-minute song is several generations plus crossfading and loudness
   # matching. Sized for the ceiling of the offered range.
   timeout_seconds: 3600
+
+  # Music Lyrics Workflow v2.0 knobs, all optional (worker settings hold the
+  # defaults; see worker/core/config.py `music_*` and
+  # docs/internal/music-lyrics-workflow-v2.md):
+  #   music_lyrics_workflow: v1        # the pre-9-Sep path, unchanged
+  #   music_verify_policy: deliver_best  # ship the best take instead of failing
+  #   music_verify_max_retries: 2      # whole-track re-records after a failed check
+  #   seconds_per_line: 4.0            # blueprint density
+  #   music_dry_run: true              # plan + validate, no audio
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

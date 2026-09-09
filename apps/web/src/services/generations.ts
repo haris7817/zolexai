@@ -36,6 +36,14 @@ export interface CreateGenerationInput {
     /** A public YouTube/Vimeo link whose camera the treatment borrows, on
      *  workflows declaring `settings.reference_video`. Sent only when given. */
     reference_video_url?: string;
+    /** Music Lyrics Workflow v2.0, on workflows declaring
+     *  `settings.lyrics_workflow`. Each is sent only when it differs from
+     *  the workflow's default, so an untouched panel is byte-identical. */
+    rhyme_scheme?: "AABB" | "ABAB" | "AAAA";
+    rhyme_mode?: "relaxed";
+    point_of_view?: "first_person" | "second_person" | "third_person";
+    clean_mode?: false;
+    reference_audio_url?: string;
     /** The band, on workflows declaring `settings.performers`: one entry per
      *  member, paired with the `performer_{slot}` picture input. Sent only
      *  when at least one member is given. */

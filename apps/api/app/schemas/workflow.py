@@ -124,6 +124,12 @@ class SettingsSpec(BaseModel):
     `performer_N` picture input (Music Video on the client's music-video
     worker, 8 Sep 2026). A workflow that does not declare it rejects the
     `performers` parameter in `validate_request`, same policy as lyrics."""
+    lyrics_workflow: bool = False
+    """Whether the panel offers the Music Lyrics Workflow v2.0 controls
+    (client specification, 9 Sep 2026): rhyme scheme and mode, point of
+    view, clean mode, a reference-audio link, and a dry run. A workflow that
+    does not declare it rejects every one of those parameters in
+    `validate_request`, same policy as lyrics."""
 
 
 class CapabilitiesSpec(BaseModel):

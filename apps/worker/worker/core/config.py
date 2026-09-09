@@ -428,6 +428,61 @@ class WorkerSettings(BaseSettings):
     full matrix.
     """
 
+    # ── Music Lyrics Workflow v2.0 (client specification, 9 Sep 2026) ──
+    #
+    # Lyrics first, validated, then sung; then the song is transcribed and
+    # measured. worker/music/workflow.py is the orchestrator and
+    # docs/internal/music-lyrics-workflow-v2.md the account of it.
+    music_lyrics_workflow: Literal["v2", "v1"] = "v2"
+    """Which lyric pipeline the music adapter runs. "v1" is the pre-9-Sep
+    path unchanged (plan → write → sing, no gates, no verification);
+    `execution.music_lyrics_workflow` overrides per job."""
+
+    music_vocal_coverage_target: float = 0.90
+    """The client's floor: at least this fraction of the song must be sung.
+    The workflow never plans for less than 0.90 whatever this says."""
+
+    music_max_filler_ratio: float = 0.10
+    """Instrumental time, pauses, ad-libs and humming together, at most."""
+
+    music_v2_seconds_per_line: float = 4.0
+    """Seconds of song per sung line the v2 blueprint targets. Denser than
+    the v1 target (8.0) on purpose: the August matrix in lyrics.py shows
+    ninety-percent sung coverage arriving only at roughly 3.5-4 s/line."""
+
+    music_rhyme_mode: Literal["strict", "relaxed"] = "strict"
+    """Default rhyme validation. Strict requires an exact key match from the
+    stressed vowel; relaxed accepts a shared vowel (assonance). A request's
+    `rhyme_mode` overrides it."""
+
+    music_verify_transcription: Literal["auto", "disabled"] = "auto"
+    """Post-generation lyric recall via faster-whisper (the music-video
+    extra's model and settings are reused). "disabled" leaves recall
+    unmeasured; the stem-based coverage measure is unaffected."""
+
+    music_verify_policy: Literal["fail", "deliver_best"] = "fail"
+    """What happens when the song still fails verification after every
+    retry: "fail" returns the workflow's error code (the specification);
+    "deliver_best" ships the best take with the numbers in its report."""
+
+    music_verify_max_retries: int = 2
+    """Whole-track regenerations after a failed verification. Each one is a
+    new seed and a firmer production brief; the sheet is kept. Cheap on the
+    current model (a four-minute song renders in seconds)."""
+
+    music_lyric_recall_threshold: float = 0.6
+    """Fraction of lines the transcript must contain as written. Sung
+    vocals transcribe imperfectly in every language, so this is a floor for
+    "the words were sung", not a fidelity score."""
+
+    music_reference_fetch_python: Path | None = None
+    """Interpreter with yt-dlp for reference links. None uses the LTX venv,
+    where yt-dlp already lives for Music Video."""
+
+    music_reference_fetch_timeout: float = 300.0
+    music_reference_max_bytes: int = 200 * 1024 * 1024
+    music_reference_max_seconds: int = 600
+
     music_lyrics_writer: str = "cerebras,template"
     """
     Which lyrics writer fills the song plan with words when the customer's

@@ -72,6 +72,14 @@ export interface GenerationFormValues {
    *  video borrows — never its people or places. Empty when none. Only
    *  meaningful when the workflow declares `settings.reference_video`. */
   referenceVideoUrl: string;
+  /** Music Lyrics Workflow v2.0 controls. Resting values ("auto", "strict",
+   *  "auto", true, "") mean "the workflow's default" and are not sent. Only
+   *  meaningful when the workflow declares `settings.lyrics_workflow`. */
+  rhymeScheme: string;
+  rhymeMode: string;
+  pointOfView: string;
+  cleanMode: boolean;
+  referenceAudioUrl: string;
   /** role → asset id. null while an optional input is unfilled. */
   inputs: Record<string, string | null>;
   /** picture input role (`performer_N`) → that band member's role and
@@ -123,6 +131,20 @@ export const MAX_SPEAKERS = 4;
 /** Hosts the worker's reference downloader accepts. Kept in step with the
  *  API's `REFERENCE_VIDEO_HOSTS` by hand. */
 export const REFERENCE_VIDEO_HOSTS = ["youtube.com", "youtu.be", "vimeo.com"] as const;
+
+/** Music Lyrics Workflow v2.0 choices. Mirrors the API's literals. */
+export const RHYME_SCHEMES = ["auto", "AABB", "ABAB", "AAAA"] as const;
+export const RHYME_MODES = ["strict", "relaxed"] as const;
+export const POINTS_OF_VIEW = ["auto", "first_person", "second_person", "third_person"] as const;
+export const POINT_OF_VIEW_LABELS: Record<(typeof POINTS_OF_VIEW)[number], string> = {
+  auto: "Let the song decide",
+  first_person: "First person (I)",
+  second_person: "Second person (you)",
+  third_person: "Third person (they)",
+};
+/** Hosts the music worker's reference-audio fetcher accepts. Kept in step
+ *  with the API's `REFERENCE_AUDIO_HOSTS` by hand. */
+export const REFERENCE_AUDIO_HOSTS = ["youtube.com", "youtu.be", "vimeo.com", "soundcloud.com"] as const;
 
 /**
  * Languages the spoken track can be written in — Director mode's plan and
@@ -290,6 +312,56 @@ export function buildGenerationSchema(workflow: Workflow): GenerationSchema {
       .min(1, "At least one person has to speak.")
       .max(MAX_SPEAKERS, `One pass holds at most ${MAX_SPEAKERS} voices.`),
 
+    rhymeScheme: z.string().superRefine((value, ctx) => {
+      if (!(RHYME_SCHEMES as readonly string[]).includes(value)) {
+        ctx.addIssue({ code: "custom", message: "Choose a rhyme scheme." });
+      } else if (!workflow.settings.lyrics_workflow && value !== "auto") {
+        ctx.addIssue({ code: "custom", message: "Not available for this tool." });
+      }
+    }),
+    rhymeMode: z.string().superRefine((value, ctx) => {
+      if (!(RHYME_MODES as readonly string[]).includes(value)) {
+        ctx.addIssue({ code: "custom", message: "Choose a rhyme mode." });
+      } else if (!workflow.settings.lyrics_workflow && value !== "strict") {
+        ctx.addIssue({ code: "custom", message: "Not available for this tool." });
+      }
+    }),
+    pointOfView: z.string().superRefine((value, ctx) => {
+      if (!(POINTS_OF_VIEW as readonly string[]).includes(value)) {
+        ctx.addIssue({ code: "custom", message: "Choose a point of view." });
+      } else if (!workflow.settings.lyrics_workflow && value !== "auto") {
+        ctx.addIssue({ code: "custom", message: "Not available for this tool." });
+      }
+    }),
+    cleanMode: z.boolean(),
+    referenceAudioUrl: z.string().superRefine((value, ctx) => {
+      const text = value.trim();
+      if (!text) return;
+      if (!workflow.settings.lyrics_workflow) {
+        ctx.addIssue({ code: "custom", message: "Not available for this tool." });
+        return;
+      }
+      let host = "";
+      try {
+        const url = new URL(text);
+        if (url.protocol !== "https:") {
+          ctx.addIssue({ code: "custom", message: "Use an https:// link." });
+          return;
+        }
+        host = url.hostname.toLowerCase();
+      } catch {
+        ctx.addIssue({ code: "custom", message: "That does not look like a link." });
+        return;
+      }
+      const ok = REFERENCE_AUDIO_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+      if (!ok) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Only YouTube, Vimeo and SoundCloud links are supported.",
+        });
+      }
+    }),
+
     // The same shape the API enforces, so a customer learns here that a
     // Drive link will not work rather than twenty minutes into a render.
     referenceVideoUrl: z.string().superRefine((value, ctx) => {
@@ -401,6 +473,11 @@ export function defaultValuesFor(workflow: Workflow): GenerationFormValues {
     autoDialogue: false,
     maximumSpeakers: MAX_SPEAKERS,
     referenceVideoUrl: "",
+    rhymeScheme: "auto",
+    rhymeMode: "strict",
+    pointOfView: "auto",
+    cleanMode: true,
+    referenceAudioUrl: "",
     inputs: Object.fromEntries(workflow.inputs.map((input) => [input.role, null])),
     performers: Object.fromEntries(
       performerInputs(workflow).map((input) => [input.role, { ...DEFAULT_PERFORMER }]),
@@ -516,6 +593,11 @@ export function preserveValues(
       ? previous.maximumSpeakers
       : defaults.maximumSpeakers,
     referenceVideoUrl: workflow.settings.reference_video ? previous.referenceVideoUrl : "",
+    rhymeScheme: workflow.settings.lyrics_workflow ? previous.rhymeScheme : defaults.rhymeScheme,
+    rhymeMode: workflow.settings.lyrics_workflow ? previous.rhymeMode : defaults.rhymeMode,
+    pointOfView: workflow.settings.lyrics_workflow ? previous.pointOfView : defaults.pointOfView,
+    cleanMode: workflow.settings.lyrics_workflow ? previous.cleanMode : defaults.cleanMode,
+    referenceAudioUrl: workflow.settings.lyrics_workflow ? previous.referenceAudioUrl : "",
     aspectRatio:
       previous.aspectRatio && workflow.supported_aspect_ratios.includes(previous.aspectRatio)
         ? previous.aspectRatio
@@ -620,6 +702,21 @@ export function toCreateInput(
       // No link is expressed by ABSENCE, like everything else optional here.
       ...(workflow.settings.reference_video && values.referenceVideoUrl.trim()
         ? { reference_video_url: values.referenceVideoUrl.trim() }
+        : {}),
+      // Music Lyrics Workflow v2.0: every control's resting value is the
+      // workflow's own default and is expressed by ABSENCE.
+      ...(workflow.settings.lyrics_workflow && values.rhymeScheme !== "auto"
+        ? { rhyme_scheme: values.rhymeScheme as "AABB" | "ABAB" | "AAAA" }
+        : {}),
+      ...(workflow.settings.lyrics_workflow && values.rhymeMode === "relaxed"
+        ? { rhyme_mode: "relaxed" as const }
+        : {}),
+      ...(workflow.settings.lyrics_workflow && values.pointOfView !== "auto"
+        ? { point_of_view: values.pointOfView as "first_person" | "second_person" | "third_person" }
+        : {}),
+      ...(workflow.settings.lyrics_workflow && !values.cleanMode ? { clean_mode: false as const } : {}),
+      ...(workflow.settings.lyrics_workflow && values.referenceAudioUrl.trim()
+        ? { reference_audio_url: values.referenceAudioUrl.trim() }
         : {}),
       // No band is expressed by ABSENCE, so a request from a client that
       // has never heard of performers is byte-identical to one with five
@@ -729,5 +826,25 @@ export function valuesFromJob(
       workflow.settings.reference_video && typeof parameters.reference_video_url === "string"
         ? parameters.reference_video_url
         : defaults.referenceVideoUrl,
+    rhymeScheme: pick(
+      parameters.rhyme_scheme,
+      workflow.settings.lyrics_workflow ? RHYME_SCHEMES : [],
+      defaults.rhymeScheme,
+    ) ?? defaults.rhymeScheme,
+    rhymeMode: pick(
+      parameters.rhyme_mode,
+      workflow.settings.lyrics_workflow ? RHYME_MODES : [],
+      defaults.rhymeMode,
+    ) ?? defaults.rhymeMode,
+    pointOfView: pick(
+      parameters.point_of_view,
+      workflow.settings.lyrics_workflow ? POINTS_OF_VIEW : [],
+      defaults.pointOfView,
+    ) ?? defaults.pointOfView,
+    cleanMode: workflow.settings.lyrics_workflow ? parameters.clean_mode !== false : defaults.cleanMode,
+    referenceAudioUrl:
+      workflow.settings.lyrics_workflow && typeof parameters.reference_audio_url === "string"
+        ? parameters.reference_audio_url
+        : defaults.referenceAudioUrl,
   };
 }

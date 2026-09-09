@@ -82,6 +82,10 @@ from worker.music import (
     write_lyrics,
 )
 from worker.music.fallback import is_available
+from worker.music.gates import LyricsValidationFailed
+from worker.music.report import customer_result, job_report, write_report
+from worker.music.verify import VerificationReport, verify_song
+from worker.music.workflow import WORKFLOW_VERSION, LyricsOptions, prepare_song
 
 logger = get_logger(__name__)
 
@@ -194,6 +198,20 @@ class MusicAdapter:
         )
 
         await reporter.report("preparing", 12, "Writing your song…")
+
+        # ── Music Lyrics Workflow v2.0 (client specification, 9 Sep 2026) ─
+        # Lyrics first, validated, then sung, then measured. An instrumental
+        # request has no lyrics to validate and takes the older path as it
+        # always did; so does a deployment or a job that asks for "v1".
+        if (
+            plan.has_lyrics
+            and not job.parameters.get("instrumental")
+            and self._lyrics_workflow(job) == "v2"
+        ):
+            return await self._run_v2(
+                job, reporter, provider, plan, brief, language, total_seconds
+            )
+
         lyrics = await self._lyrics_for(job, plan, brief, total_seconds)
 
         # ── Generate ─────────────────────────────────────────────────
@@ -204,18 +222,37 @@ class MusicAdapter:
         )
 
         # ── Assemble ─────────────────────────────────────────────────
-        await reporter.stitching("Putting your track together…")
         output = job.workspace / "output.mp3"
+        info = await self._assemble(job, reporter, rendered, fade, total_seconds, output)
+
+        await reporter.uploading()
+        return AdapterResult(
+            path=output,
+            content_type="audio/mpeg",
+            kind="audio",
+            duration_seconds=info.duration_seconds,
+        )
+
+    async def _assemble(
+        self,
+        job: AdapterJob,
+        reporter: StageReporter,
+        rendered: list[Path],
+        fade: float,
+        total_seconds: float,
+        output: Path,
+    ):
+        """Crossfade, loudness-match and validate the rendered sections."""
+        await reporter.stitching("Putting your track together…")
+        joined_path = output.with_name(output.stem + "-joined.mp3")
         try:
             joined = await cancellable(
                 job,
-                crossfade_concat(
-                    rendered, job.workspace / "joined.mp3", fade_seconds=fade or 0.05
-                ),
+                crossfade_concat(rendered, joined_path, fade_seconds=fade or 0.05),
             )
             await reporter.finalizing("Balancing the mix…")
             await cancellable(job, loudness_normalize(joined, output))
-            info = await verify_output(
+            return await verify_output(
                 output,
                 OutputExpectation(
                     expect_audio=True,
@@ -229,13 +266,271 @@ class MusicAdapter:
                 internal_detail=f"assembly or validation failed: {exc}",
             ) from exc
 
+    # ── The v2 workflow ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _lyrics_workflow(job: AdapterJob) -> str:
+        chosen = str(job.execution.get("music_lyrics_workflow") or settings.music_lyrics_workflow)
+        return "v1" if chosen.strip().lower() == "v1" else "v2"
+
+    async def _run_v2(
+        self,
+        job: AdapterJob,
+        reporter: StageReporter,
+        provider: MusicGenerationProvider,
+        plan: SongPlan,
+        brief: LyricBrief,
+        language: Language | None,
+        total_seconds: float,
+    ) -> AdapterResult:
+        """Lyrics → gates → (dry run stops here) → audio → verify → retry.
+
+        The sheet is written once and kept across retries; what a retry
+        changes is the seed and the firmness of the production brief,
+        because the model's arrangement — not the words — is what varies
+        between takes (measured Aug 2026: the same sheet gave 52.8% and
+        87.7% sung time on different runs).
+        """
+        options = LyricsOptions.from_job(job)
+        supplied = bool(str(job.parameters.get("lyrics") or "").strip())
+        writer: LyricsWriter | None = None
+        if not supplied:
+            writer = self._resolve_writer()
+            self._refuse_a_language_the_writer_cannot_write(writer, brief, plan)
+
+        work = job.workspace / "lyrics"
+        try:
+            prepared = await cancellable(
+                job,
+                prepare_song(
+                    job=job,
+                    plan=plan,
+                    brief=brief,
+                    writer=writer,
+                    options=options,
+                    workspace=work,
+                    reference_path=self._reference_audio(job),
+                ),
+            )
+        except LyricsValidationFailed as exc:
+            raise self._failure_for(exc.code, exc.detail) from exc
+        except (NoLyricsWriterAvailable, UnsupportedLyricLanguage) as exc:
+            raise AdapterError(
+                "We could not write lyrics for this track just now. Please try "
+                "again, or paste your own lyrics and we will sing those.",
+                internal_detail=f"[LYRICS_WRITER_FAILED] {exc}",
+                retriable=True,
+            ) from exc
+
+        requested_language = job.parameters.get("lyrics_language")
+
+        if options.dry_run:
+            report = job_report(
+                job_id=job.job_id,
+                prompt=job.prompt,
+                prepared=prepared,
+                options=options,
+                verification=None,
+                retries=0,
+                retry_reasons=[],
+                status="planned",
+                failure_code=None,
+                requested_language=requested_language,
+                requested_seconds=total_seconds,
+                actual_seconds=None,
+            )
+            path = write_report(work, report)
+            self._log_report(report)
+            raise AdapterError(
+                "Dry run complete: the lyrics were planned and validated and no audio was "
+                f"generated. Planned sung coverage {prepared.preflight.planned_vocal_coverage:.0%}, "
+                f"rhyme groups passing {prepared.rhyme.pass_rate:.0%}, "
+                f"{len(prepared.timed.lines)} timed lines.",
+                internal_detail=f"[DRY_RUN] report at {path}",
+                retriable=False,
+            )
+
+        fade = max(0.0, float(settings.music_crossfade_seconds))
+        sections = self._plan_sections(job, provider, total_seconds, fade)
+        attempts = 1 + options.max_retries
+        best: tuple[VerificationReport, Path, object] | None = None
+        retry_reasons: list[str] = []
+        caption = prepared.caption or job.prompt
+
+        for attempt in range(attempts):
+            job.raise_if_cancelled()
+            rendered = await self._render_sections(
+                job, reporter, provider, sections, plan, prepared.sheet, language,
+                caption=caption, bpm=prepared.bpm, attempt=attempt, model_hears_reference=False,
+            )
+            output = job.workspace / ("output.mp3" if attempt == 0 else f"output-take{attempt + 1}.mp3")
+            info = await self._assemble(job, reporter, rendered, fade, total_seconds, output)
+
+            await reporter.finalizing("Checking the vocals…")
+            verification = await cancellable(
+                job,
+                verify_song(
+                    output,
+                    prepared.timed,
+                    language=brief.language,
+                    expected_seconds=total_seconds,
+                    duration_seconds=float(info.duration_seconds or total_seconds),
+                    coverage_target=options.coverage_target,
+                    recall_threshold=options.recall_threshold,
+                    duration_tolerance_seconds=duration_tolerance(total_seconds, floor=2.0),
+                ),
+            )
+            logger.info(
+                "music_verified",
+                extra={
+                    "attempt": attempt + 1,
+                    "passed": verification.passed,
+                    "measured_vocal_coverage": verification.measured_vocal_coverage,
+                    "coverage_method": verification.coverage_method,
+                    "lyric_recall": verification.lyric_recall,
+                    "recall_method": verification.recall_method,
+                    "language_detected": verification.language_detected,
+                    "errors": [code for code, _ in verification.errors],
+                },
+            )
+            if best is None or verification.score() > best[0].score():
+                best = (verification, output, info)
+            if verification.passed:
+                break
+            retry_reasons.append("; ".join(f"{code}: {detail}" for code, detail in verification.errors))
+            if attempt + 1 < attempts:
+                caption = self._reinforced_caption(prepared.caption or job.prompt, verification)
+                await reporter.report("generating", 30, "Re-recording the vocals…")
+
+        assert best is not None
+        verification, output, info = best
+        failure_code = None if verification.passed else verification.errors[0][0]
+        delivering = verification.passed or options.verify_policy == "deliver_best"
+        report = job_report(
+            job_id=job.job_id,
+            prompt=job.prompt,
+            prepared=prepared,
+            options=options,
+            verification=verification,
+            retries=len(retry_reasons),
+            retry_reasons=retry_reasons,
+            status="completed" if verification.passed else ("delivered_with_warnings" if delivering else "failed"),
+            failure_code=failure_code,
+            requested_language=requested_language,
+            requested_seconds=total_seconds,
+            actual_seconds=getattr(info, "duration_seconds", None),
+        )
+        write_report(work, report)
+        self._log_report(report)
+
+        if not delivering:
+            raise self._failure_for(
+                failure_code or "GENERATION_FAILED",
+                retry_reasons[-1] if retry_reasons else "verification failed",
+                after_render=True,
+            )
+
         await reporter.uploading()
         return AdapterResult(
             path=output,
             content_type="audio/mpeg",
             kind="audio",
-            duration_seconds=info.duration_seconds,
+            duration_seconds=getattr(info, "duration_seconds", None),
+            report=customer_result(prepared, verification, retries=len(retry_reasons)),
         )
+
+    @staticmethod
+    def _reinforced_caption(caption: str, verification: VerificationReport) -> str:
+        """A firmer production brief for the next take, naming the fault."""
+        notes = []
+        codes = {code for code, _ in verification.errors}
+        if "VOCAL_COVERAGE_BELOW_90" in codes:
+            notes.append(
+                "the lead vocal must start in the first two seconds and sing continuously "
+                "to the end with no instrumental break longer than a few seconds"
+            )
+        if "LYRIC_RECALL_TOO_LOW" in codes:
+            notes.append("sing every written line clearly and in order, word for word, no improvised vocals")
+        if not notes:
+            notes.append("vocals throughout, every lyric line performed")
+        return caption + "\n\n" + "; ".join(notes)
+
+    @staticmethod
+    def _log_report(report: dict) -> None:
+        keys = (
+            "workflow_version", "job_id", "request_sha256", "requested_language", "language",
+            "detected_language", "requested_duration_seconds", "actual_duration_seconds",
+            "blueprint_version", "lyrics_source", "writer_rounds", "rhyme_repairs",
+            "planned_vocal_coverage", "filler_ratio", "measured_vocal_coverage",
+            "coverage_method", "lyric_recall", "retry_count", "retry_reasons", "status",
+            "failure_code",
+        )
+        extra = {key: report.get(key) for key in keys}
+        extra["reference"] = report.get("reference", {}).get("source")
+        extra["rhyme_pass_rate"] = report.get("rhyme", {}).get("pass_rate")
+        extra["originality"] = report.get("originality", {}).get("result")
+        extra["missing_lines"] = len(report.get("missing_lines") or [])
+        extra["substituted_lines"] = len(report.get("substituted_lines") or [])
+        logger.info("music_lyrics_report", extra=extra)
+
+    @staticmethod
+    def _failure_for(code: str, detail: str, *, after_render: bool = False) -> AdapterError:
+        """The workflow's failure code as a job failure with customer copy."""
+        messages = {
+            "REFERENCE_UNAVAILABLE": (
+                "We could not fetch the reference link. Check that it is public and try "
+                "again, or upload the track instead.",
+                False,
+            ),
+            "REFERENCE_AUDIO_INVALID": (
+                "The reference audio could not be used. It needs to be an audible track "
+                "between 5 seconds and 10 minutes long.",
+                False,
+            ),
+            "VOCAL_COVERAGE_BELOW_90": (
+                "The song came back with too much instrumental time and not enough singing, "
+                "even after re-recording. Please try again."
+                if after_render
+                else "We could not write lyrics dense enough to fill this song. Please try "
+                "again, or paste your own lyrics.",
+                True,
+            ),
+            "LYRIC_RECALL_TOO_LOW": (
+                "The vocals did not sing enough of the lyrics as written, even after "
+                "re-recording. Please try again.",
+                True,
+            ),
+            "RHYME_VALIDATION_FAILED": (
+                "We could not make every line rhyme as required. Please try again, choose "
+                "the relaxed rhyme mode, or paste your own lyrics.",
+                True,
+            ),
+            "LANGUAGE_MISMATCH": (
+                "The lyrics did not come out in the language you chose. Please try again.",
+                True,
+            ),
+            "REFERENCE_SIMILARITY_TOO_HIGH": (
+                "The lyrics came out too close to the reference track and were refused. "
+                "Please try again.",
+                True,
+            ),
+            "FILLER_ABOVE_LIMIT": (
+                "The lyrics had too much filler in them. Please try again.",
+                True,
+            ),
+            "BLUEPRINT_VALIDATION_FAILED": (
+                "We could not plan this song's lyrics. Please try again.",
+                True,
+            ),
+            "OUTPUT_DURATION_MISMATCH": (
+                "This track could not be completed. Please try again.",
+                True,
+            ),
+        }
+        message, retriable = messages.get(
+            code, ("This track could not be completed. Please try again.", True)
+        )
+        return AdapterError(message, internal_detail=f"[{code}] {detail}", retriable=retriable)
 
     # ── Provider resolution ──────────────────────────────────────────────
 
@@ -564,6 +859,11 @@ class MusicAdapter:
         plan: SongPlan,
         lyrics: str | None,
         language: Language | None,
+        *,
+        caption: str | None = None,
+        bpm: int | None = None,
+        attempt: int = 0,
+        model_hears_reference: bool = True,
     ) -> list[Path]:
         total = len(sections)
         rendered: list[Path] = []
@@ -581,7 +881,7 @@ class MusicAdapter:
             )
 
             request = MusicRequest(
-                prompt=self._caption_for(job, plan, section, total),
+                prompt=self._caption_for(job, plan, section, total, base=caption),
                 duration_seconds=section.duration_seconds,
                 lyrics=lyrics,
                 # The words and the accent to sing them with are two decisions.
@@ -589,12 +889,25 @@ class MusicAdapter:
                 # English — the provider defaults the language when nobody
                 # states it, and "nobody stated it" was the whole bug.
                 language=language.code if language else None,
-                bpm=_optional_int(job.parameters.get("bpm")),
+                bpm=bpm if bpm is not None else _optional_int(job.parameters.get("bpm")),
                 key=_optional_str(job.parameters.get("key")),
                 # Deterministic per section: a retried job reproduces its own
-                # song rather than handing the user a different one.
-                seed=zlib.crc32(f"{job.job_id}:{section.index}".encode()),
-                reference_audio=self._reference_audio(job),
+                # song rather than handing the user a different one. A v2
+                # verification retry is a different take on purpose, so it
+                # salts the seed with the attempt.
+                seed=zlib.crc32(
+                    (
+                        f"{job.job_id}:{section.index}"
+                        if attempt == 0
+                        else f"{job.job_id}:{section.index}:take{attempt}"
+                    ).encode()
+                ),
+                # The v2 lyrics workflow keeps the reference away from the
+                # model: given a track, the provider conditions on its audio
+                # and can reproduce its melody, which the client's originality
+                # rule forbids. There the reference shapes the blueprint and
+                # the brief (tempo, energy, cadence) and nothing else.
+                reference_audio=self._reference_audio(job) if model_hears_reference else None,
             )
 
             async def report(fraction: float, low: int = low, high: int = high) -> None:
@@ -665,16 +978,19 @@ class MusicAdapter:
         return takes[0]
 
     def _caption_for(
-        self, job: AdapterJob, plan: SongPlan, section: Segment, total: int
+        self, job: AdapterJob, plan: SongPlan, section: Segment, total: int,
+        *, base: str | None = None,
     ) -> str:
         """The user's prompt, plus which part of the song this section is.
 
         The prompt itself is never rewritten — the structure hint is appended,
         and only when there is more than one section to distinguish. A
-        single-section song sends exactly what the user typed.
+        single-section song sends exactly what the user typed. `base` is the
+        v2 workflow's production brief (the prompt plus its direction).
         """
+        prompt = base if base is not None else job.prompt
         if total <= 1:
-            return job.prompt
+            return prompt
 
         start = section.start_seconds
         end = start + section.duration_seconds
@@ -687,7 +1003,7 @@ class MusicAdapter:
             cursor = part_end
 
         outline = " → ".join(covered) if covered else plan.outline
-        return f"{job.prompt}\n\n[section {section.index + 1} of {total}: {outline}]"
+        return f"{prompt}\n\n[section {section.index + 1} of {total}: {outline}]"
 
     def _reference_audio(self, job: AdapterJob) -> Path | None:
         item = job.input_for("reference_audio")

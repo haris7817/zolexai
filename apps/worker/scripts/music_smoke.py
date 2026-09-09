@@ -127,6 +127,9 @@ async def main() -> int:
     # means the provider was asked for an instrumental — seeing the words here
     # is the difference between the two, without needing to listen first.
     lyrics_path = workspace / "lyrics.txt"
+    if not lyrics_path.is_file():
+        # The v2 lyrics workflow (9 Sep 2026) keeps its artefacts together.
+        lyrics_path = workspace / "lyrics" / "lyrics.txt"
     if lyrics_path.is_file():
         print("lyrics sent to the provider:")
         for line in lyrics_path.read_text(encoding="utf-8").splitlines():
@@ -138,6 +141,15 @@ async def main() -> int:
     print("-" * 60)
     print(f"file:      {result.path}")
     print(f"type:      {result.content_type} ({result.kind})")
+    if result.report:
+        # Music Lyrics Workflow v2.0: the numbers the customer will see.
+        for key in (
+            "workflow", "lyrics_source", "planned_vocal_coverage", "measured_vocal_coverage",
+            "coverage_method", "lyric_recall", "rhyme_pass_rate", "rhyme_validator_confidence",
+            "reference_used", "originality_check", "retries", "warnings",
+        ):
+            print(f"{key + ':':<26} {result.report.get(key)}")
+        print(f"report:    {workspace / 'lyrics' / 'lyrics-report.json'}")
     print(f"duration:  {result.duration_seconds}s (measured by ffprobe)")
     print(f"size:      {result.size_bytes / 1024:.0f} KiB")
     print(f"wall time: {elapsed:.1f}s")

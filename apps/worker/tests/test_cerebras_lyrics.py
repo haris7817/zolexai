@@ -127,7 +127,11 @@ def music_job(workspace: Path, duration: str = "1m", **overrides):
         prompt="a romantic latin pop song about a summer night by the ocean",
         parameters={"duration": duration},
         inputs=[],
-        execution={"runtime": "music"},
+        # These tests hand the adapter a fixed five-line sheet and expect it
+        # sung: that is the v1 contract. The v2 lyrics workflow (9 Sep 2026)
+        # refuses a sheet that thin by design; tests/test_music_lyrics_v2.py
+        # covers it.
+        execution={"runtime": "music", "music_lyrics_workflow": "v1"},
         output_content_type="audio/mpeg",
     )
     return make_job(workspace, **{**defaults, **overrides})

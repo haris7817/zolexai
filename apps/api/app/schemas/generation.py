@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -65,6 +65,29 @@ class GenerationParameters(BaseModel):
     """Requested language for GENERATED lyrics, when the customer supplies
     none. Recorded and passed to the worker's lyric writer; writers that
     cannot honour it say so in the log rather than silently singing English."""
+
+    # ── Music Lyrics Workflow v2.0 (client specification, 9 Sep 2026) ──
+    # Only workflows whose definition sets `settings.lyrics_workflow` accept
+    # these; absent means the workflow's defaults, so every existing client
+    # keeps its exact behaviour.
+    rhyme_scheme: Literal["auto", "AABB", "ABAB", "AAAA"] | None = None
+    """The rhyme scheme every section's lines follow. `auto` picks by genre."""
+    rhyme_mode: Literal["strict", "relaxed"] | None = None
+    """Strict requires an exact rhyme from the stressed vowel; relaxed
+    accepts a shared vowel sound. The deployment default is strict."""
+    point_of_view: Literal["auto", "first_person", "second_person", "third_person"] | None = None
+    clean_mode: bool | None = None
+    """No profanity or explicit content. Absent means clean."""
+    reference_audio_url: str | None = Field(default=None, max_length=2048)
+    """A public song whose tempo, energy, structure and vocal cadence the
+    new song should be LIKE. HTTPS, on a host the worker can fetch (YouTube,
+    Vimeo, SoundCloud). Its lyrics, melody and voice are never copied; the
+    worker's originality gate refuses a sheet that shares a run of words
+    with it. An uploaded `reference_audio` input wins over a link."""
+    dry_run: bool | None = None
+    """Plan and validate the lyrics without generating audio. The job ends
+    with the plan's numbers in its message and no output; the worker keeps
+    the full report. For checking a brief before spending GPU time."""
 
     sound: bool | None = Field(default=None)
     """Whether the finished video carries its soundtrack. Absent means yes —
@@ -180,6 +203,12 @@ class GenerationJobPublic(BaseModel):
     outputs: list[GenerationOutput] = Field(default_factory=list)
 
     error: GenerationError | None = None
+
+    result: dict[str, Any] | None = None
+    """Structured, customer-safe facts the worker reported with the output
+    beyond the file itself — for Music, the lyrics (plain, LRC, SRT and
+    timed JSON), the planned and measured vocal coverage, the rhyme result
+    and any warnings. Bounded at 64 KB; never model names or paths."""
 
     attempt_count: int
     created_at: datetime

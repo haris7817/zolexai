@@ -260,21 +260,24 @@ class WorkerApiClient:
         duration_seconds: float | None = None,
         width: int | None = None,
         height: int | None = None,
+        result: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return await self._post(
-            f"/internal/jobs/{job_id}/complete",
-            {
-                "worker_id": worker_id,
-                "lease_token": lease_token,
-                "output_key": output_key,
-                "output_kind": output_kind,
-                "output_content_type": output_content_type,
-                "size_bytes": size_bytes,
-                "duration_seconds": duration_seconds,
-                "width": width,
-                "height": height,
-            },
-        )
+        payload: dict[str, Any] = {
+            "worker_id": worker_id,
+            "lease_token": lease_token,
+            "output_key": output_key,
+            "output_kind": output_kind,
+            "output_content_type": output_content_type,
+            "size_bytes": size_bytes,
+            "duration_seconds": duration_seconds,
+            "width": width,
+            "height": height,
+        }
+        # Sent only when there is one, so an API predating the field — and
+        # every non-music adapter — sees the exact request it always did.
+        if result:
+            payload["result"] = result
+        return await self._post(f"/internal/jobs/{job_id}/complete", payload)
 
     async def report_failure(
         self,

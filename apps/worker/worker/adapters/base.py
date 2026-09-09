@@ -218,6 +218,12 @@ class AdapterResult:
     width: int | None = None
     height: int | None = None
 
+    report: dict[str, Any] | None = None
+    """Structured, customer-safe facts about the result beyond the file —
+    the music workflow's lyrics, timing and coverage numbers. Stored on the
+    job by the API and shown on the result page. Bounded (64 KB serialised);
+    never model names, paths or internals."""
+
     @property
     def size_bytes(self) -> int:
         return self.path.stat().st_size

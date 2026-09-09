@@ -352,6 +352,7 @@ async def complete_job(
         duration_seconds=payload.duration_seconds,
         width=payload.width,
         height=payload.height,
+        result=payload.result,
     )
     if job is None:
         logger.warning("worker_complete_rejected", extra={"reason": reason})

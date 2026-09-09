@@ -119,7 +119,7 @@ _REASONING_HEADROOM = 900
 #: Floor and ceiling on the output allowance, so a 1-minute song still has room
 #: to finish a thought and a 5-minute one cannot run away.
 _MIN_TOKENS = 1400
-_MAX_TOKENS = 3000
+_MAX_TOKENS = 4000
 
 
 # ── The brief, as the model reads it ─────────────────────────────────────
@@ -182,6 +182,23 @@ def _user_prompt(brief: LyricBrief, plan: SongPlan, notes: list[str] | None) -> 
     # writing it twice would spend the line budget twice for the same words.
     tags = list(dict.fromkeys(s.kind for s in plan.sections if s.carries_words))
     target = target_lines(plan)
+    ceiling = plan.line_budget
+    per_section_rule = (
+        f"LINES PER SECTION: at least 2. Spread the {target} lines across the "
+        f"{len(tags)} sections above, giving the chorus the most."
+    )
+    if brief.section_targets:
+        # The v2 lyrics workflow sizes every section from a timed blueprint
+        # (worker/music/blueprint.py). Its numbers replace the plan's: the
+        # tags, the per-section counts and the total are all its own, and
+        # the ceiling is a little above the total rather than the older
+        # 6 s/line budget, which the denser sheet would always exceed.
+        tags = [tag for tag, _ in brief.section_targets]
+        target = sum(lines for _, lines in brief.section_targets)
+        ceiling = target + max(2, len(tags))
+        per_section_rule = "LINES PER SECTION, exactly: " + ", ".join(
+            f"[{tag}] {lines} lines" for tag, lines in brief.section_targets
+        )
 
     lines = [
         f"LANGUAGE: {language_name}",
@@ -210,12 +227,32 @@ def _user_prompt(brief: LyricBrief, plan: SongPlan, notes: list[str] | None) -> 
         # excess silently rather than compressing it.
         f"TOTAL SUNG LINES: write {target} lines across the whole song. "
         f"Not fewer than {max(2, target - 1)}, and never more than "
-        f"{plan.line_budget}.",
-        f"LINES PER SECTION: at least 2. Spread the {target} lines across the "
-        f"{len(tags)} sections above, giving the chorus the most.",
+        f"{ceiling}.",
+        per_section_rule,
     ]
     if brief.perspective:
         lines.append(f"PERSPECTIVE: {brief.perspective}")
+    if brief.rhyme_scheme:
+        lines.append(
+            f"RHYME SCHEME: {brief.rhyme_scheme} within every section. Rhymes must be "
+            "exact on the stressed vowel and everything after it, in the song's own "
+            "language — never rhyme a word with itself."
+        )
+    if brief.syllables_per_line:
+        lines.append(
+            f"LINE LENGTH: about {brief.syllables_per_line} syllables per line, every line "
+            "a full sung phrase — no one-word lines, no 'oh oh', 'yeah yeah', 'la la', "
+            "humming or sound effects."
+        )
+    if brief.clean:
+        lines.append("CONTENT: clean — no profanity, no explicit content.")
+    else:
+        lines.append("CONTENT: explicit language is permitted where it serves the song.")
+    if brief.reference_direction:
+        lines.append(
+            f"MUSICAL FEEL OF THE REFERENCE (match the pace and energy, never copy its words): "
+            f"{brief.reference_direction}"
+        )
     keep = singable_details(brief.must_keep)
     if keep:
         lines.append(
@@ -371,6 +408,72 @@ class CerebrasLyricsWriter:
 
         raise LyricsWriteFailed(" || ".join(problems) or "no attempt succeeded")
 
+    # ── Targeted repair (v2 lyrics workflow) ─────────────────────────────
+
+    async def rewrite_lines(
+        self,
+        brief: LyricBrief,
+        plan: SongPlan,
+        sheet: str,
+        instructions: list[str],
+    ) -> str | None:
+        """The sheet with ONLY the named lines changed, or None on failure.
+
+        The rhyme validator names the lines whose endings fail; the model is
+        asked to return the complete sheet with those lines rewritten and
+        every other line byte-identical. Lines it changed anyway are put
+        back by the caller's comparison, so a repair can only ever touch what
+        it was asked to.
+        """
+        if not self.available or not instructions:
+            return None
+        language = resolve_language(brief.language)
+        language_name = language.name if language else brief.language
+        system = (
+            "You are a professional songwriter revising a lyric sheet. Return the COMPLETE "
+            f"sheet in {language_name}, with the same section tags in the same order. Change "
+            "ONLY the lines you are told to change, and keep every other line exactly as it "
+            "is, character for character. No commentary, no code fences."
+        )
+        user = (
+            "LYRIC SHEET:\n" + sheet.strip() + "\n\nFIX THESE, AND NOTHING ELSE:\n"
+            + "\n".join(f"- {note}" for note in instructions)
+        )
+        payload = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_completion_tokens": self._max_completion_tokens(plan),
+            "temperature": min(self._temperature, 0.6),
+            "stream": False,
+        }
+        try:
+            async with httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=self._timeout,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                transport=self._transport,
+            ) as client:
+                response = await client.post("/v1/chat/completions", json=payload)
+        except httpx.HTTPError as exc:
+            logger.warning("cerebras_rewrite_failed", extra={"detail": type(exc).__name__})
+            return None
+        if response.status_code >= 400:
+            logger.warning("cerebras_rewrite_failed", extra={"status": response.status_code})
+            return None
+        try:
+            text = _strip_fences(_first_message(response.json()))
+        except (json.JSONDecodeError, ValueError):
+            return None
+        if not text.strip() or written_in(text, brief.language.strip().lower() or "en") is False:
+            return None
+        return _merge_rewrite(sheet, text, instructions)
+
     # ── HTTP ─────────────────────────────────────────────────────────────
 
     def _messages(
@@ -468,6 +571,31 @@ class CerebrasLyricsWriter:
 
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
         return _strip_fences(text), usage
+
+
+def _merge_rewrite(original: str, rewritten: str, instructions: list[str]) -> str:
+    """Keeps the original for every line the repair was not asked to touch.
+
+    Line numbers in the instructions ("line 7: ...") name which sheet lines
+    may change. If the model returned a different number of lines the whole
+    rewrite is returned as-is and the caller's validation decides.
+    """
+    import re as _re
+
+    allowed = {int(m) - 1 for note in instructions for m in _re.findall(r"line (\d+):", note)}
+    before = [line for line in original.splitlines() if line.strip() and not line.strip().startswith("[")]
+    after = [line for line in rewritten.splitlines() if line.strip() and not line.strip().startswith("[")]
+    if len(before) != len(after) or not allowed:
+        return rewritten
+    merged: list[str] = []
+    index = 0
+    for raw in rewritten.splitlines():
+        if not raw.strip() or raw.strip().startswith("["):
+            merged.append(raw)
+            continue
+        merged.append(raw if index in allowed else before[index])
+        index += 1
+    return "\n".join(merged)
 
 
 def _first_message(body: Any) -> str:

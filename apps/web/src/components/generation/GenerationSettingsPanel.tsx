@@ -19,6 +19,9 @@ import {
 import {
   DIALOGUE_LANGUAGES,
   LYRIC_LANGUAGES,
+  POINTS_OF_VIEW,
+  POINT_OF_VIEW_LABELS,
+  RHYME_SCHEMES,
   MAX_SPEAKERS,
   offersSpeech,
   PERFORMER_DESCRIPTION_MAX_LENGTH,
@@ -436,6 +439,128 @@ export function GenerationSettingsPanel({
               {workflow.output_type === "video"
                 ? "Tells us what language to listen for when we transcribe the track. Your own pasted lyrics can be in any language."
                 : "Applies when we write the lyrics for you. Your own pasted lyrics can be in any language."}
+            </p>
+          </>
+        ) : null}
+
+        {/* ── Music Lyrics Workflow v2.0 (9 Sep 2026) ──────────────────
+            Lyrics are written first, validated (90% sung, strict rhyme,
+            little filler, right language, original) and only then sung;
+            the track is then transcribed and re-recorded if it falls short.
+            These controls shape the writing. Resting values are not sent. */}
+        {workflow.settings.lyrics_workflow ? (
+          <>
+            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <SectionLabel as="label" htmlFor="zx-rhyme-scheme">
+                  Rhyme scheme
+                </SectionLabel>
+                <Controller
+                  control={form.control}
+                  name="rhymeScheme"
+                  render={({ field }) => (
+                    <SelectField
+                      id="zx-rhyme-scheme"
+                      value={field.value}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    >
+                      {RHYME_SCHEMES.map((scheme) => (
+                        <option key={scheme} value={scheme}>
+                          {scheme === "auto" ? "Auto (by genre)" : scheme}
+                        </option>
+                      ))}
+                    </SelectField>
+                  )}
+                />
+              </div>
+              <div>
+                <SectionLabel as="label" htmlFor="zx-rhyme-mode">
+                  Rhyme strictness
+                </SectionLabel>
+                <Controller
+                  control={form.control}
+                  name="rhymeMode"
+                  render={({ field }) => (
+                    <SelectField
+                      id="zx-rhyme-mode"
+                      value={field.value}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    >
+                      <option value="strict">Strict (exact rhymes)</option>
+                      <option value="relaxed">Relaxed (near rhymes allowed)</option>
+                    </SelectField>
+                  )}
+                />
+              </div>
+            </div>
+
+            <SectionLabel as="label" htmlFor="zx-point-of-view">
+              Point of view
+            </SectionLabel>
+            <Controller
+              control={form.control}
+              name="pointOfView"
+              render={({ field }) => (
+                <SelectField
+                  id="zx-point-of-view"
+                  value={field.value}
+                  onChange={(event) => field.onChange(event.target.value)}
+                  className="mb-4"
+                >
+                  {POINTS_OF_VIEW.map((pov) => (
+                    <option key={pov} value={pov}>
+                      {POINT_OF_VIEW_LABELS[pov]}
+                    </option>
+                  ))}
+                </SelectField>
+              )}
+            />
+
+            <Controller
+              control={form.control}
+              name="cleanMode"
+              render={({ field }) => (
+                <label className="mb-4 flex cursor-pointer items-center justify-between gap-3">
+                  <span>
+                    <span className="text-zx-text block text-[13px] font-bold">Clean lyrics</span>
+                    <span className="text-zx-text-muted block text-[11.5px] leading-[1.5]">
+                      No profanity or explicit content. Turn off to allow it.
+                    </span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={field.value}
+                    onChange={(event) => field.onChange(event.target.checked)}
+                    className="accent-zx-primary h-4 w-4"
+                  />
+                </label>
+              )}
+            />
+
+            <SectionLabel as="label" htmlFor="zx-reference-audio-url">
+              Reference song link (optional)
+            </SectionLabel>
+            <input
+              id="zx-reference-audio-url"
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              {...form.register("referenceAudioUrl")}
+              placeholder="Paste a YouTube, Vimeo or SoundCloud link to match its tempo, energy and pacing"
+              aria-invalid={Boolean(errors.referenceAudioUrl)}
+              className={cn(
+                "bg-zx-surface border-zx-border text-zx-text rounded-zx-md focus:border-zx-border-active w-full border px-[13px] py-3 text-[13px] leading-[1.55] outline-none transition-colors duration-150",
+                errors.referenceAudioUrl ? "border-zx-error/60 mb-[6px]" : "mb-[6px]",
+              )}
+            />
+            {errors.referenceAudioUrl ? (
+              <p role="alert" className="text-zx-error mb-4 text-[11.5px] font-semibold">
+                {errors.referenceAudioUrl.message}
+              </p>
+            ) : null}
+            <p className="text-zx-text-muted mb-6 text-[11.5px] leading-[1.5]">
+              We match a reference&apos;s tempo, structure, energy and vocal pacing — never its words,
+              melody or voice. An uploaded reference track takes priority over a link.
             </p>
           </>
         ) : null}

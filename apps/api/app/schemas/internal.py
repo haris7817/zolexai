@@ -184,6 +184,27 @@ class JobCompleteRequest(BaseModel):
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
 
+    result: dict[str, Any] | None = None
+    """Structured, customer-safe facts about the output beyond the file
+    (the music workflow's lyrics and coverage report). Stored on the job and
+    projected publicly as `result`, so it must contain nothing a customer
+    may not see. Bounded: the worker's report module keeps it under 64 KB
+    and the validator below refuses more."""
+
+    @model_validator(mode="after")
+    def _bounded_result(self) -> JobCompleteRequest:
+        if self.result is not None:
+            import json
+
+            size = len(json.dumps(self.result, ensure_ascii=False).encode("utf-8"))
+            if size > RESULT_MAX_BYTES:
+                raise ValueError(f"result is {size} bytes; the limit is {RESULT_MAX_BYTES}")
+        return self
+
+
+#: Ceiling on the serialised `result` a worker may attach to a completion.
+RESULT_MAX_BYTES = 64 * 1024
+
 
 class JobFailRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

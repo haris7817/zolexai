@@ -444,6 +444,23 @@ class LyricBrief:
     perspective: str = ""
     must_keep: list[str] = field(default_factory=list)
 
+    # ── Direction the v2 lyrics workflow adds (worker/music/workflow.py) ──
+    # All optional with empty defaults so every older caller, and every
+    # test that builds a brief positionally, is untouched. A writer that
+    # does not read them (the template bank) still produces a sheet.
+    rhyme_scheme: str = ""
+    """AABB / ABAB / AAAA — the scheme each section's lines must follow."""
+    clean: bool = True
+    """No profanity or explicit content when True."""
+    section_targets: tuple[tuple[str, int], ...] = ()
+    """(tag, lines) per section to write, in order — from the blueprint.
+    Empty means the writer sizes the sheet from the plan as before."""
+    reference_direction: str = ""
+    """One sentence about a reference track's tempo and delivery."""
+    syllables_per_line: int = 0
+    """Rough syllables a line should carry, from the blueprint's delivery
+    speed. Zero means unstated."""
+
     @classmethod
     def from_prompt(cls, prompt: str, *, genre: str | None = None) -> LyricBrief:
         return cls(

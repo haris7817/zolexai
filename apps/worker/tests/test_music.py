@@ -626,9 +626,12 @@ async def test_a_one_minute_request_produces_a_verified_one_minute_track(
     assert info.has_video is False
     assert result.path.stat().st_size > 1024
 
-    # One generation, and the user's words reached it untouched.
+    # One generation, and the user's words reached it untouched. Since the
+    # v2 lyrics workflow (9 Sep 2026) the production brief FOLLOWS the
+    # prompt — structure and vocal direction — so the prompt is a prefix
+    # rather than the whole caption; it is still never rewritten.
     assert len(provider.requests) == 1
-    assert provider.requests[0].prompt == (
+    assert provider.requests[0].prompt.startswith(
         "an upbeat pop song about summer in Lahore, hopeful, female vocals"
     )
     assert provider.requests[0].duration_seconds == pytest.approx(60.0)

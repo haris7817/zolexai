@@ -142,6 +142,10 @@ export const workflowSchema = z.object({
     // role and a description beside each `performer_N` picture input, sent
     // as the `performers` parameter. Defaulted likewise.
     performers: z.boolean().default(false),
+    // Music (Music Lyrics Workflow v2.0, 9 Sep 2026): rhyme scheme and mode,
+    // point of view, clean mode and a reference-audio link. Defaulted for the
+    // same reason as `lyrics`.
+    lyrics_workflow: z.boolean().default(false),
   }),
 
   capabilities: z.object({
@@ -226,6 +230,12 @@ export const generationJobSchema = z.object({
   outputs: z.array(generationOutputSchema).default([]),
 
   error: z.object({ code: z.string(), message: z.string() }).nullable().default(null),
+
+  // The worker's structured, customer-safe report on the output (Music: the
+  // lyrics in plain/LRC/SRT/timed-JSON form, planned and measured vocal
+  // coverage, rhyme result, warnings). Absent on every job that reported
+  // none and on API responses predating the field.
+  result: z.record(z.string(), z.unknown()).nullable().default(null),
 
   attempt_count: z.number().int(),
   created_at: z.string(),

@@ -38,6 +38,7 @@ it twice would just double-charge the budget.
 
 from __future__ import annotations
 
+import math
 import random
 import re
 import zlib
@@ -337,7 +338,12 @@ class TemplateLyricsWriter:
 
         mood = detect_mood(brief.topic)
         subject = extract_subject(brief.topic)
-        sheet = self._compose(rng, plan, mood, subject)
+        if brief.section_targets:
+            # The v2 lyrics workflow says exactly how many lines each section
+            # holds (worker/music/blueprint.py); the bank fills those slots.
+            sheet = self._compose_to_targets(rng, brief, mood, subject)
+        else:
+            sheet = self._compose(rng, plan, mood, subject)
         sheet = self._ensure_details(sheet, brief, plan)
 
         text = _render(sheet)
@@ -416,6 +422,46 @@ class TemplateLyricsWriter:
 
         return sheet
 
+    def _compose_to_targets(
+        self, rng: random.Random, brief: LyricBrief, mood: str, subject: str
+    ) -> list[tuple[str, list[str]]]:
+        """Fills each blueprint section with couplets from its bank.
+
+        The bank is finite and a five-minute song at the v2 density wants
+        more couplets than it holds, so the pools wrap around: a repeated
+        couplet in a late verse is the fallback writer's honest limit, and
+        the review reports it as repetition rather than hiding it. Under an
+        ABAB scheme two couplets are interleaved so the groups still rhyme.
+        """
+        pools = {kind: _pool(rng, _BANKS[kind], mood) for kind in _BANKS}
+        cycles = {kind: list(pool) for kind, pool in pools.items()}
+        scheme = (brief.rhyme_scheme or "AABB").upper()
+
+        def take(kind: str) -> list[str]:
+            if not pools[kind]:
+                pools[kind] = list(cycles[kind]) or list(cycles["verse"])
+            return list(pools[kind].pop())
+
+        sheet: list[tuple[str, list[str]]] = []
+        for tag, wanted in brief.section_targets:
+            kind = tag if tag in _BANKS else ("chorus" if tag in _ANCHOR_KINDS else "verse")
+            couplets = [take(kind) for _ in range(max(1, math.ceil(wanted / 2)))]
+            lines: list[str] = []
+            if scheme == "ABAB" and len(couplets) >= 2:
+                for index in range(0, len(couplets) - 1, 2):
+                    first, second = couplets[index], couplets[index + 1]
+                    lines += [first[0], second[0], first[1], second[1]]
+                if len(couplets) % 2:
+                    lines += couplets[-1]
+            else:
+                lines = [line for couplet in couplets for line in couplet]
+            if tag in _ANCHOR_KINDS and wanted % 2 and subject:
+                # An odd slot: the subject line opens the anchor, in its own
+                # rhyme group, exactly as the plan-driven path does.
+                lines = [_title(subject), *lines]
+            sheet.append((tag, lines[:wanted] if len(lines) > wanted else lines))
+        return sheet
+
     def _target_lines(self, plan: SongPlan) -> int:
         """Delegates, so this writer and the hosted one aim at one number.
 
@@ -447,9 +493,18 @@ class TemplateLyricsWriter:
         detail = ", ".join(missing[:2])
         couplet = [_DETAIL_COUPLET[0].format(detail=_title(detail)), _DETAIL_COUPLET[1]]
         for index in range(len(sheet) - 1, -1, -1):
-            kind, _ = sheet[index]
+            kind, lines = sheet[index]
             if kind == "verse":
-                sheet[index] = ("verse", couplet)
+                if brief.section_targets and len(lines) > 2:
+                    # A blueprint-sized verse keeps its length: the couplet
+                    # replaces two lines of one rhyme group rather than the
+                    # whole verse. Under ABAB that group is lines 1 and 3.
+                    first, second = (0, 2) if (brief.rhyme_scheme or "").upper() == "ABAB" and len(lines) >= 4 else (0, 1)
+                    replaced = list(lines)
+                    replaced[first], replaced[second] = couplet
+                    sheet[index] = ("verse", replaced)
+                else:
+                    sheet[index] = ("verse", couplet)
                 return sheet
         # No verse anywhere (electronic, hip-hop edge): the detail joins the
         # first anchor block's subject line instead of displacing a rhyme.

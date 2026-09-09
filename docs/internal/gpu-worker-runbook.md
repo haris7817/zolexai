@@ -2685,3 +2685,31 @@ against live traffic — it takes the whole card.
   customer jobs swung to 60 and 220 s. Check
   `curl -s 127.0.0.1:8189/queue` and the worker log before believing a
   number.
+
+## 47. Music on the client-test node — ACE-Step installed, Lyrics Workflow v2 (9 Sep 2026)
+
+The client-test node (`ltx-6000-2`, 163.182.37.67:20577) was built 5 Sep
+without a music service, and its `RUNTIMES` did not list `music`, so every
+Music job the client-test VPS routed (`deploy/vps-local.sh --profile
+client-test` flips `music.yaml` to `runtime: music`) sat queued for ever.
+
+Installed 9 Sep, exactly per §36: `/workspace/acestep-benchmark` at
+`6d467e4`, `uv sync`, `acestep-v15-xl-turbo` downloaded into
+`checkpoints/` (19 GB; the LM auto-downloads on first request). Registered
+as `zolexai-music` (`/opt/supervisor-scripts/zolexai-music.sh` →
+`/etc/supervisor/conf.d/zolexai-music.conf`, `stopasgroup`/`killasgroup`,
+log `/tmp/acestep-api.log`). `ACESTEP_CONFIG_PATH=acestep-v15-xl-turbo`
+lives in the script (§36.2). The service binds `127.0.0.1:8001`; the
+worker's `.env.gpu-worker` gained `ACESTEP_BASE_URL`, `MUSIC_PROVIDER=acestep`,
+`MUSIC_LYRICS_WORKFLOW=v2` and `music` in `RUNTIMES`.
+
+The Music Lyrics Workflow v2.0 (`docs/internal/music-lyrics-workflow-v2.md`)
+runs on this node with: Cerebras lyrics (key present), faster-whisper 1.2.1
+for lyric recall (the music-video extra; weights under
+`/workspace/models/faster-whisper`), yt-dlp in the LTX venv for reference
+links. **No Demucs venv on this node** (`/workspace/vocal-sep` was on the
+old box): measured coverage falls back to the transcript's word spans and
+the report says `coverage_method: transcript`. Install demucs there and set
+`VOCAL_SEPARATOR_PYTHON` to get the stem-based measure back.
+
+First request pays the ~40 s lazy model load; keep the service resident.

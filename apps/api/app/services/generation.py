@@ -134,6 +134,12 @@ class GenerationService:
             maximum_speakers=params.maximum_speakers,
             reference_video_url=params.reference_video_url,
             performers=params.performers,
+            rhyme_scheme=params.rhyme_scheme,
+            rhyme_mode=params.rhyme_mode,
+            point_of_view=params.point_of_view,
+            clean_mode=params.clean_mode,
+            reference_audio_url=params.reference_audio_url,
+            dry_run=params.dry_run,
         )
 
         assets_by_id = await self._validate_inputs(user, request, definition)
@@ -449,6 +455,7 @@ class GenerationService:
             inputs=inputs,
             outputs=outputs,
             error=error,
+            result=job.result,
             attempt_count=job.attempt_count,
             created_at=job.created_at,
             updated_at=job.updated_at,
@@ -574,12 +581,13 @@ class GenerationService:
         duration_seconds: float | None,
         width: int | None,
         height: int | None,
+        result: dict[str, Any] | None = None,
     ) -> tuple[GenerationJob | None, str]:
-        result = await self._lock_and_authorize(job_id, worker_id, lease_token)
-        if isinstance(result, tuple):
+        authorized = await self._lock_and_authorize(job_id, worker_id, lease_token)
+        if isinstance(authorized, tuple):
             await self.session.rollback()
-            return None, result[1]
-        job = result
+            return None, authorized[1]
+        job = authorized
 
         asset = await self.assets.register_generated(
             user_id=job.user_id,
@@ -593,6 +601,10 @@ class GenerationService:
             height=height,
         )
         await self.repo.attach_output(job, asset=asset, is_primary=True)
+
+        # The worker's structured report, if any (Music: lyrics, timing,
+        # coverage). Stored whole; the schema already bounded its size.
+        job.result = result or None
 
         job.status = JobStatus.COMPLETED
         job.progress = 100

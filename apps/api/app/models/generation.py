@@ -67,6 +67,12 @@ class GenerationJob(Base):
     )
     """The validated request exactly as accepted — duration, aspect, quality, advanced settings."""
 
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    """The worker's structured, customer-safe report on the output (Music
+    Lyrics Workflow v2.0, 9 Sep 2026): lyrics, timing, coverage, warnings.
+    NULL for every job that reported none. Projected publicly as `result`.
+    Migration 20260909_1200."""
+
     # ── Failure ──────────────────────────────────────────────────────────
     error_code: Mapped[ErrorCode | None] = mapped_column(enum_column(ErrorCode, 48), nullable=True)
     error_message: Mapped[str | None] = mapped_column(sa.String(400), nullable=True)

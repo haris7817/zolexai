@@ -118,6 +118,12 @@ class WorkflowRegistry:
         maximum_speakers: int | None = None,
         reference_video_url: str | None = None,
         performers: list[Any] | None = None,
+        rhyme_scheme: str | None = None,
+        rhyme_mode: str | None = None,
+        point_of_view: str | None = None,
+        clean_mode: bool | None = None,
+        reference_audio_url: str | None = None,
+        dry_run: bool | None = None,
     ) -> WorkflowDefinition:
         """Checks a submitted generation request against its workflow.
 
@@ -244,6 +250,27 @@ class WorkflowRegistry:
                         "reason": "This tool does not take a lyrics language.",
                     }
                 )
+
+        # The lyrics workflow's controls follow the lyrics policy: a workflow
+        # that does not declare `settings.lyrics_workflow` rejects each one
+        # (client specification, 9 Sep 2026). Where it is declared the
+        # reference link has to be one the worker will actually fetch.
+        lyrics_workflow_fields = {
+            "rhyme_scheme": rhyme_scheme,
+            "rhyme_mode": rhyme_mode,
+            "point_of_view": point_of_view,
+            "clean_mode": clean_mode,
+            "reference_audio_url": reference_audio_url,
+            "dry_run": dry_run,
+        }
+        if not definition.settings.lyrics_workflow:
+            for name, value in lyrics_workflow_fields.items():
+                if value is not None:
+                    problems.append(
+                        {"field": name, "reason": "This tool does not offer the lyrics workflow."}
+                    )
+        elif reference_audio_url is not None:
+            problems.extend(_reference_audio_url_problems(reference_audio_url))
 
         # Prompt modes follow the lyrics policy exactly: a workflow that does
         # not declare the control rejects the parameter.
@@ -437,6 +464,33 @@ def _reference_url_problems(url: str) -> list[dict[str, Any]]:
             }
         ]
     return []
+
+#: Hosts the music worker's reference-audio fetcher accepts. Mirrored by the
+#: worker (`worker.music.reference.REFERENCE_AUDIO_HOSTS`) and the frontend.
+REFERENCE_AUDIO_HOSTS: tuple[str, ...] = ("youtube.com", "youtu.be", "vimeo.com", "soundcloud.com")
+
+
+def _reference_audio_url_problems(url: str) -> list[dict[str, Any]]:
+    from urllib.parse import urlparse
+
+    text = url.strip()
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    allowed = any(host == h or host.endswith(f".{h}") for h in REFERENCE_AUDIO_HOSTS)
+    if parsed.scheme.casefold() != "https" or not host:
+        return [{"field": "reference_audio_url", "reason": "Use an https:// link."}]
+    if parsed.username or parsed.password:
+        return [{"field": "reference_audio_url", "reason": "The link cannot carry credentials."}]
+    if not allowed:
+        return [
+            {
+                "field": "reference_audio_url",
+                "reason": "Only YouTube, Vimeo and SoundCloud links are supported.",
+                "allowed": list(REFERENCE_AUDIO_HOSTS),
+            }
+        ]
+    return []
+
 
 #: Languages Director mode will write dialogue in. "auto" follows the idea's
 #: own language; the named five are the set the video runtime's vendor

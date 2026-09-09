@@ -133,6 +133,8 @@ export function GenerationDetail({ generationId }: { generationId: string }) {
               </div>
             ) : null}
 
+            {job.status === "completed" && job.result ? <LyricsResult result={job.result} /> : null}
+
             {job.status === "completed" && workflow ? (
               <div className="mt-[18px] flex flex-wrap gap-[9px]">
                 {workflow.capabilities.download && output ? (
@@ -209,6 +211,84 @@ export function GenerationDetail({ generationId }: { generationId: string }) {
         </div>
       )}
     </AppPage>
+  );
+}
+
+/**
+ * The Music Lyrics Workflow's report, when a job carries one: the lyric
+ * sheet, the coverage and rhyme numbers, and the timed forms to save.
+ * Downloads are built client-side from the job's own `result` — there is
+ * no second asset to fetch.
+ */
+function LyricsResult({ result }: { result: Record<string, unknown> }) {
+  const lyrics = typeof result.lyrics === "string" ? result.lyrics : null;
+  if (!lyrics) return null;
+  const lrc = typeof result.lyrics_lrc === "string" ? result.lyrics_lrc : null;
+  const srt = typeof result.lyrics_srt === "string" ? result.lyrics_srt : null;
+  const warnings = Array.isArray(result.warnings)
+    ? result.warnings.filter((w): w is string => typeof w === "string")
+    : [];
+  const percent = (value: unknown) =>
+    typeof value === "number" ? `${Math.round(value * 100)}%` : "—";
+
+  const save = (name: string, text: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = name;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <section className="bg-zx-surface border-zx-border rounded-zx-lg mt-4 border p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-zx-text-muted m-0 text-[11px] font-extrabold tracking-[0.11em] uppercase">
+          Lyrics
+        </h2>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" size="sm" onClick={() => save("lyrics.txt", lyrics, "text/plain")}>
+            Save .txt
+          </Button>
+          {lrc ? (
+            <Button variant="ghost" size="sm" onClick={() => save("lyrics.lrc", lrc, "text/plain")}>
+              Save .lrc
+            </Button>
+          ) : null}
+          {srt ? (
+            <Button variant="ghost" size="sm" onClick={() => save("lyrics.srt", srt, "text/plain")}>
+              Save .srt
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <dl className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Detail label="Planned sung" value={percent(result.planned_vocal_coverage)} />
+        <Detail
+          label="Measured sung"
+          value={
+            result.measured_vocal_coverage == null
+              ? "Not measured"
+              : percent(result.measured_vocal_coverage)
+          }
+        />
+        <Detail label="Rhyme groups passing" value={percent(result.rhyme_pass_rate)} />
+        <Detail
+          label="Lyrics"
+          value={result.lyrics_source === "customer" ? "Your own" : "Written for you"}
+        />
+      </dl>
+      <pre className="text-zx-text m-0 max-h-[360px] overflow-auto text-[13px] leading-[1.6] font-medium whitespace-pre-wrap">
+        {lyrics}
+      </pre>
+      {warnings.length ? (
+        <ul className="text-zx-text-secondary mt-3 mb-0 list-disc pl-5 text-[12px] leading-[1.5]">
+          {warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 
