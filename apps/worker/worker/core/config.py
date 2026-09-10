@@ -1029,6 +1029,34 @@ class WorkerSettings(BaseSettings):
     `execution.delivery` overrides per job.
     """
 
+    ltx_caption_removal: bool = True
+    """
+    Whether a rendered clip is checked for burned-in captions and repaired
+    before it is enlarged.
+
+    Client instruction, 10 Sep 2026, after the positive-prompt clause below
+    failed to stop them: detect, mask, inpaint, THEN upscale. See
+    `worker/media/captions.py` for what it does and
+    `docs/internal/burned-in-captions.md` for the measurements.
+
+    Every failure on this path is non-fatal — a clip with a caption is worth
+    more to the customer than no clip — so turning this off only stops the
+    check, it cannot rescue a job.
+    """
+
+    ltx_caption_timeout_seconds: float = 300.0
+    """
+    Budget for the detector and the repair together. Measured 10 Sep 2026:
+    6.6 s for a 15 s clip at 864x480 on CPU. The margin is for a 30 s clip on
+    a node whose cores are busy with a render.
+    """
+
+    ltx_caption_command: str = ""
+    """
+    Overrides the caption command. Empty uses `ltx_caption_argv`, which runs
+    this checkout's own script in the LTX environment.
+    """
+
     ltx_allow_captions: bool = False
     """
     Whether written language is permitted in the generated picture.
@@ -1518,6 +1546,18 @@ class WorkerSettings(BaseSettings):
         if self.director_planner_command:
             return shlex.split(self.director_planner_command)
         script = Path(__file__).resolve().parents[2] / "scripts" / "director_plan.py"
+        return ["uv", "run", "python", str(script)]
+
+    @property
+    def ltx_caption_argv(self) -> list[str]:
+        """The caption detect-and-repair command, as argv — the
+        `director_planner_argv` pattern. The script travels with this
+        checkout and runs in the LTX environment, which already has `cv2`
+        and `numpy`, so a node that has pulled the worker already has it and
+        nothing new is installed."""
+        if self.ltx_caption_command:
+            return shlex.split(self.ltx_caption_command)
+        script = Path(__file__).resolve().parents[2] / "scripts" / "caption_clean.py"
         return ["uv", "run", "python", str(script)]
 
     @property

@@ -53,6 +53,7 @@ from worker.core.logging import get_logger
 from worker.dialogue import add_auto_dialogue
 from worker.longform import GENERATE_FROM, GENERATE_TO, StageReporter
 from worker.media import FfmpegError, OutputExpectation, ffmpeg, verify_output
+from worker.media.captions import CaptionReport, remove_captions
 from worker.media.upscale import DELIVERY_4K as _DELIVERY_4K
 from worker.media.upscale import DELIVERY_8K as _DELIVERY_8K
 from worker.media.upscale import is_4k, is_8k, upscale_clip
@@ -277,6 +278,17 @@ class LtxHdAdapter:
             if settings.ltx_comfy_free_after_job:
                 await service.free_memory()
 
+        # Burned-in captions, painted out on the generation canvas BEFORE any
+        # enlargement — the client's ordering, 10 Sep 2026, and 20x cheaper
+        # here than at 8K. Never fatal: the render is already paid for.
+        captions = CaptionReport(False, False)
+        if settings.ltx_caption_removal and not self._allow_captions(job):
+            output, captions = await remove_captions(
+                output,
+                timeout=settings.ltx_caption_timeout_seconds,
+                log_extra={"job_id": job.job_id, "workflow_id": job.workflow_id},
+            )
+
         if ai_upscale and canvas:
             await reporter.generating(GENERATE_TO - 1, "Upscaling your video…")
             output = await self._upscale(job, service, output, canvas, delivered)
@@ -306,6 +318,10 @@ class LtxHdAdapter:
                 "duration_seconds": info.duration_seconds,
                 "width": info.width,
                 "height": info.height,
+                # Whether this delivery had captions painted out of it. On the
+                # finished line so one grep answers "is it still happening?"
+                # without joining two log events per job.
+                **captions.log_fields,
             },
         )
         await reporter.uploading()
