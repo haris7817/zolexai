@@ -1044,11 +1044,26 @@ class WorkerSettings(BaseSettings):
     check, it cannot rescue a job.
     """
 
-    ltx_caption_timeout_seconds: float = 300.0
+    ltx_caption_timeout_seconds: float = 900.0
     """
-    Budget for the detector and the repair together. Measured 10 Sep 2026:
-    6.6 s for a 15 s clip at 864x480 on CPU. The margin is for a 30 s clip on
-    a node whose cores are busy with a render.
+    Budget for OCR detection, per-frame masking and ProPainter together.
+
+    Measured on the client-test node 10 Sep 2026: **94 s for a 15 s clip** at
+    864x480 (361 frames) — EasyOCR over every frame for the masks, then
+    ProPainter over all of them. A 30 s clip is about twice that, and this
+    runs on a node that may also be serving a render, so the budget is
+    generous. It roughly doubles a job's wall time, which is the price of the
+    client's specified pipeline and was accepted with it.
+    """
+
+    ltx_caption_residual_alarm: float = 0.10
+    """
+    How much of a REPAIRED clip may still read as text before the log says so.
+
+    The client asked for an OCR quality check after the repair. This is where
+    its answer becomes actionable: above this fraction the worker logs
+    `captions_survived_repair` at WARNING, so a half-fix cannot look like a
+    clean one. Measured on the first real repair: 0.0.
     """
 
     ltx_caption_command: str = ""

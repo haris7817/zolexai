@@ -1,126 +1,125 @@
-"""Detect burned-in captions in a rendered clip and paint them out.
+"""Detect burned-in captions with OCR and remove them by temporal inpainting.
 
-Runs in the LTX environment (`uv run python`), which already has `cv2`,
-`numpy` and `torch`. Reads a clip, writes a cleaned clip, prints one JSON
-report on stdout.
+Runs in the LTX environment (`uv run python`). Reads a clip, writes a cleaned
+clip, prints one JSON report on stdout.
 
-Client instruction, 10 Sep 2026: "OCR caption detection -> expand caption mask
--> temporal video inpainting -> upscaling", performed before the upscale
-because "removing text after upscale is slower and leaves larger artifacts".
-This is that pipeline with two substitutions, both measured on their own
-failing clip (job 70a97bf1) the same day.
+This is the client's specification of 10 Sep 2026, implemented as written:
 
-## Why not OCR
+    Generated frames
+    -> OCR caption detection
+    -> Expand caption mask
+    -> Temporal video inpainting
+    -> 1080p/4K/8K upscaling
+    -> Final encoding
 
-We need to know **where** the text is, never what it says, and what it says is
-not words: "What a tasty carırtt you have there", "I'll nibile genntly,
-thankıes for sharing". The model is not transcribing the dialogue — it is
-drawing subtitle-SHAPED decoration, because its training data is full of
-captioned clips. A recogniser's language model is dead weight against that and
-would score its own confidence lowest on exactly the frames we most need. So
-detection is classical, on `cv2`: no new dependency, no model load, no VRAM on
-a node that has already been OOM-killed once.
+with EasyOCR for the detection, ProPainter for the inpainting, and the whole
+thing placed before the upscale because "removing text after upscale is slower
+and leaves larger artifacts".
 
-## Why not `delogo`, and why not ProPainter yet
+## Why the hand-written detector this replaces was not good enough
 
-`delogo` was tried first, at the client's suggested starting point. It removes
-the text and replaces it with a vertical-smear band across the whole
-rectangle — on water it streaks, on the rabbit it destroys the carrot and the
-paw. The cure was as visible as the disease, because `delogo` blanks the whole
-box while the glyphs are only 4-20% of it.
+A first version used classical `cv2` heuristics — a morphological gradient,
+a brightness floor, a sparseness band, a centredness test. It worked on the
+clip it was written against and **missed the very next one**: job 6bdf08bf
+scored `ratio 0.0`, not one candidate frame, on a clip whose captions are
+plainly visible ("Nicch weatther a hop, lIttle friend"). Its text was fainter
+and lower than the clip the thresholds were tuned on, and every one of those
+constants was a guess about what a caption looks like.
 
-Masking the GLYPHS instead leaves the background untouched, and that is what
-this does. Measured on the failing clip: text gone, no dark ghost, grass,
-water, carrot and fur all intact, mild softening confined to the stroke
-neighbourhood. 6.6 s for a 15 s clip, on CPU.
+EasyOCR finds the same clip at 6 of 12 sampled frames with confidences up to
+1.00. A detector trained on text does not need to be told what text looks
+like, which is the entire argument for the client's choice over ours.
 
-ProPainter remains the answer if a clip appears where this is not enough — it
-is a real temporal model and this is a spatial approximation. This runs first
-because it costs one decode pass and no weights.
+## Where the numbers come from
 
-## What makes a caption a caption
+Only two thresholds remain and neither describes appearance:
 
-Ordinary picture content trips every single-frame test, which is why there are
-four and why one of them is temporal. Measured against a caption-free lunar
-clip (job 5e7594d7) that the first version reported as a caption covering 41%
-of the frame:
+* `--min-confidence` — how sure the recogniser must be before a box counts.
+* `--min-frames` — how much of the clip must carry text before it is called a
+  caption rather than a passing object.
 
-* **bright** — subtitles are near-white;
-* **sparse** — thin strokes, so 1.5-40% of the box is bright. Sunlit regolith
-  is bright over 60-90% of it and fails here;
-* **centred and wide** — a subtitle line, not a bright corner;
-* **still** — the same baseline in every frame. Scenery throws candidates at a
-  different height each time; this is the test scenery cannot pass.
+Everything else is measured from the clip in hand. In particular the vertical
+band used for the per-frame masks is the median of the boxes THIS clip's
+detection pass actually found, not a constant: a caption sits where it sits,
+and asking the data is what the previous version failed to do.
+
+## Two passes over the text, on purpose
+
+`readtext` (detection + recognition, with a confidence) decides whether the
+clip is captioned at all, on sampled frames. `detect` (boxes only, no
+recogniser) then runs on every frame to build the masks, because it is much
+cheaper and a mask does not need to know what the letters say.
+
+## The quality check
+
+The client asked for one: "if text is detected and captions are disabled, it
+should automatically inpaint the affected frames or regenerate the video."
+After inpainting, the output is sampled and read again. `residual_ratio` in
+the report is what survived, so the caller can decide — and so a silent
+half-fix is impossible to mistake for a clean one.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
+import tempfile
 
-#: A glyph core is near-white. Below this is picture, not text.
-CORE_THRESHOLD = 185
-#: Bright fraction inside a candidate box. Text is sparse; a sunlit surface is
-#: not. The upper bound is what rejected the lunar clip.
-MIN_BRIGHT_FRACTION = 0.015
-MAX_BRIGHT_FRACTION = 0.40
-#: How far a line's centre may sit from the frame's, as a fraction of width.
-MAX_CENTRE_OFFSET = 0.18
+#: Frames whose OCR confidence is below this do not count toward the decision.
+#: EasyOCR reported 0.42-1.00 on real captions and this keeps the weak tail
+#: out of the vote without discarding the boxes it draws.
+DEFAULT_MIN_CONFIDENCE = 0.30
+#: Fraction of sampled frames that must carry text before the clip is called
+#: captioned. A passing road sign in three frames of a hundred is the
+#: customer's picture; a caption is present for most of the clip.
+DEFAULT_MIN_FRAMES = 0.20
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Detect and remove burned-in captions")
     parser.add_argument("--video", required=True)
     parser.add_argument("--out", default="", help="cleaned clip; omit to detect only")
-    parser.add_argument("--samples", type=int, default=24)
-    parser.add_argument("--band-top", type=float, default=0.60,
-                        help="ignore text above this fraction of height: captions sit "
-                             "low, and a shop sign higher up is the customer's picture")
-    parser.add_argument("--min-frames", type=float, default=0.25)
-    parser.add_argument("--pad", type=int, default=6)
-    parser.add_argument("--grow", type=int, default=9, help="glyph mask dilation")
+    parser.add_argument("--samples", type=int, default=16,
+                        help="frames read by the recogniser for the decision")
+    parser.add_argument("--min-confidence", type=float, default=DEFAULT_MIN_CONFIDENCE)
+    parser.add_argument("--min-frames", type=float, default=DEFAULT_MIN_FRAMES)
+    parser.add_argument("--mask-dilation", type=int, default=8,
+                        help='"expand caption mask" — pixels grown around each box')
+    parser.add_argument("--band-pad", type=float, default=0.08,
+                        help="how far outside the measured caption band a per-frame "
+                             "box may sit, as a fraction of height")
+    parser.add_argument("--resize-ratio", type=float, default=1.0,
+                        help="ProPainter working scale; 1.0 is the generation canvas")
+    parser.add_argument("--verify-samples", type=int, default=12,
+                        help="frames re-read after inpainting for the quality check")
+    parser.add_argument("--work-dir", default="")
     return parser.parse_args(argv)
 
 
-def _text_boxes(gray, band_top: int):
-    """Candidate caption lines in one frame, as (x, y, w, h) in frame pixels."""
-    import cv2
-    import numpy as np
+def _reader():
+    import easyocr
 
-    height, width = gray.shape
-    strip = gray[band_top:, :]
-    if strip.size == 0:
-        return []
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    gradient = cv2.morphologyEx(strip, cv2.MORPH_GRADIENT, kernel)
-    _, binary = cv2.threshold(gradient, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    line_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (max(9, width // 40), 3))
-    joined = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, line_kernel)
-
-    contours, _ = cv2.findContours(joined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    boxes = []
-    for contour in contours:
-        x, y, w, h = cv2.boundingRect(contour)
-        if h < 6 or h > height * 0.18:
-            continue
-        if w < width * 0.10 or w / max(1, h) < 3.0:
-            continue
-        patch = strip[y:y + h, x:x + w]
-        if patch.size == 0 or np.percentile(patch, 92) < 170:
-            continue
-        bright = float(np.count_nonzero(patch >= 200)) / patch.size
-        if not MIN_BRIGHT_FRACTION <= bright <= MAX_BRIGHT_FRACTION:
-            continue
-        if abs((x + w / 2) - width / 2) / width > MAX_CENTRE_OFFSET:
-            continue
-        boxes.append((x, y + band_top, w, h))
-    return boxes
+    return easyocr.Reader(["en"], gpu=True, verbose=False)
 
 
-def detect(video: str, *, samples: int, band_top: float, min_frames: float, pad: int) -> dict:
-    """Where the caption sits in this clip, or that there is none."""
+def _sample_indices(total: int, samples: int) -> list[int]:
+    if total <= 1:
+        return [0]
+    return [int(i * (total - 1) / max(1, samples - 1)) for i in range(samples)]
+
+
+def _box_bounds(points) -> tuple[int, int, int, int]:
+    xs = [int(p[0]) for p in points]
+    ys = [int(p[1]) for p in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def detect(video: str, reader, *, samples: int, min_confidence: float,
+           min_frames: float) -> dict:
+    """Whether this clip carries text, and where the recogniser found it."""
     import cv2
     import numpy as np
 
@@ -134,136 +133,208 @@ def detect(video: str, *, samples: int, band_top: float, min_frames: float, pad:
         capture.release()
         return {"error": "clip reports no frames"}
 
-    top = int(height * band_top)
-    indices = [int(i * (total - 1) / max(1, samples - 1)) for i in range(samples)]
-    per_frame = []
+    indices = _sample_indices(total, samples)
+    hits, boxes, texts, confidences = 0, [], [], []
     for index in indices:
         capture.set(cv2.CAP_PROP_POS_FRAMES, index)
         ok, frame = capture.read()
         if not ok:
             continue
-        boxes = _text_boxes(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), top)
-        if boxes:
-            per_frame.append({"frame": index, "boxes": boxes})
+        found = [
+            (points, text, conf)
+            for points, text, conf in reader.readtext(frame)
+            if conf >= min_confidence
+        ]
+        if not found:
+            continue
+        hits += 1
+        for points, text, conf in found:
+            boxes.append(_box_bounds(points))
+            texts.append(str(text))
+            confidences.append(float(conf))
     capture.release()
 
-    # The temporal test: keep only boxes sharing the clip's dominant baseline.
-    baselines = [b[1] + b[3] for f in per_frame for b in f["boxes"]]
-    if baselines:
-        anchor = float(np.median(baselines))
-        tolerance = max(8.0, height * 0.05)
-        per_frame = [
-            {"frame": f["frame"],
-             "boxes": [b for b in f["boxes"] if abs((b[1] + b[3]) - anchor) <= tolerance]}
-            for f in per_frame
-        ]
-        per_frame = [f for f in per_frame if f["boxes"]]
-
-    inspected = len(indices)
-    hits = len(per_frame)
-    ratio = hits / max(1, inspected)
+    ratio = hits / max(1, len(indices))
     report = {
         "width": width,
         "height": height,
-        "frames_inspected": inspected,
+        "total_frames": total,
+        "frames_inspected": len(indices),
         "frames_with_text": hits,
         "ratio": round(ratio, 3),
         "detected": ratio >= min_frames,
+        "engine": "easyocr",
+        # A sample of what was read, so a human reading the log can see this
+        # is caption-shaped nonsense rather than a sign in the scene.
+        "sample_text": texts[:6],
+        "max_confidence": round(max(confidences), 2) if confidences else 0.0,
     }
-    if report["detected"]:
-        xs = [b[0] for f in per_frame for b in f["boxes"]]
-        ys = [b[1] for f in per_frame for b in f["boxes"]]
-        x2 = [b[0] + b[2] for f in per_frame for b in f["boxes"]]
-        y2 = [b[1] + b[3] for f in per_frame for b in f["boxes"]]
-        # Percentiles, not extremes: one stray contour in one frame must not
-        # stretch the mask across the picture.
-        x = max(0, int(np.percentile(xs, 5)) - pad)
-        y = max(0, int(np.percentile(ys, 5)) - pad)
-        right = min(width, int(np.percentile(x2, 95)) + pad)
-        bottom = min(height, int(np.percentile(y2, 95)) + pad)
-        report["box"] = {"x": x, "y": y, "w": max(2, right - x), "h": max(2, bottom - y)}
-        report["coverage"] = round((right - x) * (bottom - y) / float(width * height), 4)
+    if report["detected"] and boxes:
+        tops = [b[1] for b in boxes]
+        bottoms = [b[3] for b in boxes]
+        # The band is MEASURED from this clip, never assumed. It is what the
+        # per-frame mask pass uses to reject boxes the recogniser draws
+        # somewhere else in the picture.
+        report["band"] = {
+            "top": int(np.percentile(tops, 5)),
+            "bottom": int(np.percentile(bottoms, 95)),
+        }
     return report
 
 
-def _glyph_mask(roi, grow: int):
-    """The glyph strokes AND their dark outline, dilated.
+def _mask_frames(video: str, reader, mask_dir: str, frame_dir: str, band: dict,
+                 *, band_pad: float, dilation: int) -> dict:
+    """Write every frame and its caption mask as PNGs, for ProPainter.
 
-    Both halves matter. A mask of the bright core alone leaves a dark ghost
-    where the outline was — measured, and visible. The gradient lights up on
-    both sides of every stroke; intersecting it with the neighbourhood of a
-    bright core keeps the glyph rim and discards the grass.
-    """
-    import cv2
-
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    _, core = cv2.threshold(gray, CORE_THRESHOLD, 255, cv2.THRESH_BINARY)
-    gradient = cv2.morphologyEx(
-        gray, cv2.MORPH_GRADIENT, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    )
-    _, edges = cv2.threshold(gradient, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    near = cv2.dilate(core, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow, grow)))
-    mask = cv2.bitwise_or(core, cv2.bitwise_and(edges, near))
-    mask = cv2.morphologyEx(
-        mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    )
-    return cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow, grow)))
-
-
-def clean(video: str, out: str, box: dict, *, grow: int) -> dict:
-    """Every frame with the caption strokes painted out, written to `out`.
-
-    Video only: audio is not read or written here. The caller remuxes the
-    original soundtrack, which is what keeps this off the audio path
-    entirely — the same reason the finishing pass copies rather than encodes.
+    Uses `reader.detect` — boxes only, no recogniser — because a mask does not
+    need to know what the letters say and the recogniser is the expensive half.
     """
     import cv2
     import numpy as np
 
     capture = cv2.VideoCapture(video)
-    if not capture.isOpened():
-        return {"error": f"cannot open {video}"}
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     fps = capture.get(cv2.CAP_PROP_FPS) or 24.0
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    writer = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    pad = int(height * band_pad)
+    low, high = band["top"] - pad, band["bottom"] + pad
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilation * 2 + 1,) * 2)
 
-    x, y, w, h = box["x"], box["y"], box["w"], box["h"]
-    frames, painted = 0, 0
+    index, masked = 0, 0
     while True:
         ok, frame = capture.read()
         if not ok:
             break
-        roi = frame[y:y + h, x:x + w]
-        if roi.size:
-            mask = _glyph_mask(roi, grow)
-            if np.count_nonzero(mask):
-                frame[y:y + h, x:x + w] = cv2.inpaint(roi, mask, 6, cv2.INPAINT_NS)
-                painted += 1
-        writer.write(frame)
-        frames += 1
+        mask = np.zeros(frame.shape[:2], np.uint8)
+        result = reader.detect(frame)
+        # EasyOCR's detect returns (horizontal_boxes, free_form_boxes) nested
+        # one level deeper than readtext; both halves are taken.
+        horizontal = result[0][0] if result and result[0] else []
+        freeform = result[1][0] if len(result) > 1 and result[1] else []
+        for box in horizontal:
+            x1, x2, y1, y2 = (int(v) for v in box)
+            if y2 < low or y1 > high:
+                continue
+            cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
+        for points in freeform:
+            x1, y1, x2, y2 = _box_bounds(points)
+            if y2 < low or y1 > high:
+                continue
+            cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
+        if np.count_nonzero(mask):
+            mask = cv2.dilate(mask, kernel)
+            masked += 1
+        cv2.imwrite(os.path.join(frame_dir, f"{index:06d}.png"), frame)
+        cv2.imwrite(os.path.join(mask_dir, f"{index:06d}.png"), mask)
+        index += 1
     capture.release()
+    return {"frames": index, "frames_masked": masked, "fps": fps}
+
+
+def _inpaint(frame_dir: str, mask_dir: str, out_path: str, fps: float, *,
+             resize_ratio: float, dilation: int) -> dict:
+    """ProPainter over the whole clip, written back out as video only."""
+    import cv2
+    from propainter.propainter_video import (
+        FilePathDirSequencer,
+        RawFrameSequencer,
+        RawMaskSequencer,
+        ScaledProPainterIterator,
+        run_streaming_propainter,
+    )
+
+    frames = RawFrameSequencer(data=FilePathDirSequencer(frame_dir))
+    masks = RawMaskSequencer(data=FilePathDirSequencer(mask_dir))
+    painted = run_streaming_propainter(
+        ScaledProPainterIterator(
+            raw_frames=frames,
+            raw_masks=masks,
+            image_resize_ratio=resize_ratio,
+            mask_dilation=dilation,
+        )
+    )
+    if painted is None or not len(painted):
+        return {"error": "inpainting produced no frames"}
+    height, width = painted[0].shape[:2]
+    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    for frame in painted:
+        writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
     writer.release()
-    return {"frames": frames, "frames_painted": painted}
+    return {"frames_painted": int(len(painted))}
+
+
+def verify(video: str, reader, *, samples: int, min_confidence: float) -> float:
+    """Fraction of sampled frames that still read as text after the repair.
+
+    The client's quality check. A silent half-fix is the failure this exists
+    to make impossible.
+    """
+    import cv2
+
+    capture = cv2.VideoCapture(video)
+    if not capture.isOpened():
+        return 1.0
+    total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    indices = _sample_indices(total, samples)
+    hits = 0
+    for index in indices:
+        capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+        ok, frame = capture.read()
+        if not ok:
+            continue
+        if any(conf >= min_confidence for _, _, conf in reader.readtext(frame)):
+            hits += 1
+    capture.release()
+    return round(hits / max(1, len(indices)), 3)
 
 
 def main(argv: list[str]) -> int:
     args = _parse_args(argv)
+    reader = _reader()
     report = detect(
         args.video,
+        reader,
         samples=args.samples,
-        band_top=args.band_top,
+        min_confidence=args.min_confidence,
         min_frames=args.min_frames,
-        pad=args.pad,
     )
     if "error" in report:
         print(json.dumps(report))
         return 2
-    if args.out and report.get("detected"):
-        report.update(clean(args.video, args.out, report["box"], grow=args.grow))
-        report["cleaned"] = "error" not in report
-    else:
-        report["cleaned"] = False
+    report["cleaned"] = False
+    if not (args.out and report.get("detected") and report.get("band")):
+        print(json.dumps(report))
+        return 0
+
+    work = args.work_dir or tempfile.mkdtemp(prefix="captions-")
+    frame_dir, mask_dir = os.path.join(work, "frames"), os.path.join(work, "masks")
+    os.makedirs(frame_dir, exist_ok=True)
+    os.makedirs(mask_dir, exist_ok=True)
+    try:
+        masking = _mask_frames(
+            args.video, reader, mask_dir, frame_dir, report["band"],
+            band_pad=args.band_pad, dilation=args.mask_dilation,
+        )
+        report.update(masking)
+        if not masking["frames_masked"]:
+            report["detail"] = "no per-frame boxes fell inside the measured band"
+            print(json.dumps(report))
+            return 0
+        painting = _inpaint(
+            frame_dir, mask_dir, args.out, masking["fps"],
+            resize_ratio=args.resize_ratio, dilation=args.mask_dilation,
+        )
+        report.update(painting)
+        if "error" in painting:
+            print(json.dumps(report))
+            return 0
+        report["cleaned"] = True
+        report["residual_ratio"] = verify(
+            args.out, reader,
+            samples=args.verify_samples, min_confidence=args.min_confidence,
+        )
+    finally:
+        if not args.work_dir:
+            shutil.rmtree(work, ignore_errors=True)
     print(json.dumps(report))
     return 0
 

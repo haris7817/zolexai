@@ -67,9 +67,16 @@ class CaptionReport:
     cleaned: bool
     ratio: float = 0.0
     frames_inspected: int = 0
+    frames_masked: int = 0
     frames_painted: int = 0
-    coverage: float = 0.0
-    box: tuple[int, int, int, int] | None = None
+    max_confidence: float = 0.0
+    #: The client's quality check: how much of the OUTPUT still reads as text.
+    #: 0.0 is a clean repair. Anything above `ltx_caption_residual_alarm` is
+    #: logged as a warning, because a half-fix that reports success is the
+    #: failure this number exists to make impossible. None means not measured.
+    residual_ratio: float | None = None
+    sample_text: tuple[str, ...] = ()
+    band: tuple[int, int] | None = None
     detail: str = ""
 
     @property
@@ -78,11 +85,19 @@ class CaptionReport:
             "captions_detected": self.detected,
             "captions_cleaned": self.cleaned,
             "captions_ratio": self.ratio,
-            "captions_coverage": self.coverage,
+            "captions_frames_masked": self.frames_masked,
             "captions_frames_painted": self.frames_painted,
+            "captions_confidence": self.max_confidence,
         }
-        if self.box:
-            fields["captions_box"] = f"{self.box[2]}x{self.box[3]}+{self.box[0]}+{self.box[1]}"
+        if self.residual_ratio is not None:
+            fields["captions_residual_ratio"] = self.residual_ratio
+        if self.band:
+            fields["captions_band"] = f"{self.band[0]}-{self.band[1]}"
+        if self.sample_text:
+            # What the recogniser actually read. On the log because it is how
+            # a human sees at a glance that this is caption-shaped nonsense
+            # ("Nicch weatther a hop") and not a sign in the customer's scene.
+            fields["captions_text"] = " | ".join(self.sample_text)[:200]
         if self.detail:
             fields["captions_detail"] = self.detail[-300:]
         return fields
@@ -138,19 +153,30 @@ async def remove_captions(
         logger.warning("caption_detector_unreadable", extra={**extra, "detail": text[-300:]})
         return clip, CaptionReport(False, False, detail=text[-300:])
 
-    box = raw.get("box") or {}
+    band = raw.get("band") or {}
+    residual = raw.get("residual_ratio")
     report = CaptionReport(
         detected=bool(raw.get("detected")),
         cleaned=bool(raw.get("cleaned")) and out.exists(),
         ratio=float(raw.get("ratio") or 0.0),
         frames_inspected=int(raw.get("frames_inspected") or 0),
+        frames_masked=int(raw.get("frames_masked") or 0),
         frames_painted=int(raw.get("frames_painted") or 0),
-        coverage=float(raw.get("coverage") or 0.0),
-        box=(box["x"], box["y"], box["w"], box["h"]) if box else None,
-        detail=str(raw.get("error") or ""),
+        max_confidence=float(raw.get("max_confidence") or 0.0),
+        residual_ratio=float(residual) if residual is not None else None,
+        sample_text=tuple(str(t) for t in (raw.get("sample_text") or [])[:6]),
+        band=(band["top"], band["bottom"]) if band else None,
+        detail=str(raw.get("error") or raw.get("detail") or ""),
     )
     if not report.cleaned:
         return clip, report
+
+    # The client's quality check, acted on rather than merely recorded: text
+    # still readable in the output means the repair did not finish the job,
+    # and that must be visible in the log as a warning, not buried in a field
+    # on an INFO line that reads like a success.
+    if report.residual_ratio and report.residual_ratio > settings.ltx_caption_residual_alarm:
+        logger.warning("captions_survived_repair", extra={**extra, **report.log_fields})
 
     # The repaired video carries no audio: give it the original's, copied.
     joined = clip.with_name(f"{clip.stem}-nocaption-av.mp4")
