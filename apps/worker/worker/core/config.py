@@ -1006,12 +1006,64 @@ class WorkerSettings(BaseSettings):
     ltx_hd_delivery: str = "1080p"
     """
     The frame the FAST 1080 path delivers: "1080p" (1920x1080 / 1080x1920 /
-    1080x1080, via the graph's own closing node) or "4k" (3840x2160 /
-    2160x3840 / 2160x2160, via one lanczos resize in ffmpeg with NVENC, the
-    soundtrack copied through — the client's own package method). Client
-    request, 8 Sep 2026: 4K "in the same way we do 1920x1080". Measured
-    2.3 s for a 10 s clip; the file is ~3x the 1080p size.
+    1080x1080, via the graph's own closing node), "4k" (3840x2160 /
+    2160x3840 / 2160x2160) or "8k" (7680x4320 / 4320x7680 / 4320x4320) — the
+    enlarged tiers via one lanczos resize in ffmpeg with NVENC, the
+    soundtrack copied through, which is the client's own package method.
+    Client requests, 8 Sep 2026: 4K "in the same way we do 1920x1080", and
+    10 Sep 2026: "replace the 4K destination with 8K so it scales directly
+    from 480p to 8K". 4K measured 2.3 s for a 10 s clip.
+
+    **8K is HEVC, not H.264** — NVENC has no H.264 encoder above 4096x4096.
+    See `worker/media/upscale.py`. At `ltx_hd_delivery_bitrate` it is about
+    12.5 MB per second of video, so a 30 s job is ~375 MB to store and to
+    hand a customer.
+
     `execution.delivery` overrides per job.
+    """
+
+    ltx_allow_captions: bool = False
+    """
+    Whether written language is permitted in the generated picture.
+
+    Client instruction, 10 Sep 2026, after a delivered file came back with
+    captions burned into the pixels — no subtitle stream to strip, because
+    LTX drew them. False appends the no-text clause to the positive prompt
+    (`worker/prompt/no_text.py`); a job that genuinely wants a sign or a
+    title in frame sets `allow_captions` on itself.
+
+    It has to be the positive prompt: the graph's negative already lists
+    "subtitles, captions, logos, watermarks" and did not stop it, because the
+    distilled workflow runs CFG 1.0 and a negative prompt has nothing to act
+    through at CFG 1.0.
+    """
+
+    ltx_hd_delivery_bitrate: str = "100M"
+    """
+    Target video bitrate for the finishing pass, as an ffmpeg rate string.
+    Client instruction, 10 Sep 2026: "video bitrate: 35-45 Mbps →
+    approximately 100 Mbps" — 35-45 was what constant-quality `-cq 19`
+    happened to produce at 4K, so an explicit target is the only way to hold
+    a number. `-maxrate` and `-bufsize` follow at 1.5x and 2x.
+
+    Empty restores constant-quality encoding, which is what every file before
+    10 Sep 2026 used.
+    """
+
+    ltx_hd_stabilize: bool = True
+    """
+    Whether the finishing pass runs the client's temporal deflicker
+    (`deflicker=size=5:mode=am`) and writes explicit Rec.709 tags.
+
+    Their 10 Sep 2026 review: "the main missing protections are temporal
+    deflicker, color stabilization and explicit Rec.709 output. The negative
+    prompt alone cannot fix this because the distilled workflow uses CFG
+    1.0." On by default because they asked for it; `LTX_HD_STABILIZE=false`
+    is the rollback, and it restores the previous behaviour exactly — a 1080p
+    job then runs no finishing pass at all.
+
+    It costs one identity-resize encode at the 1080p tier, and nothing at 4K
+    or 8K, where the same pass was already running.
     """
 
     ltx_hd_canvas: str = "native"

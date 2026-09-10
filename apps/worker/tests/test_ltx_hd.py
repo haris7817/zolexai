@@ -268,30 +268,42 @@ def test_landscape_still_leaves_both_size_widgets_exactly_as_delivered() -> None
     assert (scale["inputs"]["width"], scale["inputs"]["height"]) == (1920, 1080)
 
 
-def test_the_720p_keyword_gives_each_ratio_its_own_canvas_and_a_1080p_delivery(
+def test_the_draft_keyword_gives_each_ratio_its_own_canvas_and_a_1080p_delivery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The client's speed plan (8 Sep 2026): generate at the LTX 720p size,
-    let the graph's own closing node upscale to 1080p. Square gets a square
-    canvas rather than a transposed landscape one — otherwise a 1:1 job
-    would generate 16:9 and have its sides cropped off."""
+    """The client's 10 Sep 2026 instruction, which is the second revision of
+    this one map: 1280x704 / 704x1280 became **864x480 / 480x864**. Square
+    gets a square canvas rather than a transposed landscape one — otherwise a
+    1:1 job would generate 16:9 and have its sides cropped off — and it
+    tracks the landscape pixel budget rather than staying where it was.
+
+    The selecting keyword is still "720p" even though nothing here is 720p
+    any more: it names `LTX_HD_CANVAS` as the live GPU worker already has it
+    set, and renaming it would have quietly returned that worker to native
+    1920x1088 on its next restart."""
     from worker.adapters.ltx_hd import ASPECTS, DRAFT_CANVAS
 
     adapter = LtxHdAdapter()
     monkeypatch.setattr(settings, "ltx_hd_canvas", "720p")
-    assert adapter._canvas(_job(tmp_path), "16:9") == (1280, 704)
-    assert adapter._canvas(_job(tmp_path), "9:16") == (704, 1280)
-    assert adapter._canvas(_job(tmp_path), "1:1") == (960, 960)
-    # every generation side stays on the model's 32 grid
+    assert adapter._canvas(_job(tmp_path), "16:9") == (864, 480)
+    assert adapter._canvas(_job(tmp_path), "9:16") == (480, 864)
+    assert adapter._canvas(_job(tmp_path), "1:1") == (640, 640)
+    monkeypatch.setattr(settings, "ltx_hd_canvas", "draft")
+    assert adapter._canvas(_job(tmp_path), "16:9") == (864, 480)
+    # every generation side stays on the model's 32 grid — the one constraint
+    # in this map that is the model's and not the client's
     for ratio, (width, height) in DRAFT_CANVAS.items():
         assert width % 32 == 0 and height % 32 == 0, ratio
+    # the square canvas carries the landscape one's pixel budget, within the
+    # rounding the 32 grid forces
+    assert 0.9 <= (640 * 640) / (864 * 480) <= 1.1
     # and the delivered size is still 1080p, which is what the customer gets
     assert ASPECTS["16:9"][1] is None          # the graph's own 1920x1080
     assert ASPECTS["9:16"][1] == (1080, 1920)
 
 
-def test_the_720p_canvas_reaches_the_latent_while_the_delivery_stays_1080p() -> None:
-    """Compiled proof for landscape: generate 1280x704, deliver 1920x1080
+def test_the_draft_canvas_reaches_the_latent_while_the_delivery_stays_1080p() -> None:
+    """Compiled proof for landscape: generate 864x480, deliver 1920x1080
     through the graph's own lanczos centre-crop. The soundtrack never passes
     through that node, so the upscale cannot touch it."""
     catalogue = json.loads((Path(__file__).parent / "data/ltx_object_info.json").read_text())
@@ -299,11 +311,11 @@ def test_the_720p_canvas_reaches_the_latent_while_the_delivery_stays_1080p() -> 
         load_graph(CLIENT_GRAPH),
         Fast1080Edits(positive="p", negative=None, seconds=8, seed=1,
                       filename_prefix="x", image="placeholder.png",
-                      canvas=(1280, 704), delivery=None),
+                      canvas=(864, 480), delivery=None),
         catalogue,
     )
     [latent] = [e for e in api.values() if e["class_type"] == "EmptyLTXVLatentVideo"]
-    assert (latent["inputs"]["width"], latent["inputs"]["height"]) == (1280, 704)
+    assert (latent["inputs"]["width"], latent["inputs"]["height"]) == (864, 480)
     [scale] = [e for e in api.values() if e["class_type"] == "ImageScale"]
     assert (scale["inputs"]["width"], scale["inputs"]["height"]) == (1920, 1080)
     assert scale["inputs"]["upscale_method"] == "lanczos"
@@ -333,6 +345,115 @@ def test_4k_is_a_delivery_tier_reached_by_one_resize_from_the_generated_frame(
     assert DELIVERY_4K == {"16:9": (3840, 2160), "9:16": (2160, 3840), "1:1": (2160, 2160)}
     for width, height in DELIVERY_4K.values():
         assert width % 2 == 0 and height % 2 == 0
+
+
+def test_8k_is_the_same_one_resize_never_4k_and_then_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Client instruction, 10 Sep 2026: "do not upscale to 4K first. Replace
+    the 4K destination with 8K so it scales directly from 480p to 8K."
+
+    So 8K is a third value of the same tier setting, reached by the same
+    single ffmpeg pass — not a stage added after the 4K one. What proves the
+    "directly" is that the graph's own closing node is parked at the
+    generation canvas for 8K exactly as it is for 4K, so the only resize in
+    the whole pipeline is the ffmpeg one."""
+    from worker.adapters.ltx_hd import ASPECTS, DELIVERY_4K, DELIVERY_8K, DRAFT_CANVAS
+
+    adapter = LtxHdAdapter()
+    monkeypatch.setattr(settings, "ltx_hd_delivery", "8k")
+    assert adapter._delivery_tier(_job(tmp_path)) == "8k"
+    job = _job(tmp_path)
+    job.execution["delivery"] = "4k"
+    assert adapter._delivery_tier(job) == "4k"               # the job still wins
+    job.execution["delivery"] = "definitely-not-a-tier"
+    assert adapter._delivery_tier(job) == "1080p"            # a typo cannot 8K everything
+
+    assert DELIVERY_8K == {"16:9": (7680, 4320), "9:16": (4320, 7680), "1:1": (4320, 4320)}
+    # exactly twice 4K on every side, which is what "replace the destination"
+    # means rather than a differently-shaped frame
+    for ratio, (width, height) in DELIVERY_4K.items():
+        assert DELIVERY_8K[ratio] == (width * 2, height * 2)
+    for width, height in DELIVERY_8K.values():
+        assert width % 2 == 0 and height % 2 == 0
+    # and the client's stated pipeline end to end: 864x480 in, 7680x4320 out,
+    # at the aspect the customer picked
+    assert DRAFT_CANVAS["16:9"] == (864, 480) and DELIVERY_8K["16:9"] == (7680, 4320)
+    assert DRAFT_CANVAS["9:16"] == (480, 864) and DELIVERY_8K["9:16"] == (4320, 7680)
+    assert ASPECTS["16:9"][1] is None
+
+
+def test_480p_to_8k_is_one_resize_and_only_while_a_draft_canvas_is_set() -> None:
+    """The client's pipeline in one test: "LTX generates 864x480 → existing
+    GPU Lanczos runs once → final 7680x4320".
+
+    The graph's own closing `ImageScale` is parked at the generation canvas —
+    an identity resize — so the ONLY enlargement in the whole pipeline is the
+    ffmpeg one, which is what "do not upscale to 4K first" asks for.
+
+    **And the coupling that is easy to miss:** "directly from 480p" holds
+    only while `LTX_HD_CANVAS` names a draft canvas. On `native` the graph
+    delivers its own 1920x1080 and the finish enlarges that instead — still
+    one resize, but from a different frame. Both settings have to be on the
+    node together, which is why the job log prints both.
+    """
+    catalogue = json.loads((Path(__file__).parent / "data/ltx_object_info.json").read_text())
+
+    def scale_node(canvas, delivery):
+        api = compile_fast_1080(
+            load_graph(CLIENT_GRAPH),
+            Fast1080Edits(positive="p", negative=None, seconds=8, seed=1,
+                          filename_prefix="x", image="placeholder.png",
+                          canvas=canvas, delivery=delivery),
+            catalogue,
+        )
+        [latent] = [e for e in api.values() if e["class_type"] == "EmptyLTXVLatentVideo"]
+        [scale] = [e for e in api.values() if e["class_type"] == "ImageScale"]
+        return (
+            (latent["inputs"]["width"], latent["inputs"]["height"]),
+            (scale["inputs"]["width"], scale["inputs"]["height"]),
+        )
+
+    # 8K with the draft canvas: generated 864x480, and the graph's own scaler
+    # parked on the same numbers, so nothing is enlarged before ffmpeg.
+    generated, parked = scale_node((864, 480), (864, 480))
+    assert generated == (864, 480)
+    assert parked == generated, "the graph must not enlarge before the ffmpeg finish"
+
+    # 8K on a native canvas: the graph still delivers 1920x1080 and the
+    # finish starts there. One resize, a different starting frame.
+    generated, parked = scale_node(None, None)
+    assert parked == (1920, 1080) and generated != (864, 480)
+
+
+def test_the_distilled_schedule_is_never_touched_by_a_compile() -> None:
+    """The client's 10 Sep 2026 review opened by asking us not to raise the
+    workflow from 8 to 12 steps, and named the three nodes that carry the
+    distilled model's fixed schedule.
+
+    We never did and this is why we cannot: the compiler writes prompts, a
+    duration, a seed, a filename, the image slot, the enhancer switch and the
+    two size widgets. Nothing it can reach is a sampler. Reading the values
+    back off a compiled prompt is the check, because a graph edit made
+    somewhere else would show up here rather than on the GPU."""
+    catalogue = json.loads((Path(__file__).parent / "data/ltx_object_info.json").read_text())
+    api = compile_fast_1080(
+        load_graph(CLIENT_GRAPH),
+        Fast1080Edits(positive="p", negative=None, seconds=8, seed=1,
+                      filename_prefix="x", image="placeholder.png",
+                      canvas=(864, 480), delivery=None),
+        catalogue,
+    )
+    sigmas = [e for e in api.values() if e["class_type"] == "ManualSigmas"]
+    assert [e["inputs"]["sigmas"] for e in sigmas] == [
+        "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    ]
+    # nine sigmas is an eight-step schedule; twelve steps would be thirteen
+    assert len(sigmas[0]["inputs"]["sigmas"].split(",")) == 9
+    [guider] = [e for e in api.values() if e["class_type"] == "CFGGuider"]
+    assert float(guider["inputs"]["cfg"]) == 1.0
+    [sampler] = [e for e in api.values() if e["class_type"] == "KSamplerSelect"]
+    assert sampler["inputs"]["sampler_name"] == "euler_ancestral"
 
 
 def test_a_landscape_speed_canvas_is_transposed_for_a_portrait_job(

@@ -54,8 +54,10 @@ from worker.dialogue import add_auto_dialogue
 from worker.longform import GENERATE_FROM, GENERATE_TO, StageReporter
 from worker.media import FfmpegError, OutputExpectation, ffmpeg, verify_output
 from worker.media.upscale import DELIVERY_4K as _DELIVERY_4K
-from worker.media.upscale import is_4k, upscale_clip
+from worker.media.upscale import DELIVERY_8K as _DELIVERY_8K
+from worker.media.upscale import is_4k, is_8k, upscale_clip
 from worker.prompt.ltx25 import apply_guidelines
+from worker.prompt.no_text import without_visible_text
 from worker.providers.ltx_comfy import LtxComfyService
 
 logger = get_logger(__name__)
@@ -92,30 +94,40 @@ ASPECTS: dict[str, tuple[tuple[int, int] | None, tuple[int, int] | None]] = {
     "1:1": ((1088, 1088), (1080, 1080)),
 }
 
-#: The "720p" generation canvas per ratio — the client's speed plan (8 Sep
-#: 2026): "generate at the LTX-compatible 720p size, 1280x704 for landscape
-#: or 704x1280 for vertical, then upscale to 1080p on the GPU keeping the
-#: same audio". The upscale is the graph's own closing `ImageScale` (lanczos,
-#: crop=center), so it runs on the GPU inside ComfyUI and the soundtrack —
-#: which never passes through that node — is untouched.
+#: The draft generation canvas per ratio. Originally the client's speed plan
+#: (8 Sep 2026) at the LTX 720p size, 1280x704 landscape / 704x1280 vertical;
+#: **their 10 Sep 2026 instruction moved it down to 864x480 and 480x864** —
+#: "change only these values ... LTX generates 864x480 or 480x864 → existing
+#: GPU Lanczos runs once → final 7680x4320 or 4320x7680". Both new sides are
+#: still on the model's 32 grid (27x32 and 15x32), which is the one thing
+#: that cannot be traded.
 #:
-#: 1:1 is not in the client's sentence and cannot be derived by transposing
-#: a landscape size, so it gets its own square canvas at the same ~0.9 MP
-#: budget. Without it, a square job would generate a 16:9 frame and have its
-#: sides cropped off.
+#: The keyword that selects this is still **"720p"** — it names the setting a
+#: deployment already has set (`LTX_HD_CANVAS`), not the height, and "draft"
+#: is the accurate alias. Renaming it would have silently returned the live
+#: GPU worker to native 1920x1088 on the next restart.
+#:
+#: 1:1 is in neither client sentence and cannot be derived by transposing a
+#: landscape size, so it gets its own square canvas at the same pixel budget
+#: as the landscape one — 640x640 for 864x480's 0.41 MP, as 960x960 was for
+#: 1280x704's 0.9 MP. Without it, a square job would generate a 16:9 frame
+#: and have its sides cropped off.
 #:
 #: What this costs is not in dispute and is not small: measured 7 Sep 2026,
-#: a 1280-wide generation upscaled to 1080p carries **0.29x the fine detail**
-#: of a native 1920x1088 render. See docs/internal/text-to-video-speed.md.
+#: a 1280-wide generation upscaled to 1080p already carried **0.29x the fine
+#: detail** of a native 1920x1088 render, and 864 wide is 0.46x the pixels of
+#: that again. See docs/internal/text-to-video-speed.md.
 DRAFT_CANVAS: dict[str, tuple[int, int]] = {
-    "16:9": (1280, 704),
-    "9:16": (704, 1280),
-    "1:1": (960, 960),
+    "16:9": (864, 480),
+    "9:16": (480, 864),
+    "1:1": (640, 640),
 }
 
-#: The 4K frame per ratio (client request, 8 Sep 2026), reached from the
-#: generated frame by one lanczos resize in ffmpeg — see `_upscale_4k`.
+#: The 4K and 8K frames per ratio (client requests, 8 and 10 Sep 2026), each
+#: reached from the generated frame by ONE lanczos resize in ffmpeg — never
+#: 4K first and then again. See `_finish`.
 DELIVERY_4K = _DELIVERY_4K
+DELIVERY_8K = _DELIVERY_8K
 
 
 class LtxHdAdapter:
@@ -141,15 +153,19 @@ class LtxHdAdapter:
         seconds = self._seconds(job)
         aspect = self._aspect(job)
         ai_upscale = self._ai_upscale(job)
-        four_k = self._delivery_tier(job) == "4k"
+        tier = self._delivery_tier(job)
+        enlarged = tier in ("4k", "8k")
         canvas = self._canvas(job, aspect)
         # Delivered size: the ratio's 1080p frame. With the AI upscaler on,
         # the graph's own lanczos node is parked at the canvas size (an
         # identity resize) and SeedVR2 does the enlarging afterwards. With 4K
-        # on, the same parking, and ffmpeg does the enlarging afterwards —
-        # once, from the generated frame, never from an already-resized one.
+        # or 8K on, the same parking, and ffmpeg does the enlarging afterwards
+        # — once, from the generated frame, never from an already-resized one.
+        # The client's 10 Sep 2026 instruction is that same rule stated for
+        # 8K: "do not upscale to 4K first ... so it scales directly from 480p
+        # to 8K."
         delivered = ASPECTS[aspect][1] or (1920, 1080)
-        delivery = canvas if ((ai_upscale or four_k) and canvas) else ASPECTS[aspect][1]
+        delivery = canvas if ((ai_upscale or enlarged) and canvas) else ASPECTS[aspect][1]
         frames = frames_for(seconds, settings.ltx_comfy_frame_rate)
         # Spoken lines, when this deployment asks for them and the prompt has
         # none. This graph writes its own soundtrack in one pass, which is
@@ -176,11 +192,16 @@ class LtxHdAdapter:
         # picture is discarded: ComfyUI refuses an empty one at validation.
         image = await self._placeholder(job)
 
+        # The last thing done to the positive prompt, after the guideline
+        # rewrite and after the spoken lines, which is where the client asked
+        # for it and the only place it is safe. See `worker/prompt/no_text.py`.
+        positive = without_visible_text(job.prompt, allow_captions=self._allow_captions(job))
+
         try:
             api = compile_fast_1080(
                 service.load("fast_1080"),
                 Fast1080Edits(
-                    positive=job.prompt.strip(),
+                    positive=positive,
                     negative=self._negative(job),
                     seconds=seconds,
                     seed=self._seed(job),
@@ -209,9 +230,20 @@ class LtxHdAdapter:
                 "aspect": aspect,
                 "canvas": canvas or "native",
                 "ai_upscale": ai_upscale,
-                # The prompt as the graph receives it, dialogue and all. See
-                # the same log in `ltx_comfy.render_pass` for why.
-                "positive": job.prompt.strip(),
+                # The whole resize story on one line, because "does it really
+                # go 864x480 straight to 8K?" is not answerable from `tier`
+                # alone — it is true only while a draft canvas is set. With
+                # LTX_HD_CANVAS=native the graph delivers 1920x1080 and the
+                # finish enlarges THAT. Still one resize either way; a
+                # different starting frame.
+                "delivery_tier": tier,
+                "generated": "x".join(map(str, canvas)) if canvas else "graph default",
+                "graph_delivers": "x".join(map(str, delivery)) if delivery else "graph default",
+                # The prompt as the graph receives it, dialogue, no-text
+                # clause and all. See the same log in `ltx_comfy.render_pass`
+                # for why — and it is the trace the client reads back when
+                # they ask whether the clause was really sent.
+                "positive": positive,
                 "negative": self._negative(job),
                 "quoted_lines": job.prompt.count('"') // 2,
             },
@@ -248,9 +280,7 @@ class LtxHdAdapter:
         if ai_upscale and canvas:
             await reporter.generating(GENERATE_TO - 1, "Upscaling your video…")
             output = await self._upscale(job, service, output, canvas, delivered)
-        if four_k:
-            await reporter.generating(GENERATE_TO - 1, "Upscaling your video to 4K…")
-            output = await self._upscale_4k(job, output, DELIVERY_4K[aspect])
+        output = await self._finish(job, reporter, output, tier, aspect, delivered)
 
         wall = time.monotonic() - started
         try:
@@ -324,10 +354,10 @@ class LtxHdAdapter:
         deployment's `ltx_hd_canvas`, else what the ratio asks for.
 
         "native" and an empty value both mean "whatever this ratio needs",
-        which for 16:9 is the graph's own widget and so None. **"720p"** is
-        the client's speed plan — `DRAFT_CANVAS` for this ratio, upscaled to
-        1080p by the graph's own closing node. An explicit "1280x736" means
-        that size.
+        which for 16:9 is the graph's own widget and so None. **"720p"** (or
+        "draft") is the client's speed plan — `DRAFT_CANVAS` for this ratio,
+        which since their 10 Sep 2026 instruction is 864x480 rather than
+        1280x704, enlarged afterwards. An explicit "1280x736" means that size.
 
         An override is a SIZE lever (the 7 Sep speed work), not an
         orientation choice, and a deployment sets one string for every job.
@@ -387,21 +417,75 @@ class LtxHdAdapter:
         return ratio
 
     @staticmethod
+    def _allow_captions(job: AdapterJob) -> bool:
+        """Whether written language is permitted in the picture. Default no.
+
+        Client instruction, 10 Sep 2026, on a delivered file whose captions
+        were burned into the pixels: `allow_captions = False` as the default.
+        A customer who actually wants a sign, a shopfront or a title in frame
+        sets `allow_captions` on the job; a deployment can flip the default
+        with `LTX_ALLOW_CAPTIONS`.
+
+        Read from `parameters` before `execution` because this one is a
+        creative choice a customer makes about their own video, not a
+        deployment lever — the opposite of `delivery`.
+        """
+        for source in (job.parameters, job.execution):
+            raw = source.get("allow_captions")
+            if raw is not None:
+                return str(raw).strip().lower() in ("1", "true", "yes", "on")
+        return settings.ltx_allow_captions
+
+    @staticmethod
     def _delivery_tier(job: AdapterJob) -> str:
-        """"1080p" (the ratio's frame from `ASPECTS`) or "4k" (`DELIVERY_4K`).
+        """"1080p" (the ratio's frame from `ASPECTS`), "4k" (`DELIVERY_4K`)
+        or "8k" (`DELIVERY_8K`).
 
         `execution.delivery` on the job, else the deployment's
         `ltx_hd_delivery`. Client request, 8 Sep 2026: 4K "in the same way we
-        do 1920x1080" — a lanczos resize, no model. Anything unrecognised is
-        1080p, so a typo cannot silently quadruple every file."""
+        do 1920x1080" — a lanczos resize, no model; 10 Sep 2026 added 8K by
+        the same one resize. Anything unrecognised is 1080p, so a typo cannot
+        silently quadruple — or sixteen-times — every file."""
         raw = job.execution.get("delivery") or settings.ltx_hd_delivery or "1080p"
+        if is_8k(raw):
+            return "8k"
         return "4k" if is_4k(raw) else "1080p"
 
-    async def _upscale_4k(self, job: AdapterJob, clip: Path, target: tuple[int, int]) -> Path:
-        """Lanczos to 4K with ffmpeg — `worker/media/upscale.py`, which is
-        this method's own body, moved there on 8 Sep 2026 so Character
-        Replacement finishes the same way and the two cannot drift."""
-        out = job.workspace / "output_4k.mp4"
+    async def _finish(
+        self,
+        job: AdapterJob,
+        reporter: StageReporter,
+        clip: Path,
+        tier: str,
+        aspect: str,
+        delivered: tuple[int, int],
+    ) -> Path:
+        """The one ffmpeg pass that stabilises and sizes the delivered file.
+
+        Where the client's 10 Sep 2026 review asked for the colour work to
+        go: "immediately after ComfyUI saves the video and before the backend
+        returns the download" — which is between `service.collect` above and
+        the upload the caller does with this return value. It is the same
+        pass that already made 4K, so a stabilised delivery is not a second
+        encode; the two share one filter chain and one NVENC run.
+
+        A 1080p job now runs it too. The pass is an identity resize at that
+        tier, which exists only to carry the deflicker and the Rec.709 tags —
+        the flicker the client described is in the generated frames and does
+        not depend on how large the file is. `LTX_HD_STABILIZE=false` turns
+        the whole thing off, and then a 1080p job does what it always did:
+        nothing at all after `collect`.
+        """
+        target = {"4k": DELIVERY_4K, "8k": DELIVERY_8K}.get(tier, {}).get(aspect, delivered)
+        stabilize = settings.ltx_hd_stabilize
+        if tier == "1080p" and not stabilize:
+            return clip
+        label = {"4k": " to 4K", "8k": " to 8K"}.get(tier, "")
+        await reporter.generating(
+            GENERATE_TO - 1,
+            f"Upscaling your video{label}…" if label else "Finishing your video…",
+        )
+        out = job.workspace / f"output_{tier}.mp4"
         try:
             return await upscale_clip(
                 clip,
@@ -411,10 +495,14 @@ class LtxHdAdapter:
                 cpu_timeout=settings.ltx_comfy_generation_timeout,
                 run=lambda awaitable: cancellable(job, awaitable),
                 log_extra={"job_id": job.job_id, "workflow_id": job.workflow_id},
+                deflicker=stabilize,
+                bitrate=settings.ltx_hd_delivery_bitrate or None,
             )
         except FfmpegError as exc:
             raise AdapterError(
-                "The finished video could not be upscaled to 4K.",
+                f"The finished video could not be upscaled{label}."
+                if label
+                else "The finished video could not be prepared for download.",
                 internal_detail=str(exc)[-600:],
             ) from exc
 

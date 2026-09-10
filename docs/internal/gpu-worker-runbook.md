@@ -2552,10 +2552,29 @@ restart the worker when the queue is idle.
 ```
 AUTO_DIALOGUE_ENABLED=true
 AUTO_DIALOGUE_LAYOUT=native     # the client's second-revision format (default in code too)
-LTX_HD_CANVAS=720p              # 1280x704 / 704x1280 / 960x960, upscaled in-graph
+LTX_HD_CANVAS=720p              # keyword unchanged; since 10 Sep it means 864x480 / 480x864 / 640x640
 LTX_HD_UPSCALER=lanczos         # or seedvr2 — measured ~21 s per second of video; off
-LTX_HD_DELIVERY=4k              # or 1080p; 4K is one ffmpeg lanczos+NVENC resize, ~2 s per 10 s
+LTX_HD_DELIVERY=8k              # or 4k / 1080p; one ffmpeg lanczos+NVENC resize, never 4K then again
+LTX_HD_DELIVERY_BITRATE=100M    # client's number (10 Sep); empty restores constant-quality
+LTX_HD_STABILIZE=true           # deflicker=size=5:mode=am + Rec.709; false is the look rollback
+LTX_ALLOW_CAPTIONS=false        # appends the no-text clause to the POSITIVE prompt
 ```
+
+`LTX_ALLOW_CAPTIONS` is the burned-in-caption fix and **needs an A/B on this
+node before it is trusted** — procedure, and the narration failure mode to
+listen for, in `burned-in-captions.md`.
+
+`LTX_HD_CANVAS=720p` no longer describes its own size and is kept anyway:
+it is the string this worker already has set, and renaming the keyword would
+have returned it to native 1920x1088 on the next restart. `draft` is an alias
+for the same thing.
+
+**8K is HEVC, not H.264.** NVENC has no H.264 encoder above 4096x4096 — a
+hardware cap on every generation through Blackwell — so the finishing pass
+switches to `hevc_nvenc` (`hvc1`-tagged) above that side length and stays on
+H.264 at 4K and below. At `LTX_HD_DELIVERY_BITRATE=100M` an 8K file is about
+12.5 MB per second of video: a 30 s job is ~375 MB to store, to move off the
+node, and to hand a customer. Check the disk before turning it on.
 
 SeedVR2 weights, if ever enabled (already on `ltx-6000-2`):
 `models/diffusion_models/seedvr2_3b_int8_convrot.safetensors` (3.46 GB) and

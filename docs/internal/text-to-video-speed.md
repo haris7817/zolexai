@@ -307,3 +307,92 @@ H.264 over HEVC because browsers play it; ~2.5× the file for that. It is a
 resize: the *information* in the frame is still the 1280×704 the model
 generated, exactly as at 1080p — the client asked for 4K on those terms.
 Rollback: `LTX_HD_DELIVERY=1080p` and a worker restart.
+
+---
+
+## 480p → 8K (10 Sep 2026) — the same one resize, a smaller start and a bigger end
+
+Client instruction, in their words: change only the values. Generation drops
+to **864×480 / 480×864**, the existing GPU lanczos destination goes from
+3840×2160 to **7680×4320 / 4320×7680**, the file is named for its tier, and
+the bitrate becomes "approximately 100 Mbps" in place of the 35–45 they
+measured. "Do not upscale to 4K first" — and we never did: the graph's
+closing node is parked at the generation canvas and there is exactly one
+resize in the pipeline, which is now the one that ends at 8K.
+
+| | before (8 Sep) | after (10 Sep) |
+| --- | --- | --- |
+| generated | 1280×704 / 704×1280 | 864×480 / 480×864 |
+| generated pixels | 0.90 MP | 0.41 MP (0.46×) |
+| delivered | 3840×2160 | 7680×4320 |
+| enlargement | 3.0× linear | 8.9× linear |
+| codec | H.264 NVENC | **HEVC** NVENC (`hvc1`) |
+| rate | `-cq 19`, landed 35–45 Mbps | `-b:v 100M`, capped 150M |
+| file | `output_4k.mp4` | `output_8k.mp4` |
+
+Three things about this are worth stating plainly rather than discovering on
+the node.
+
+**8K cannot be H.264 here.** NVENC's H.264 encoder stops at 4096×4096 in
+hardware. An 8K frame does not encode slowly on it, it does not encode at
+all, and the CPU fallback would take longer than the render. So above 4096
+the finish is HEVC; 4K is untouched.
+
+**The generated detail is now 0.46× what it was**, on top of the 0.29× that
+1280×704 already carried against a native 1920×1088 render (measured 7 Sep,
+above). An 8K file is a large *container* for the same information — the
+client asked for 4K on exactly those terms in September and this is the same
+trade, further along. Worth one A/B on the node before it is the default.
+
+**Rendering gets cheaper, finishing gets dearer.** 0.46× the pixels through
+the sampler against an 8.9× linear enlargement and a 16× frame to encode at
+2.5× the bitrate. Unmeasured until the node runs it.
+
+Rollback: `LTX_HD_DELIVERY=4k` (or `1080p`) and `LTX_HD_CANVAS=native`.
+
+---
+
+## Temporal stabilisation and Rec.709 (10 Sep 2026)
+
+From the same review: "the main missing protections are temporal deflicker,
+color stabilization and explicit Rec.709 output. The negative prompt alone
+cannot fix this because the distilled workflow uses CFG 1.0." They offered
+two insertion points — inside the Decode subgraph between `5573 ImageScale`
+and `4849 CreateVideo`, or after ComfyUI saves the file and before the
+backend returns it.
+
+**We took the second.** It is where the 4K finish already runs, so their
+graph stays byte-identical to the one they sent (a test pins its sha256), no
+ComfyUI custom node has to exist on the box, and — the part that matters —
+the stabilise and the resize share ONE filter chain and one NVENC run rather
+than costing a second generation loss.
+
+```
+deflicker=size=5:mode=am , scale=…:flags=lanczos , crop=… , setparams=…bt709
+```
+
+The deflicker is ahead of the resize deliberately: the flicker is in the
+generated frames, so levelling it at 864×480 costs a fraction of the same
+filter at 7680×4320, and the enlargement then carries corrected pixels
+instead of magnifying the pulse.
+
+**The encoder flags alone do not tag the file.** Measured here 10 Sep: with
+only `-color_primaries/-color_trc/-colorspace/-color_range`, ffprobe reports
+`colorspace` and `color_range` and *no* `color_primaries` or
+`color_transfer` — the frames reaching the encoder carry "unspecified" and
+the flags do not retag them. Adding `setparams` to the chain lands all four.
+Both are kept.
+
+**Hard cuts.** Their caveat is right and the code says so: a deflicker
+averages luminance across neighbouring frames, and averaging across a cut is
+a flash on both sides of it. `upscale_clip` has no notion of a cut and
+documents that it assumes one continuous shot. Every caller today qualifies —
+Text to Video renders a single pass, Character Replacement chains windows of
+one continuous source. **Music Video does not**: it is cut into shots, and it
+runs the client's own worker package, whose upscaler this is not. If they
+want stabilisation there it has to be applied per shot before the join, and
+that is a separate change to `worker/musicvideo/`.
+
+On by default because they asked for it. `LTX_HD_STABILIZE=false` restores
+the previous behaviour exactly, including no finishing pass at all on a
+1080p job.
