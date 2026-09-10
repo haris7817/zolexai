@@ -1,8 +1,10 @@
 """Video to Video: generate on a proxy grid, deliver at a chosen size.
 
 The client's 10 Sep 2026 package replaced the Fast/Best pair with a delivery
-ladder — 1080p, 4K, 8K — and put generation on a fixed 480-class grid
-underneath all three. Two things follow, and both are pinned here.
+ladder — 1080p, 4K, 8K — and put generation on a fixed small grid underneath
+all three. Their grid was 480-class and could not render at all; see
+`test_every_proxy_side_is_divisible_by_64`. Two things follow, both pinned
+here.
 
 **The quality control buys a container, not detail.** Every level renders the
 same picture; only the final resize differs. `test_every_quality_level_renders
@@ -40,7 +42,7 @@ from worker.adapters.ltx import (
     LtxAdapter,
     delivery_dimensions_for_source,
     output_dimensions,
-    proxy_480_grid_for_source,
+    proxy_grid_for_source,
 )
 from worker.media import probe_media
 
@@ -64,32 +66,48 @@ def v2v_job(workspace: Path, source: Path | None, reference: Path | None = None,
 # ── The proxy grid ───────────────────────────────────────────────────────
 
 
-def test_the_proxy_grid_keeps_the_short_side_at_480_on_the_lattice() -> None:
-    for width, height in ((1920, 1080), (1080, 1920), (1000, 1000), (1080, 1350)):
-        grid = proxy_480_grid_for_source(width, height)
-        assert min(grid) == 480, f"{width}x{height} -> {grid} is not 480-class"
-        assert grid[0] % 32 == 0 and grid[1] % 32 == 0, f"{grid} is off the /32 lattice"
+def test_every_proxy_side_is_divisible_by_64() -> None:
+    """The constraint that killed the client's own grid on the GPU.
+
+    IC-LoRA encodes the reference video through the VAE, which halves the
+    latent, and the latent is the pixel size over 32. A side of 480 gives an
+    odd latent of 15 and the encoder dies on it — measured 10 Sep 2026:
+
+        Input tensor shape: torch.Size([1, 1024, 50, 15, 26])
+        Shape mismatch, can't divide axis of length 15 in chunks of 2
+
+    So /64 is not a preference here, and a future "make it cheaper" change
+    that reaches for 480 again fails this test rather than every job.
+    """
+    for width, height in (
+        (1920, 1080), (1080, 1920), (1000, 1000), (1080, 1350),
+        (1280, 704), (2048, 858), (640, 480), (1440, 1080),
+    ):
+        grid = proxy_grid_for_source(width, height)
+        assert grid[0] % 64 == 0, f"{width}x{height} -> {grid[0]} is not /64"
+        assert grid[1] % 64 == 0, f"{width}x{height} -> {grid[1]} is not /64"
+        assert min(grid) == 512, f"{width}x{height} -> {grid} is not 512-class"
 
 
 def test_the_proxy_grid_follows_the_sources_shape_rather_than_a_product_ratio() -> None:
     """A 4:5 phone clip is the case that matters: cropping it to 16:9 on the
     way in would throw away the top and bottom of every frame before the model
     ever saw them."""
-    assert proxy_480_grid_for_source(1920, 1080) == (832, 480)
-    assert proxy_480_grid_for_source(1080, 1920) == (480, 832)
+    assert proxy_grid_for_source(1920, 1080) == (896, 512)
+    assert proxy_grid_for_source(1080, 1920) == (512, 896)
 
-    portrait = proxy_480_grid_for_source(1080, 1350)
-    assert portrait[0] == 480 and portrait[1] > 480
-    # Within a third of a stop of 4:5, which is as close as a /32 lattice gets.
+    portrait = proxy_grid_for_source(1080, 1350)
+    assert portrait[0] == 512 and portrait[1] > 512
+    # As close to 4:5 as the /64 lattice reaches at this short side.
     assert abs(portrait[0] / portrait[1] - 0.8) < 0.06
 
-    square = proxy_480_grid_for_source(1000, 1000)
-    assert square == (480, 480)
+    square = proxy_grid_for_source(1000, 1000)
+    assert square == (512, 512)
 
 
 def test_an_unprobeable_source_still_gets_a_grid() -> None:
-    assert proxy_480_grid_for_source(None, None) == (832, 480)
-    assert proxy_480_grid_for_source(0, 0) == (832, 480)
+    assert proxy_grid_for_source(None, None) == (896, 512)
+    assert proxy_grid_for_source(0, 0) == (896, 512)
 
 
 # ── The delivery frame ───────────────────────────────────────────────────

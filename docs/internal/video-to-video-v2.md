@@ -28,7 +28,7 @@ merged.** Both were read as specifications and ported additively.
 | Piece | Where |
 |---|---|
 | Identity gated by the upload, not a quality level | `LtxAdapter._uses_reference_identity` |
-| 480-class proxy grid matched to the source's aspect | `proxy_480_grid_for_source` |
+| Fast proxy grid matched to the source's aspect | `proxy_grid_for_source` |
 | 1080p/4K/8K delivery frame, aspect preserved | `delivery_dimensions_for_source` |
 | One resize after the audio is restored | `LtxAdapter._deliver_restyle` |
 | `settings.sound` | `LtxAdapter._deliver_restyle` |
@@ -54,16 +54,39 @@ and inert without an image.
 ### What the quality control actually sells
 
 **It changes the container, not the detail.** Every level renders the same
-832x480-class picture and resizes once. 8K is that render enlarged 9.2 times.
+512-class picture and resizes once. 8K is that render enlarged about 8 times.
 
 This is the client's explicit design — their own test is named *quality
 selection changes only final delivery* — and it is their call. Two measured
 facts belong beside it:
 
-* generation drops from 1024x576 to 832x480, which is 0.68x the pixels, so
-  V2V output detail goes **down** relative to what this tool shipped before;
+* generation drops from 1024x576 to 896x512 at 16:9, which is 0.78x the
+  pixels, so V2V output detail goes **down** relative to what this tool
+  shipped before. The softness is visible in the acceptance clips below;
 * a lanczos enlargement adds no detail. Measured 7 Sep 2026: a smaller render
   upscaled to the same frame scored 0.29x the detail and was visibly softer.
+
+### Their 480 grid could not render at all
+
+The client specifies a 480-class canvas on a /32 lattice. **This path needs
+/64, and 480 is not a multiple of 64.** IC-LoRA encodes the reference video
+through the VAE, which halves the latent, and the latent is the pixel size
+over 32 — so 480 gives an odd latent of 15 and the encoder cannot halve it.
+The first real clip through their setting died there, on the card:
+
+```text
+einops.EinopsError: ... "b c (d p1) (h p2) (w p3) -> b (c p1 p2 p3) d h w"
+Input tensor shape: torch.Size([1, 1024, 50, 15, 26])
+Shape mismatch, can't divide axis of length 15 in chunks of 2
+```
+
+26 is 832/32 and 15 is 480/32. **Every V2V job on their grid fails**, so there
+was no version of their package that could have shipped as written. The short
+side is therefore 512, the nearest legal neighbour above; 448 is the one below
+and would be cheaper still, but detail is already what this feature spends.
+`render_proxy: 480p` in their workflow keeps working and resolves to the legal
+grid. `test_every_proxy_side_is_divisible_by_64` stops anyone reaching for 480
+again.
 
 This is also the client who rejected a 1.59x speed win on 9 Sep purely on how
 it looked, having found no metric that faulted it. If the look is judged short,
@@ -204,18 +227,50 @@ Nothing is bundled — neither package ships weights.
 3. **`MAX_CONCURRENCY=1`**, alongside `LTX_COMFY_FREE_AFTER_JOB=true` and the
    cgroup ceiling from 7 Sep.
 
+## GPU acceptance of the shipped path, 10 Sep 2026
+
+Deployed to `163.182.37.67:20577` at commit `ac6df3c` plus the /64 fix, and
+driven through `LtxAdapter.run` by `scripts/v2v_smoke.py` — the production
+code path, not a fixture. Source: a 6.92 s, 1280x704 shot from the music-video
+smoke runs, which is 1.818:1 and therefore not exactly 16:9.
+
+| Case | Delivered | Duration | Audio | Wall |
+|---|---|---|---|---|
+| Prompt-only, 1080p | 1920x1056 | 6.92 s | source had none | 78 s |
+| Prompt-only with audio, 1080p | 1920x1056 | 7.00 s | restored | 60 s |
+| Reference photo, 4K | 3840x2112 | 6.92 s | source had none | 108 s |
+| Reference photo swapping the person, 1080p | 1920x1056 | 6.92 s | source had none | 108 s |
+
+Everything the tool promises held. **The source's aspect survives** — 1056 and
+2112, not 1080 and 2160, because the upload is 1.818:1 and it is not cropped
+to fit a product ratio. **The length is exact.** **The soundtrack comes back**
+when the source has one.
+
+The restyle is a real restyle: the same alley, the same pose, the same hand on
+the jacket, rendered in graphite. The replacement is a real replacement: the
+bearded man in the patterned tracksuit becomes the curly-haired reference
+person, with his olive trousers and his watch, in the same alley in the same
+pose. **No portrait flash** at the client's 0.30 refresh, which is what the
+anchor change was for.
+
+Roughly 9 to 16 times realtime, so a five-minute upload is an hour or more.
+Identity costs about 30 s more per short clip than a prompt-only restyle — the
+anchor once, and the matte per pass.
+
 ## Still unmeasured
 
-* **The whole render path at the new settings.** No job has been driven through
-  the proxy grid, and 832x480 is not in `_GRID_CEILINGS` — a shape nobody has
-  run does not get a ceiling somebody guessed, so it chains at
-  `_UNMEASURED_CEILING`. In practice `transform_pass_seconds` is shorter still,
-  but the frame-landing tables are per-grid too, and an unmeasured grid is how
-  the decoder has crashed before.
-* **The 4K and 8K encodes on a real source.** An 8K frame from a 5m30 upload is
-  the largest thing this platform has ever written.
-* **Whether the softness is acceptable.** This is the judgement the two
-  measurements above cannot make, and the reason `render_proxy` is one line.
+* **A source long enough to need several passes.** Everything above is one
+  pass. The seams, the accumulating audio drift the delivery re-times, and the
+  identity persistence across sections are all untested at the new grid.
+* **8K on a real source.** 4K is proven; an 8K frame from a 5m30 upload is the
+  largest thing this platform has ever written.
+* **The grid's own ceiling.** 896x512 and 960x512 are not in `_GRID_CEILINGS`,
+  so they chain at `_UNMEASURED_CEILING`. `transform_pass_seconds` is shorter
+  still, so it does not bind today, but the frame-landing tables are per-grid
+  too.
+* **Whether the softness is acceptable.** It is visible in the clips above.
+  This is a judgement no measurement makes, and the reason `render_proxy` is
+  one line.
 
 ## Test status, 10 Sep 2026
 

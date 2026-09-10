@@ -247,23 +247,30 @@ _DELIVERY_BOXES: dict[str, tuple[int, int]] = {
     "8k": (7680, 4320),
 }
 
-#: Fast generation canvases (client specification, 10 Sep 2026). Each side is
-#: divisible by 32 and the short side stays at 480; IC-LoRA's stage-1-only
-#: route asks the CLI for 2x these and returns this grid, which is why 480 is
-#: allowed here where `_DIMENSIONS` insists on /64.
+#: The short side of the fast generation canvas.
 #:
-#: This is 832x480 against the 1024x576 the tool rendered before — 0.68x the
-#: pixels — and every delivery size above is reached by resizing it. The
-#: client asked for exactly this, and it is the one part of their package
-#: whose cost is paid in how the result looks rather than in how long it
-#: takes: `render_proxy` selects it, and removing that key from the workflow
-#: puts generation back on the measured grid.
-_PROXY_480_DIMENSIONS: dict[str, tuple[int, int]] = {
-    "16:9": (832, 480),
-    "9:16": (480, 832),
-    "1:1": (480, 480),
-    "4:5": (480, 608),
-}
+#: **512, not the 480 the client's package specifies, and this is measured
+#: rather than preferred.** Their grid is built on a /32 lattice; this path
+#: needs /64. IC-LoRA encodes the reference video through the VAE, which
+#: halves the latent, and the latent is the pixel size over 32 — so a side of
+#: 480 gives an odd latent of 15 and the encoder cannot halve it. The first
+#: real clip through their setting died in exactly that place, on the GPU,
+#: 10 Sep 2026:
+#:
+#:     einops.EinopsError: ... "b c (d p1) (h p2) (w p3) -> b (c p1 p2 p3) d h w"
+#:     Input tensor shape: torch.Size([1, 1024, 50, 15, 26])
+#:     Shape mismatch, can't divide axis of length 15 in chunks of 2
+#:
+#: 26 is 832/32 and 15 is 480/32. **Every V2V job on their grid fails**, so
+#: there was no version of this that could ship as written. 448 is the other
+#: legal neighbour and would be cheaper still; 512 is chosen because detail is
+#: already what this feature spends, and 512 gives up less of it.
+_PROXY_SHORT_SIDE = 512
+
+#: Values of `execution.render_proxy` that mean "use the fast canvas".
+#: `480p` is accepted because it is what the client's workflow says and their
+#: file should keep working; it resolves to the same legal grid as `512p`.
+_PROXY_KEYS = frozenset({"480p", "512p", "fast", "proxy"})
 
 #: Single-pass ceilings **measured per grid**, in seconds. Not derived.
 #:
@@ -748,28 +755,33 @@ def grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
     return min(grids, key=error)
 
 
-def proxy_480_grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
-    """A 480-class /32 grid closest to an uploaded video's own aspect.
+def proxy_grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
+    """The fast generation canvas closest to an uploaded video's own aspect.
 
     Video to Video has no aspect selector because the source owns its framing,
-    so this keeps one side at 480, lets the other grow only as far as 832, and
-    picks the /32 shape with the least aspect error. A 4:5 phone clip and a
-    2.39:1 anamorphic one therefore each render at their own shape instead of
-    being cropped to the nearest product ratio.
+    so this pins the short side at `_PROXY_SHORT_SIDE`, lets the long side run
+    up the /64 lattice, and takes the least aspect error. A 4:5 phone clip and
+    a 2.39:1 anamorphic one each render at their own shape rather than being
+    cropped to the nearest product ratio.
+
+    **Every side is divisible by 64, and that is a hard model constraint, not
+    a style.** See `_PROXY_SHORT_SIDE` for the failure that proved it.
 
     None of these shapes is in `_GRID_CEILINGS`, so a chain over them runs at
-    `_UNMEASURED_CEILING`. That costs nothing on this path in practice — the
-    transform engine's own `transform_pass_seconds` is shorter still — but it
-    is the reason this returns a grid rather than editing the measured table:
-    a shape nobody has run does not get a ceiling somebody guessed.
+    `_UNMEASURED_CEILING`. That costs nothing here in practice — the transform
+    engine's own `transform_pass_seconds` is shorter still — but it is why
+    this returns a grid rather than editing the measured table: a shape nobody
+    has run does not get a ceiling somebody guessed.
     """
+    short = _PROXY_SHORT_SIDE
+    default = (short + 384, short)  # 896x512, the /64 grid nearest 16:9
     if not width or not height:
-        return _PROXY_480_DIMENSIONS["16:9"]
+        return default
     aspect = math.log(width / height)
     landscape = width >= height
     grids = [
-        (long_side, 480) if landscape else (480, long_side)
-        for long_side in range(480, 833, 32)
+        (long_side, short) if landscape else (short, long_side)
+        for long_side in range(short, 1153, 64)
     ]
     return min(grids, key=lambda grid: abs(math.log(grid[0] / grid[1]) - aspect))
 
@@ -1616,8 +1628,8 @@ class LtxAdapter:
         resize once at the end. Anything else keeps the measured grid, so the
         proxy is opt-in per workflow rather than a change to every LTX job.
         """
-        if str(job.execution.get("render_proxy") or "").strip().lower() == "480p":
-            return proxy_480_grid_for_source(source.width, source.height)
+        if str(job.execution.get("render_proxy") or "").strip().lower() in _PROXY_KEYS:
+            return proxy_grid_for_source(source.width, source.height)
         return grid_for_source(source.width, source.height)
 
     async def _run_restyle(
@@ -2084,7 +2096,7 @@ class LtxAdapter:
         # costs the same pixels several times over and softens each seam.
         stitch = (
             self._v2v_render_grid(job, source)
-            if str(job.execution.get("render_proxy") or "").strip().lower() == "480p"
+            if str(job.execution.get("render_proxy") or "").strip().lower() in _PROXY_KEYS
             else output_dimensions(source.width, source.height)
         )
         sized = profile != "native"

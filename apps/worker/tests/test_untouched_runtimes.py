@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[3]
 #: the client changing their own tool; it exists so that nothing ELSE moves
 #: this file quietly. Everything it protects is still asserted by the suites
 #: named below, and by test_v2v_delivery.
-PINNED_LTX_ADAPTER_SHA256 = "95a1ca24f7bf66581ca49ca6b0d13e87bbaddb313298892b16ba275e60aae0ef"
+PINNED_LTX_ADAPTER_SHA256 = "91bef794627099bda1e99aaea093b660772bd40f00f0de9a2437fe1e8d34c074"
 
 
 def _sha256_lf(path: Path) -> str:
