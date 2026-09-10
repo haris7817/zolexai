@@ -12,8 +12,23 @@ delivered their own music-video worker (v1.8.0, "bands/groups of up to
 five people", ZIP sha256 5c512aec…) to be integrated as this tool. The
 definition gained five optional performer pictures, the band and lyrics
 controls, and nothing else; the CLI runtime still serves it unchanged
-wherever a deployment routes it there. Video to Video and Music keep their
-original pins.
+wherever a deployment routes it there.
+
+**Video to Video's pin moved on 10 Sep 2026**, also on the client's word,
+and it is worth recording that they moved it twice in two days. Their
+9 Sep package (`zolexai-music-v2v-backend-v2-fixed.zip`) turned the tool
+into a one-to-four person cast replacement and made the reference image
+mandatory. Their 10 Sep one (`zolexai-v2v-deploy-code.zip`, built 14:56,
+seventeen hours later) withdrew all of that — confirmed deliberate — and
+asked instead for a delivery ladder: the reference optional again, and
+1080p/4K/8K replacing Fast/Best. The cast work is archived on the
+`v2v-cast-replacement-archived` branch rather than deleted, because this
+guard exists precisely because this tool keeps changing shape.
+
+What the current pin covers: one optional reference image that switches
+the tool between a prompt-only restyle and a person replacement, a quality
+control that selects the delivered SIZE only, and a 480-class proxy grid
+under all three levels. Music keeps its original pin.
 """
 
 from __future__ import annotations
@@ -27,7 +42,7 @@ from app.services.workflow_registry import load_registry
 DEFINITIONS = Path(app_settings.workflow_definitions_dir)
 
 PINNED_SHA256 = {
-    "video-to-video.yaml": "9782ffbe4e356e0f6998ba6b59ea843a8cf6b2272f875da456433368196a6b4b",
+    "video-to-video.yaml": "a46b9e7779fade63db60267a2c212ef9d321c89f5b2050ba4101312c55c87fb3",
     # 8 Sep 2026: the client's music-video worker (see the module note).
     # music-video.yaml re-pinned 9 Sep 2026: the client asked for a
     # reference-video link box (`settings.reference_video: true`). Only

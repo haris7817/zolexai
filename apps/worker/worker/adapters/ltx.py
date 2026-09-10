@@ -137,8 +137,8 @@ from worker.longform import (
     render_chain,
     structure_prompt,
 )
-from worker.longform.language import soundscape_clause
 from worker.longform.h3_prompts import parse_timed_sections
+from worker.longform.language import soundscape_clause
 from worker.longform.music_video import (
     ShotDirection,
     plan_shots,
@@ -171,6 +171,7 @@ from worker.media import (
     verify_output,
 )
 from worker.media.audio import audio_envelope
+from worker.media.upscale import upscale_clip
 from worker.media.vocals import vocal_activity, vocal_fraction
 
 logger = get_logger(__name__)
@@ -223,6 +224,46 @@ _DIMENSIONS: dict[str, tuple[int, int]] = {
     "4:5": (512, 640),
 }
 _DEFAULT_DIMENSIONS = (1024, 576)
+
+#: The delivery frame for each size the Video to Video form offers.
+#:
+#: These are the CONTAINER, not a promise about detail. The picture is
+#: generated on the proxy grid below and resized here exactly once, so a
+#: customer who picks 8K gets an 8K file built from a 480-class render — see
+#: `_source_delivery_dimensions`, which computes the real target from the
+#: source's own aspect rather than reading this table, because V2V has no
+#: aspect selector and a phone's 4:5 clip must not be cropped to 16:9. The
+#: table is the fallback for a source whose dimensions could not be probed.
+_DELIVERY_DIMENSIONS: dict[str, dict[str, tuple[int, int]]] = {
+    "1080p": {"16:9": (1920, 1080), "9:16": (1080, 1920), "1:1": (1080, 1080)},
+    "4k": {"16:9": (3840, 2160), "9:16": (2160, 3840), "1:1": (2160, 2160)},
+    "8k": {"16:9": (7680, 4320), "9:16": (4320, 7680), "1:1": (4320, 4320)},
+}
+
+#: The long and short side each delivery profile fills.
+_DELIVERY_BOXES: dict[str, tuple[int, int]] = {
+    "1080p": (1920, 1080),
+    "4k": (3840, 2160),
+    "8k": (7680, 4320),
+}
+
+#: Fast generation canvases (client specification, 10 Sep 2026). Each side is
+#: divisible by 32 and the short side stays at 480; IC-LoRA's stage-1-only
+#: route asks the CLI for 2x these and returns this grid, which is why 480 is
+#: allowed here where `_DIMENSIONS` insists on /64.
+#:
+#: This is 832x480 against the 1024x576 the tool rendered before — 0.68x the
+#: pixels — and every delivery size above is reached by resizing it. The
+#: client asked for exactly this, and it is the one part of their package
+#: whose cost is paid in how the result looks rather than in how long it
+#: takes: `render_proxy` selects it, and removing that key from the workflow
+#: puts generation back on the measured grid.
+_PROXY_480_DIMENSIONS: dict[str, tuple[int, int]] = {
+    "16:9": (832, 480),
+    "9:16": (480, 832),
+    "1:1": (480, 480),
+    "4:5": (480, 608),
+}
 
 #: Single-pass ceilings **measured per grid**, in seconds. Not derived.
 #:
@@ -705,6 +746,61 @@ def grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
     if close:
         return max(close, key=lambda grid: (grid[0] * grid[1], -error(grid)))
     return min(grids, key=error)
+
+
+def proxy_480_grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
+    """A 480-class /32 grid closest to an uploaded video's own aspect.
+
+    Video to Video has no aspect selector because the source owns its framing,
+    so this keeps one side at 480, lets the other grow only as far as 832, and
+    picks the /32 shape with the least aspect error. A 4:5 phone clip and a
+    2.39:1 anamorphic one therefore each render at their own shape instead of
+    being cropped to the nearest product ratio.
+
+    None of these shapes is in `_GRID_CEILINGS`, so a chain over them runs at
+    `_UNMEASURED_CEILING`. That costs nothing on this path in practice — the
+    transform engine's own `transform_pass_seconds` is shorter still — but it
+    is the reason this returns a grid rather than editing the measured table:
+    a shape nobody has run does not get a ceiling somebody guessed.
+    """
+    if not width or not height:
+        return _PROXY_480_DIMENSIONS["16:9"]
+    aspect = math.log(width / height)
+    landscape = width >= height
+    grids = [
+        (long_side, 480) if landscape else (480, long_side)
+        for long_side in range(480, 833, 32)
+    ]
+    return min(grids, key=lambda grid: abs(math.log(grid[0] / grid[1]) - aspect))
+
+
+def delivery_dimensions_for_source(
+    profile: str, width: int | None, height: int | None
+) -> tuple[int, int]:
+    """The delivery frame for a source of this shape, at this profile.
+
+    Scaled to FIT the profile's box rather than cropped into a product ratio,
+    for the same reason as the grid above: the upload is authoritative about
+    its own framing. `native` keeps the previous behaviour exactly — the
+    source's own resolution, capped — so a workflow that names no delivery
+    size is unchanged.
+    """
+    if profile == "native":
+        return output_dimensions(width, height)
+    box = _DELIVERY_BOXES.get(profile)
+    if box is None:
+        raise ValueError(f"unknown delivery profile {profile!r}")
+    if not width or not height:
+        fallback = _DEFAULT_DIMENSIONS
+        ratio = "9:16" if fallback[1] > fallback[0] else "16:9"
+        return _DELIVERY_DIMENSIONS[profile][ratio]
+    max_long, max_short = box
+    scale = min(max_long / max(width, height), max_short / min(width, height))
+
+    def even(value: float) -> int:
+        return max(2, round(value / 2) * 2)
+
+    return even(width * scale), even(height * scale)
 
 
 def output_dimensions(width: int | None, height: int | None) -> tuple[int, int]:
@@ -1480,6 +1576,50 @@ class LtxAdapter:
 
     # ── video-to-video ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _uses_reference_identity(job: AdapterJob, reference: Path | None) -> bool:
+        """Whether this job replaces the person, rather than restyling them.
+
+        One tool, two paths, chosen by whether the customer attached a photo
+        (client specification, 10 Sep 2026). The workflow may advertise
+        identity replacement while leaving the image optional: an absent image
+        is a complete prompt-only restyle, not a validation error.
+
+        This exists as one predicate because the same question is asked in
+        three places, and the 9 Sep package answered it differently in each —
+        which is how a required-looking flag turned an ordinary restyle into a
+        refusal.
+        """
+        return bool(job.execution.get("v2v_reference_identity")) and reference is not None
+
+    @staticmethod
+    def _v2v_delivery_profile(job: AdapterJob) -> str:
+        """The delivery size for this job, validated before any GPU time."""
+        profile = (
+            str(job.execution.get("delivery") or settings.ltx_generation_delivery)
+            .strip()
+            .lower()
+        )
+        if profile not in {"native", *_DELIVERY_BOXES}:
+            raise AdapterError(
+                "This video delivery setting is unavailable.",
+                internal_detail=f"unknown V2V delivery profile {profile!r}",
+                retriable=False,
+            )
+        return profile
+
+    @staticmethod
+    def _v2v_render_grid(job: AdapterJob, source: MediaInfo) -> tuple[int, int]:
+        """The grid the model actually renders on for this job.
+
+        `render_proxy: 480p` is the client's speed decision: generate small and
+        resize once at the end. Anything else keeps the measured grid, so the
+        proxy is opt-in per workflow rather than a change to every LTX job.
+        """
+        if str(job.execution.get("render_proxy") or "").strip().lower() == "480p":
+            return proxy_480_grid_for_source(source.width, source.height)
+        return grid_for_source(source.width, source.height)
+
     async def _run_restyle(
         self, job: AdapterJob, reporter: StageReporter
     ) -> AdapterResult:
@@ -1499,16 +1639,21 @@ class LtxAdapter:
         staged, source = await self._staged_source(job, "source_video", kind="video")
         await reporter.probing("Reading your video…")
 
+        # Before any GPU time. A delivery size the worker cannot honour is a
+        # deployment mistake, and finding it after a five-minute source has
+        # been restyled costs the render as well as the job.
+        self._v2v_delivery_profile(job)
+
         target_seconds = source.duration_seconds or 0.0
         reference = await self._conditioning_image(job, "reference_image")
-        grid = grid_for_source(source.width, source.height)
+        grid = self._v2v_render_grid(job, source)
 
         if str(job.execution.get("v2v_engine") or "").strip() == "transform":
             return await self._run_transform(
                 job, reporter, staged, source, target_seconds, reference, grid
             )
 
-        if job.execution.get("v2v_reference_identity") and reference is not None:
+        if self._uses_reference_identity(job, reference):
             # Identity replacement is built on the transform engine's control
             # and attention machinery. Running this job through the still-
             # conditioned restyle would deliver the source person unchanged
@@ -1655,7 +1800,7 @@ class LtxAdapter:
         # map's grip is loosened over the person's own region so the source's
         # facial geometry stops being re-imposed. Without a reference image
         # the flag is inert and the job is an ordinary transform.
-        identity = bool(job.execution.get("v2v_reference_identity")) and reference is not None
+        identity = self._uses_reference_identity(job, reference)
         if identity and person_lock:
             raise AdapterError(
                 "This tool is temporarily unavailable.",
@@ -1760,8 +1905,19 @@ class LtxAdapter:
                     frames = self._frame_count(step.seconds)
                     interior = min(frames - 1, max(1, frames // 3))
                     if interior > 0:
+                        # The ANCHOR, never the raw photo. Both carry the same
+                        # face; only one carries a composition that belongs in
+                        # this shot. A raw portrait at an interior frame is the
+                        # customer-visible flash defect — measured at 0.35 on
+                        # 19 Aug 2026 and again at I2V's "safe" 0.2, which is
+                        # why the default here is 0. The client's 10 Sep
+                        # workflow asks for 0.30, and at that strength the
+                        # difference between these two images is the whole
+                        # defect. When the anchor could not be built, `anchor`
+                        # IS the photo and the capped opening strength is the
+                        # only protection left.
                         items.append(
-                            ConditioningFrame(reference, interior, refresh_strength)
+                            ConditioningFrame(anchor, interior, refresh_strength)
                         )
                 return items
             # Frame 0 only. The control clip already states where everything is
@@ -1921,10 +2077,44 @@ class LtxAdapter:
         never affected, which is why this surfaced as "minor" and only on some
         uploads.
         """
-        await reporter.stitching()
-        width, height = output_dimensions(source.width, source.height)
+        profile = self._v2v_delivery_profile(job)
+        # The sections are stitched at the size they were GENERATED, and
+        # resized exactly once afterwards. Stitching straight to 8K would
+        # upscale every section separately and then re-encode the join, which
+        # costs the same pixels several times over and softens each seam.
+        stitch = (
+            self._v2v_render_grid(job, source)
+            if str(job.execution.get("render_proxy") or "").strip().lower() == "480p"
+            else output_dimensions(source.width, source.height)
+        )
+        sized = profile != "native"
+        # `native` means "no resize", so the delivered frame is whatever was
+        # stitched — which is the proxy grid when one is in use. Claiming the
+        # source's own resolution here would be a promise the file does not
+        # keep, and `verify_output` would reject the job for it.
+        width, height = (
+            delivery_dimensions_for_source(profile, source.width, source.height)
+            if sized
+            else stitch
+        )
+        label = profile.upper() if profile in {"4k", "8k"} else profile
+
+        await reporter.stitching(
+            f"Assembling and finishing your {label} video…"
+            if sized
+            else "Assembling your video…"
+        )
         fps = _delivery_fps(source)
-        keep_audio = source.has_audio
+        # `settings.sound` (client specification, 10 Sep 2026) lets the
+        # customer drop the soundtrack. Absent, the source's audio survives —
+        # the behaviour this workflow has always had.
+        wants_sound = str(job.parameters.get("sound", True)).strip().lower() not in (
+            "false",
+            "no",
+            "off",
+            "0",
+        )
+        keep_audio = source.has_audio and wants_sound
         self._record_audio_mode(
             job, AudioMode.SOURCE_AUDIO if keep_audio else AudioMode.NO_AUDIO
         )
@@ -1942,15 +2132,38 @@ class LtxAdapter:
                 job,
                 rendered,
                 job.workspace / "picture.mp4",
-                dimensions=(width, height),
+                dimensions=stitch,
                 fps=fps,
                 audio=False,
                 section_frames=section_frames,
             )
-            if not keep_audio:
-                return picture.replace(output)
-            await reporter.muxing("Restoring your audio…")
-            return await mux_audio(picture, staged, output)
+            # Audio first, then ONE resize that copies it through. The other
+            # order would re-encode the soundtrack, and `upscale_clip` exists
+            # precisely so the join is encoded once — see its module note.
+            mastered = picture
+            if keep_audio:
+                await reporter.muxing("Restoring your audio…")
+                mastered = await mux_audio(
+                    picture, staged, job.workspace / "mastered.mp4"
+                )
+            if not sized:
+                return mastered.replace(output)
+            await reporter.finalizing(f"Finishing your {label} video…")
+            try:
+                return await upscale_clip(
+                    mastered,
+                    output,
+                    (width, height),
+                    nvenc_timeout=settings.ltx_comfy_transfer_timeout,
+                    cpu_timeout=settings.ltx_comfy_generation_timeout,
+                    run=lambda awaitable: cancellable(job, awaitable),
+                    log_extra={"job_id": job.job_id, "workflow_id": job.workflow_id},
+                )
+            except FfmpegError as exc:
+                raise AdapterError(
+                    f"The finished video could not be delivered at {label}.",
+                    internal_detail=f"V2V {profile} delivery encode failed: {str(exc)[-600:]}",
+                ) from exc
 
         info = await self._assemble(
             job,

@@ -162,13 +162,17 @@ YAML
 }
 
 block_video_to_video() {
-  # UNTOUCHED (client rule): both levels on the CLI runtime since 28 Aug 2026;
-  # Best adds reference identity through the committed execution_by_quality.
+  # The CLI runtime, and only that. The `fast`/`best` mapping this used to
+  # carry named two quality levels the workflow stopped offering on 10 Sep
+  # 2026, when the client replaced them with 1080p/4K/8K delivery sizes. An
+  # unmapped quality falls back to the base runtime silently, so the stale
+  # lines routed correctly and said something false — which is the kind of
+  # config that is read as intent a year later.
+  #
+  # There is nothing to map now: every level runs the same engine and differs
+  # only in the finish, which is `execution_by_quality` in the committed YAML.
   cat <<'YAML'
   runtime: ltx
-  runtime_by_quality:
-    fast: ltx
-    best: ltx
 YAML
 }
 

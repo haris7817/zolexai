@@ -28,19 +28,24 @@ inputs:
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
 
-  # Optional reference image. M1 shipped the contract only (accepted, stored,
-  # handed to the worker as a weak look hint); since 19 Aug 2026 it drives
-  # person identity — see `v2v_reference_identity` in the execution block.
-  # The help line is the customer promise: it says who the person will be,
-  # and sets the single-person expectation, because a source with several
-  # people has all of them re-imagined (measured, not a guess).
+  # Optional reference image, and the switch between this tool's two paths.
+  # Empty is a prompt-only restyle; a photo turns on person replacement (see
+  # `v2v_reference_identity`). It stayed optional through the client's 9 Sep
+  # package, which made it mandatory, and their 10 Sep one, which made it
+  # optional again — the help line has to be true in both states, so it leads
+  # with what leaving it empty does.
+  #
+  # The single-person expectation is still set deliberately: a source with
+  # several people has all of them matted and re-imagined, so which one the
+  # photo becomes is undefined. That is measured, not a guess.
   - role: reference_image
     kind: image
     required: false
     label: REFERENCE IMAGE
-    drop_hint: an optional reference image
-    help: Optional. On Best, the person in your video is replaced by the
-      person in this photo. Works best when your video shows one person.
+    drop_hint: an optional person image
+    help: Optional. Leave it empty to restyle with your prompt alone. Add a
+      photo and that person replaces the one in your video. Works best when
+      your video shows one person.
     accept: ["image/jpeg", "image/png", "image/webp"]
     max_size_mb: 25
 
@@ -77,10 +82,18 @@ supported_aspect_ratios: ["16:9", "9:16"]
 # worker also refuses to route a level to an engine that cannot serve this
 # workflow — see `resolve_adapter` — so a stale deployment mapping degrades
 # to the base runtime instead of failing a customer's job.
-supported_quality_levels: ["fast", "best"]
+# Since 10 Sep 2026 the quality control picks the DELIVERY SIZE, not the
+# engine. Fast/Best is gone: with identity gated by whether a photo was
+# uploaded, the two levels no longer differed by anything a customer could
+# name. See the `delivery` keys in the execution block for what these buy,
+# and for the honest note about what they do not.
+supported_quality_levels: ["1080p", "4k", "8k"]
 
 settings:
   quality: true
+  # The customer may drop the soundtrack. Absent, the source's audio is
+  # restored as it always has been.
+  sound: true
   # The remaining public controls did reach the job, but the distilled
   # adapter never read them. Private v2v_* settings below are the only real
   # conditioning controls and remain covered by command-level tests.
@@ -211,11 +224,15 @@ execution:
   # multi-pass source held the identity to the last section. Costs ~27s of
   # matting per pass on top of the transform.
   #
-  # BEST ONLY since 28 Aug 2026 — see `execution_by_quality` at the end of
-  # this block. It is inert without a reference image either way, so the base
-  # value here is what Fast gets: a plain restyle, and the reference photo (if
-  # one was supplied) reduced to the weak look hint it was before.
-  v2v_reference_identity: false
+  # ON for every job since 10 Sep 2026, and gated by the UPLOAD rather than by
+  # a quality level. One tool, two automatic paths: no photo is a prompt-only
+  # restyle, a photo is a replacement. The customer's quality choice now buys
+  # delivery size and nothing else, so tying identity to it would have made
+  # "1080p" silently mean "and also do not replace the person".
+  #
+  # This flag is inert without a reference image — see
+  # `_uses_reference_identity` — so it can be unconditionally true here.
+  v2v_reference_identity: true
   #
   # Person lock's mirror image: the person should NOT survive — the uploaded
   # reference image says who they are, the footage keeps saying what they do.
@@ -266,21 +283,40 @@ execution:
   # when footage says they need moving; the sweep clips backing the current
   # values are on the GPU box in /workspace/idtest/.
 
-  # ── What Fast and Best actually differ by ────────────────────────────────
+  # ── Generate small, deliver large (client specification, 10 Sep 2026) ────
   #
-  # The companion to the deployment's `runtime_by_quality`: that key says
-  # which ENGINE a level runs, this one says what that engine is asked to do.
-  # Keys here replace keys in the block above for the matching quality, and a
-  # request naming no level (or a level absent here) reads the block exactly
-  # as written. See `_execution_for` in the worker's resolver.
+  # `render_proxy: 480p` puts generation on an 832x480-class grid matched to
+  # the source's own aspect, and `delivery` resizes the finished picture once,
+  # after the audio is back on. The customer's quality control picks the
+  # delivery size below.
   #
-  # Both levels run the transform engine, because both must return the
-  # customer's own footage. Best does the extra work — matte every pass,
-  # re-show the reference inside it — that turns a restyle into a person
-  # replacement, and that is what its longer render buys.
+  # BE CLEAR ABOUT WHAT THIS SELLS. The quality levels change the CONTAINER,
+  # not the amount of detail generated: 8K is the same 480-class render as
+  # 1080p, resized 9.2x. The client asked for exactly this and it is their
+  # call, but two measured facts belong next to it. Generation drops from
+  # 1024x576 to 832x480, which is 0.68x the pixels, so V2V output detail goes
+  # DOWN relative to what this tool shipped before. And a lanczos enlargement
+  # adds no detail — measured 0.29x on 7 Sep 2026 when a smaller render was
+  # upscaled to the same frame, and visibly softer.
+  #
+  # Deleting the `render_proxy` line puts generation back on the measured
+  # grid; the delivery ladder keeps working and simply has less enlarging to
+  # do. That is the one-line lever if the look is judged short.
+  render_proxy: 480p
+  delivery: 4k
+
+  # Keys here replace keys above for the matching quality level, and a request
+  # naming no level reads the block exactly as written. See `_execution_for`
+  # in the worker's resolver. Only the finish differs — deliberately: the
+  # render is identical, so a customer who re-runs at a larger size gets the
+  # same picture in a larger frame rather than a different video.
   execution_by_quality:
-    best:
-      v2v_reference_identity: true
+    1080p:
+      delivery: 1080p
+    4k:
+      delivery: 4k
+    8k:
+      delivery: 8k
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

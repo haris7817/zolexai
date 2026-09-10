@@ -96,41 +96,50 @@ def test_sound_needs_the_workflow_to_declare_it() -> None:
     assert any(p["field"] == "sound" for p in raised.value.details["fields"])
 
 
-async def test_video_to_video_offers_the_toggle_too(client: AsyncClient) -> None:
-    """Extended to Video to Video on 28 Aug 2026, after two production jobs
-    failed with "needs a reference photo of the person".
+async def test_video_to_video_quality_now_picks_the_delivered_size(
+    client: AsyncClient,
+) -> None:
+    """This control has meant two different things, and the second is why the
+    wording matters.
 
-    The workflow was routed to one engine that replaces a person from a
-    reference photo and has no plain-restyle behaviour, so the tool's own
-    headline promise — restyling footage from a prompt — was refused before
-    it started, and no setting existed that would accept the job. The two
-    levels are genuinely different work here, not two speeds of the same
-    work, which is why the customer chooses rather than the product guessing.
+    From 28 Aug 2026 it chose an ENGINE. Video to Video had been routed to one
+    that replaces a person from a reference photo and has no plain-restyle
+    behaviour, so the tool's headline promise — restyle footage from a prompt —
+    was refused before it started, and Fast existed to accept that job again.
+
+    From 10 Sep 2026 the client gated identity on whether a photo was
+    attached, which is what Fast was really for, so the levels no longer
+    differed by any work a customer could name. The control now picks the
+    delivered SIZE. What it does not pick is how much detail is generated:
+    every level renders the same proxy and resizes once, which the worker
+    suite pins in `test_every_quality_level_renders_the_same_picture`.
     """
     workflow = (await client.get("/api/v1/workflows/video-to-video")).json()
-    assert workflow["supported_quality_levels"] == ["fast", "best"]
+    assert workflow["supported_quality_levels"] == ["1080p", "4k", "8k"]
     assert workflow["settings"]["quality"] is True
-    # Duration stays source-derived: the toggle picks an engine, not a length.
+    # Duration stays source-derived: the control picks a frame, not a length.
     assert workflow["duration_mode"] == "source"
     assert workflow["supported_durations"] == []
     assert workflow["supported_durations_by_quality"] == {}
-    # The copy says which level uses the photo (28 Aug wording: "On Best, the
-    # person in your video is replaced…").
+    # The copy leads with what an empty slot does, because that is now the
+    # default path rather than a degraded one.
     roles = {item["role"]: item for item in workflow["inputs"]}
+    assert roles["reference_image"]["required"] is False
     help_text = roles["reference_image"]["help"].lower()
-    assert "best" in help_text
+    assert "empty" in help_text
+    assert "on best" not in help_text, "the retired level must not survive in the copy"
     # Engines stay private here as everywhere else.
     import json
 
     assert "ltx" not in json.dumps(workflow).lower()
 
 
-def test_video_to_video_accepts_both_levels_and_refuses_a_third() -> None:
+def test_video_to_video_accepts_every_offered_size_and_refuses_a_third() -> None:
     import pytest
 
     from app.services.workflow_registry import ValidationFailed
 
-    for level in ("fast", "best", None):
+    for level in ("1080p", "4k", "8k", None):
         REGISTRY.validate_request(
             workflow_id="video-to-video",
             prompt="a rain-soaked neon street",
@@ -139,12 +148,38 @@ def test_video_to_video_accepts_both_levels_and_refuses_a_third() -> None:
             quality=level,
             input_roles={"source_video"},
         )
-    with pytest.raises(ValidationFailed):
+    # The retired levels are refused rather than silently accepted: a client
+    # still sending "best" is out of date, and answering it with a guess is
+    # how a stale build keeps working until it suddenly does not.
+    for retired in ("fast", "best", "ultra"):
+        with pytest.raises(ValidationFailed):
+            REGISTRY.validate_request(
+                workflow_id="video-to-video",
+                prompt="a rain-soaked neon street",
+                duration=None,
+                aspect_ratio="16:9",
+                quality=retired,
+                input_roles={"source_video"},
+            )
+
+
+def test_the_photo_stays_optional_at_every_size() -> None:
+    """The tool's two paths are chosen by the upload, not by the size. A
+    prompt-only 8K job and a photo-led 1080p job are both valid requests."""
+    for level in ("1080p", "8k"):
         REGISTRY.validate_request(
             workflow_id="video-to-video",
             prompt="a rain-soaked neon street",
             duration=None,
             aspect_ratio="16:9",
-            quality="ultra",
+            quality=level,
             input_roles={"source_video"},
+        )
+        REGISTRY.validate_request(
+            workflow_id="video-to-video",
+            prompt="a rain-soaked neon street",
+            duration=None,
+            aspect_ratio="16:9",
+            quality=level,
+            input_roles={"source_video", "reference_image"},
         )

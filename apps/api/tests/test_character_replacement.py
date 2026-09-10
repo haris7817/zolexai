@@ -121,15 +121,26 @@ def test_visible_validation(tmp_path: Path) -> None:
         )
 
 
-def test_video_to_video_is_byte_identical_to_its_28_aug_contract() -> None:
-    """Phase 5's guard: the new module changes nothing about Video to Video."""
+def test_character_replacement_did_not_disturb_video_to_video() -> None:
+    """Phase 5's guard: the new module changes nothing about Video to Video.
+
+    The shape it guards moved on 10 Sep 2026, on the client's word, and this
+    test moved with it — see `test_untouched_workflows` for the record of why.
+    What it is actually protecting is unchanged: Character Replacement is a
+    separate tool, and adding it must not reach into this one. The two inputs
+    and the transform engine are the parts that would show it if it had.
+    """
     public = REGISTRY.get_public("video-to-video")
-    assert public.supported_quality_levels == ["fast", "best"]
+    assert public.supported_quality_levels == ["1080p", "4k", "8k"]
     assert public.duration_mode == "source"
     assert [spec.role for spec in public.inputs] == ["source_video", "reference_image"]
     definition = REGISTRY.get("video-to-video")
     assert definition.execution.model_extra.get("v2v_engine") == "transform"
-    assert definition.execution.model_extra.get("v2v_reference_identity") is False
+    # Identity is on for every job and inert without a photo, so the quality
+    # overlay carries the delivery size and nothing else.
+    assert definition.execution.model_extra.get("v2v_reference_identity") is True
     assert definition.execution.model_extra.get("execution_by_quality") == {
-        "best": {"v2v_reference_identity": True}
+        "1080p": {"delivery": "1080p"},
+        "4k": {"delivery": "4k"},
+        "8k": {"delivery": "8k"},
     }

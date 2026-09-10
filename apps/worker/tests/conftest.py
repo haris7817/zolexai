@@ -63,7 +63,14 @@ def _can_encode_4k() -> bool:
              # More than one frame, because that is where it actually
              # breaks: a single 4K frame encodes on a box where twelve of
              # them cannot, x264's lookahead holding the difference.
-             "-frames:v", "12",
+             #
+             # Raised 12 -> 60 on 10 Sep 2026, when this probe passed on a dev
+             # machine and BOTH 4K delivery tests then failed inside ffmpeg
+             # with the same allocation crash. Twelve frames never fills
+             # x264's lookahead (40 at this preset), so the probe was
+             # measuring the one case that fits. Sixty is past it, and still a
+             # ~2s check because the input is a 64x36 source scaled up.
+             "-frames:v", "60",
              "-f", "mp4", os.devnull],
             check=True, capture_output=True, timeout=120,
         )

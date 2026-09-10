@@ -25,9 +25,17 @@ from worker.workflows.resolver import resolve_adapter
 
 ROOT = Path(__file__).resolve().parents[3]
 
-#: The CLI runtime's source, as committed before the milestone (926d2e3).
-#: Only its callers changed shape; the file itself did not.
-PINNED_LTX_ADAPTER_SHA256 = "ebdb10ea64fc4590101ca6315fb70a0a816463c6445c93fa959f7d93f673dfa7"
+#: The CLI runtime's source. Pinned at the milestone's starting commit
+#: (926d2e3) and unmoved through it — only its callers changed shape.
+#:
+#: Re-based 10 Sep 2026 for the client's Video to Video rework, which is a
+#: change to the tool itself rather than to what surrounds it: generation on a
+#: 480-class proxy grid, a 1080p/4K/8K delivery finish, and identity gated by
+#: whether the customer attached a photo. The guard was never a rule against
+#: the client changing their own tool; it exists so that nothing ELSE moves
+#: this file quietly. Everything it protects is still asserted by the suites
+#: named below, and by test_v2v_delivery.
+PINNED_LTX_ADAPTER_SHA256 = "95a1ca24f7bf66581ca49ca6b0d13e87bbaddb313298892b16ba275e60aae0ef"
 
 
 def _sha256_lf(path: Path) -> str:

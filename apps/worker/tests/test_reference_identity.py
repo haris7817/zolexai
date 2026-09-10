@@ -293,7 +293,15 @@ async def test_the_identity_strengths_are_tunable_per_workflow(
     """The right values are a GPU judgement; the sweep script sets them
     through the same private keys every other conditioning dial uses. The
     anchor dial governs the COMPOSITED anchor; the raw fallback stays capped
-    regardless, because a raw photo at high strength replaces the shot."""
+    regardless, because a raw photo at high strength replaces the shot.
+
+    The interior refresh re-shows the COMPOSITED ANCHOR, never the raw photo
+    (changed 10 Sep 2026). Both carry the same face; only one carries a
+    composition that belongs in the shot, and the raw portrait at an interior
+    frame is the flash defect measured on 19 Aug 2026. It mattered again that
+    day because the client's new workflow asks for a 0.30 refresh — a strength
+    at which the difference between these two images is the whole defect.
+    """
     source = await make_clip(workspace / "source.mp4", 3.7)
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
@@ -312,10 +320,16 @@ async def test_the_identity_strengths_are_tunable_per_workflow(
     await collect(job)
 
     passes = invocations(log)
-    assert conditioning_of(passes[0])[0][2] == pytest.approx(0.8)
-    refresh = next(
-        item for item in conditioning_of(passes[1]) if item[0] == str(reference)
+    opening = conditioning_of(passes[0])[0]
+    assert opening[0].endswith("identity-anchor.png")
+    assert opening[2] == pytest.approx(0.8)
+
+    later = conditioning_of(passes[1])
+    assert str(reference) not in [path for path, _, _ in later], (
+        "the raw photo mid-pass is the flash defect, at any strength"
     )
+    refresh = next(item for item in later if item[0].endswith("identity-anchor.png"))
+    assert refresh[1] > 0, "away from frame 0 — it must never fight the seam"
     assert refresh[2] == pytest.approx(0.5)
 
 

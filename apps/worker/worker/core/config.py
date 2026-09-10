@@ -319,6 +319,19 @@ class WorkerSettings(BaseSettings):
     ltx_frame_rate: int = 24
     """LTX-2.5's native rate; num_frames = seconds x this."""
 
+    ltx_generation_delivery: str = "native"
+    """
+    Default delivery size when a workflow names none: `native`, `1080p`, `4k`
+    or `8k`.
+
+    `native` is the behaviour every LTX workflow has had — the stitched file
+    at the source's own resolution, capped — so this default changes nothing
+    on its own. Video to Video sets `execution.delivery` per quality level and
+    that always wins; this exists so a node can be pinned to a cheaper finish
+    without editing the workflow, and so an older client that sends no quality
+    value still gets a defined answer instead of a KeyError.
+    """
+
     ltx_max_source_seconds: float = 330.0
     """
     Longest upload the source-duration workflows will accept.
