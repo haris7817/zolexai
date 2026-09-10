@@ -263,15 +263,44 @@ def allows_nonhuman_speech(job: AdapterJob) -> bool:
     """Whether this job licenses a non-human to speak human words.
 
     `execution.allow_nonhuman_speech` decides it outright; otherwise the
-    customer has to have asked for it in words. "The dinosaur says" is a
-    request. "A dinosaur roars in a jungle" is not.
+    customer has to have asked for it — by ticking Auto Dialogue on for this
+    job, or in words. "The dinosaur says" is a request. "A dinosaur roars in
+    a jungle" is not.
+
+    **Ticking the box IS asking (client, 10 Sep 2026):** "when video is
+    generated of animals with dialogue on they should speak." The 9 Sep rule
+    that stood a Tyrannosaurus down was written for dialogue arriving from the
+    deployment default, where the customer never asked for a talking dinosaur
+    and got one. A customer who turns the switch on over a scene of animals
+    has asked for exactly that, and there is nothing else the switch could
+    mean on that prompt — the alternative reading hands them the silent video
+    they just declined.
+
+    So the default still refuses (`AUTO_DIALOGUE_ENABLED` alone leaves the
+    lion roaring), and an explicit request is honoured.
     """
     raw = job.execution.get("allow_nonhuman_speech")
     if raw is not None and str(raw).strip() != "":
         return str(raw).strip().lower() not in ("false", "no", "off", "0")
+    if _asked_for_dialogue(job):
+        return True
     return any(
         re.search(p, job.prompt, re.IGNORECASE) for p in _NONHUMAN_SPEECH_ALLOWED
     )
+
+
+def _asked_for_dialogue(job: AdapterJob) -> bool:
+    """Whether the job's own parameters ticked Auto Dialogue on.
+
+    The same read as `worker.dialogue.requested_explicitly`, repeated here
+    rather than imported because that module imports this one. Kept to one
+    line so the two cannot drift far, and pinned by a test that asserts they
+    agree.
+    """
+    raw = job.parameters.get("auto_dialogue")
+    if raw is None or str(raw).strip() == "":
+        return False
+    return str(raw).strip().lower() not in ("false", "no", "off", "0")
 
 
 def no_eligible_speaker(job: AdapterJob) -> bool:

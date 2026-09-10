@@ -270,25 +270,56 @@ def test_the_gate_runs_before_the_writer_is_ever_called() -> None:
     assert writer.calls == 0
 
 
-async def test_a_creature_scene_is_told_to_roar_instead_of_speak() -> None:
+async def test_a_creature_scene_is_told_to_roar_instead_of_speak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Saying nobody speaks is not enough on its own: an animal with a mouth
     and no instruction about it gets one anyway. This says what happens
     instead, and terminates the customer's sentence so the two do not run
-    together."""
+    together.
+
+    This is the DEPLOYMENT-DEFAULT path — dialogue the customer never asked
+    for — which is the case the 9 Sep 2026 rule was written for, after a
+    Tyrannosaurus was given four lines. It is unchanged.
+    """
+    import worker.dialogue as module
+
+    # No `auto_dialogue` parameter: the feature is on because the deployment
+    # says so, not because this customer asked.
+    monkeypatch.setattr(settings, "auto_dialogue_enabled", True)
+    job = _job("A massive Tyrannosaurus Rex emerges from the jungle and roars")
+    writer = _Writer()
+    result = await module.add_auto_dialogue(job, 15.0, providers=[writer])
+    assert writer.calls == 0
+    assert '"' not in result.prompt
+    assert "never to form speech" in result.prompt
+    assert result.prompt.startswith(job.prompt + ".")
+
+
+async def test_ticking_the_box_over_a_dinosaur_makes_the_dinosaur_speak() -> None:
+    """Client instruction, 10 Sep 2026: "when video is generated of animals
+    with dialogue on they should speak."
+
+    The 9 Sep rule stood every creature down, including for a customer who
+    had explicitly turned Auto Dialogue on. That reading hands them the
+    silent video they just declined — on an animal prompt there is nothing
+    else the switch could mean. So an explicit request now licenses the
+    non-human to speak, and the deployment default still refuses (the test
+    above).
+    """
     import worker.dialogue as module
 
     job = _job(
         "A massive Tyrannosaurus Rex emerges from the jungle and roars",
         auto_dialogue=True,
     )
+    assert no_eligible_speaker(job) is False
     writer = _Writer()
     result = await module.add_auto_dialogue(job, 15.0, providers=[writer])
-    # Asked for explicitly and still not a failure: the right video is the one
-    # with no dialogue in it, and the writer is never consulted.
-    assert writer.calls == 0
-    assert '"' not in result.prompt
-    assert "never to form speech" in result.prompt
-    assert result.prompt.startswith(job.prompt + ".")
+    # The writer IS consulted, and the roar clause does not muzzle the lines.
+    assert writer.calls == 1
+    assert '"' in result.prompt
+    assert "never to form speech" not in result.prompt
 
 
 def test_a_deployment_can_license_a_talking_animal() -> None:

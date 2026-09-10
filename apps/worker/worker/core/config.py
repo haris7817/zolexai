@@ -779,12 +779,19 @@ class WorkerSettings(BaseSettings):
 
     auto_dialogue_max_tokens: int = 1200
     """
-    Output budget for the hosted writer.
+    Output budget for the hosted writer — room for the ANSWER only.
 
-    Room for a handful of short lines and their speaker locks, plus the
-    reasoning headroom the lyrics writer's measurement demands: a reasoning
-    model that overspends `max_completion_tokens` returns an empty string with
-    `finish_reason: stop` and no error at all.
+    A handful of short lines and their speaker locks. The reasoning reserve is
+    added on top of this by the provider
+    (`worker/dialogue/provider.py::_REASONING_HEADROOM`), so raising this does
+    not have to account for a hidden channel.
+
+    **It used to claim it already included that headroom, and it did not.**
+    1200 was the whole allowance for answer and reasoning together, which is
+    below the reserve the lyrics writer and the Director had each already
+    measured as necessary on `gpt-oss-120b`. Every explicitly-requested
+    dialogue job on the client-test node failed for hours on 10 Sep 2026,
+    truncated, before that was found.
     """
 
     auto_dialogue_temperature: float = 0.7

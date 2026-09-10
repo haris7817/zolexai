@@ -68,6 +68,30 @@ JSON_END = _END
 #: Statuses no retry can fix: no key, wrong key, wrong model, bad request.
 _PERMANENT_STATUS = frozenset({400, 401, 403, 404, 422})
 
+#: Tokens reserved for a model that thinks before it answers, ON TOP of the
+#: configured output budget.
+#:
+#: The same reserve, for the same measured reason, as
+#: `worker/music/cerebras.py::_REASONING_HEADROOM` and the Director's:
+#: `max_completion_tokens` budgets *everything the model emits*, and
+#: `gpt-oss-120b` spends an unpredictable share of it on a hidden reasoning
+#: channel before writing a word of the answer.
+#:
+#: **Auto Dialogue never got this fix, and it took the feature down.**
+#: Measured on the client-test node 10 Sep 2026: every Text to Video job that
+#: explicitly asked for dialogue failed all three attempts, for hours, with
+#: "the dialogue service ran past its output limit" at 412, 875, 1715 and
+#: 2158 characters. The budget was a flat 1200 for the answer AND the
+#: reasoning combined — less than the reserve the two sibling modules had
+#: already measured as necessary on this exact model. The docstring on
+#: `auto_dialogue_max_tokens` claimed to include this headroom; it did not.
+#:
+#: Added to the setting rather than folded into it, so the setting keeps
+#: meaning what its name says — room for the answer — and a deployment that
+#: raises it does not have to know about a hidden channel. Unused allowance
+#: is not billed.
+_REASONING_HEADROOM = 2500
+
 #: Grace over the measured word budget before a plan is refused outright. The
 #: same 1.15 the Director plan uses, and for the same reason: a line or two
 #: over is fine, double is not.
@@ -232,7 +256,7 @@ class CerebrasDialogueProvider:
                 {"role": "system", "content": request.system_text},
                 {"role": "user", "content": request.user_text},
             ],
-            "max_completion_tokens": settings.auto_dialogue_max_tokens,
+            "max_completion_tokens": settings.auto_dialogue_max_tokens + _REASONING_HEADROOM,
             "temperature": settings.auto_dialogue_temperature,
             "stream": False,
             # No `response_format`, for the reason measured in
