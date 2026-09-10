@@ -99,6 +99,7 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+import re
 import signal
 import zlib
 from collections import deque
@@ -267,10 +268,39 @@ _DELIVERY_BOXES: dict[str, tuple[int, int]] = {
 #: already what this feature spends, and 512 gives up less of it.
 _PROXY_SHORT_SIDE = 512
 
-#: Values of `execution.render_proxy` that mean "use the fast canvas".
-#: `480p` is accepted because it is what the client's workflow says and their
-#: file should keep working; it resolves to the same legal grid as `512p`.
-_PROXY_KEYS = frozenset({"480p", "512p", "fast", "proxy"})
+#: The 704-class canvases, and the reason this profile exists.
+#:
+#: Client verdict on the first real V2V result, 11 Sep 2026: the identity
+#: transferred, but 480-class generation "does not provide enough detail for
+#: fast hands, fingers, clothing edges and facial features", and enlarging to
+#: 8K only enlarges those distortions. That is the honest reading of the
+#: trade-off recorded against `_PROXY_SHORT_SIDE`: the enlargement was never
+#: the problem, the pixels underneath it were.
+#:
+#: These are the client's named canvases, and the aspect search below returns
+#: exactly them for the three common shapes. The table is what an unprobeable
+#: source falls back to.
+_PROXY_704_DIMENSIONS: dict[str, tuple[int, int]] = {
+    "16:9": (1280, 704),
+    "9:16": (704, 1280),
+    "1:1": (704, 704),
+}
+
+#: Each `render_proxy` profile as (short side, longest side it may reach).
+#:
+#: Both sides of every grid these produce are divisible by 64. The client's
+#: specification says 32, and their three named canvases satisfy 64 anyway —
+#: but a /32 long side such as 1248 would not, and it would fail exactly the
+#: way 480 did. See `_PROXY_SHORT_SIDE`; the constraint is the model's.
+_PROXY_CANVASES: dict[str, tuple[int, int]] = {
+    "512p": (_PROXY_SHORT_SIDE, 1152),
+    "704p": (704, 1280),
+}
+
+#: `480p` is what the client's own workflow file says. It is kept working
+#: rather than rejected, and resolves to the smallest LEGAL canvas — which is
+#: 512, because 480 cannot render at all.
+_PROXY_ALIASES: dict[str, str] = {"480p": "512p", "fast": "512p"}
 
 #: Single-pass ceilings **measured per grid**, in seconds. Not derived.
 #:
@@ -755,14 +785,20 @@ def grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
     return min(grids, key=error)
 
 
-def proxy_grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
-    """The fast generation canvas closest to an uploaded video's own aspect.
+def proxy_grid_for_source(
+    width: int | None,
+    height: int | None,
+    *,
+    short_side: int = _PROXY_SHORT_SIDE,
+    max_long_side: int = 1152,
+) -> tuple[int, int]:
+    """The generation canvas closest to an uploaded video's own aspect.
 
     Video to Video has no aspect selector because the source owns its framing,
-    so this pins the short side at `_PROXY_SHORT_SIDE`, lets the long side run
-    up the /64 lattice, and takes the least aspect error. A 4:5 phone clip and
-    a 2.39:1 anamorphic one each render at their own shape rather than being
-    cropped to the nearest product ratio.
+    so this pins the short side, lets the long side run up the /64 lattice as
+    far as `max_long_side`, and takes the least aspect error. A 4:5 phone clip
+    and a 2.39:1 anamorphic one each render at their own shape rather than
+    being cropped to the nearest product ratio.
 
     **Every side is divisible by 64, and that is a hard model constraint, not
     a style.** See `_PROXY_SHORT_SIDE` for the failure that proved it.
@@ -773,17 +809,44 @@ def proxy_grid_for_source(width: int | None, height: int | None) -> tuple[int, i
     this returns a grid rather than editing the measured table: a shape nobody
     has run does not get a ceiling somebody guessed.
     """
-    short = _PROXY_SHORT_SIDE
-    default = (short + 384, short)  # 896x512, the /64 grid nearest 16:9
-    if not width or not height:
-        return default
-    aspect = math.log(width / height)
-    landscape = width >= height
+    if short_side % 64 or max_long_side % 64:
+        raise ValueError(
+            f"proxy canvas {short_side}x{max_long_side} is off the /64 lattice"
+        )
+    landscape = width is None or height is None or width >= height
     grids = [
-        (long_side, short) if landscape else (short, long_side)
-        for long_side in range(short, 1153, 64)
+        (long_side, short_side) if landscape else (short_side, long_side)
+        for long_side in range(short_side, max_long_side + 1, 64)
     ]
+    if not width or not height:
+        # The widest legal landscape shape, which is what the named table says
+        # for 16:9 at both profiles.
+        return grids[-1]
+    aspect = math.log(width / height)
     return min(grids, key=lambda grid: abs(math.log(grid[0] / grid[1]) - aspect))
+
+
+def proxy_704_grid_for_source(width: int | None, height: int | None) -> tuple[int, int]:
+    """The 704-class canvas for a source of this shape.
+
+    Named separately because it is the profile the client asked for by name,
+    and because a reader looking for "where did 1280x704 come from" should
+    land here. It returns their three canvases exactly — 1280x704, 704x1280,
+    704x704 — and an aspect-matched /64 grid for anything else.
+    """
+    short, longest = _PROXY_CANVASES["704p"]
+    return proxy_grid_for_source(width, height, short_side=short, max_long_side=longest)
+
+
+def proxy_canvas_for(value: object) -> tuple[int, int] | None:
+    """The (short, longest) canvas a `render_proxy` value names, or None.
+
+    None means "no proxy": generation stays on the measured grid that
+    `grid_for_source` picks, which is what every other LTX workflow does.
+    """
+    name = str(value or "").strip().lower()
+    name = _PROXY_ALIASES.get(name, name)
+    return _PROXY_CANVASES.get(name)
 
 
 def delivery_dimensions_for_source(
@@ -813,6 +876,90 @@ def delivery_dimensions_for_source(
         return max(2, round(value / 2) * 2)
 
     return even(width * scale), even(height * scale)
+
+
+#: Upper-body garments, and the lower half each one implies.
+#:
+#: The describer reports what it can SEE, and a reference photo usually stops
+#: at the waist — so the caption arrives describing a jacket and nothing else,
+#: and the model dresses the legs from the footage it already has. These pairs
+#: are deliberately plain and deliberately few: the aim is a costume that
+#: cannot be mistaken for the source's, not a wardrobe department.
+_OUTFIT_COMPLETIONS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("suit jacket", "blazer", "suit", "tuxedo", "dinner jacket"),
+        "matching {colour}suit trousers and black dress shoes",
+    ),
+    (
+        ("waistcoat", "vest", "dress shirt", "shirt and tie"),
+        "matching {colour}tailored trousers and black dress shoes",
+    ),
+    (
+        ("hoodie", "sweatshirt", "tracksuit top", "puffer", "bomber jacket"),
+        "matching {colour}tracksuit trousers and white trainers",
+    ),
+    (
+        ("leather jacket", "denim jacket", "jacket", "coat", "overcoat"),
+        "dark tapered trousers and black boots",
+    ),
+    (
+        ("t-shirt", "tee", "jumper", "sweater", "polo", "blouse", "top"),
+        "dark tapered trousers and plain dark shoes",
+    ),
+)
+
+#: Words that mean the caption already reaches the floor, so nothing is added.
+#:
+#: Matched on word boundaries, and "dress" only when it is the garment rather
+#: than the adjective — "a white dress shirt" describes a top, and reading it
+#: as a dress is how the first version of this decided a suit jacket already
+#: reached the floor.
+_LOWER_BODY_WORDS: tuple[str, ...] = (
+    "trouser", "trousers", "jeans", "pants", "shorts", "skirt",
+    "leggings", "joggers", "chinos", "shoe", "shoes", "boots", "trainers",
+    "sneakers", "heels", "sandals", "kilt",
+)
+_LOWER_BODY_RE = re.compile(
+    r"\b(?:" + "|".join(_LOWER_BODY_WORDS) + r")\b"
+    r"|\bdress(?!\s+shirt)\b"
+    r"|\bfull[- ]length\b|\bhead to toe\b",
+    re.IGNORECASE,
+)
+
+#: Colours worth carrying down from the top half, longest first so "dark grey"
+#: is read before "grey".
+_OUTFIT_COLOURS: tuple[str, ...] = (
+    "charcoal", "dark grey", "dark gray", "light grey", "light blue",
+    "navy", "black", "white", "grey", "gray", "brown", "beige", "cream",
+    "blue", "green", "red", "burgundy", "tan", "olive", "pink", "purple",
+)
+
+
+def _complete_outfit(described: str) -> str:
+    """The caption, extended to a whole costume when it stops at the waist.
+
+    Returns `described` untouched when it already names something below the
+    waist, when it names no garment this knows how to finish, or when it is
+    empty. Adding a second guess on top of a caption that already reaches the
+    floor would be the opposite failure — a prompt describing two outfits.
+    """
+    text = (described or "").strip()
+    if not text:
+        return text
+    lowered = text.lower()
+    if _LOWER_BODY_RE.search(lowered):
+        return text
+
+    for garments, completion in _OUTFIT_COMPLETIONS:
+        hit = next((g for g in garments if g in lowered), None)
+        if hit is None:
+            continue
+        # The colour stated nearest the garment, so a "charcoal suit jacket"
+        # gets charcoal trousers rather than the hair colour's.
+        before = lowered[: lowered.index(hit)]
+        colour = next((c for c in _OUTFIT_COLOURS if c in before), "")
+        return f"{text}, with {completion.format(colour=f'{colour} ' if colour else '')}"
+    return text
 
 
 def output_dimensions(width: int | None, height: int | None) -> tuple[int, int]:
@@ -1628,8 +1775,12 @@ class LtxAdapter:
         resize once at the end. Anything else keeps the measured grid, so the
         proxy is opt-in per workflow rather than a change to every LTX job.
         """
-        if str(job.execution.get("render_proxy") or "").strip().lower() in _PROXY_KEYS:
-            return proxy_grid_for_source(source.width, source.height)
+        canvas = proxy_canvas_for(job.execution.get("render_proxy"))
+        if canvas is not None:
+            short, longest = canvas
+            return proxy_grid_for_source(
+                source.width, source.height, short_side=short, max_long_side=longest
+            )
         return grid_for_source(source.width, source.height)
 
     async def _run_restyle(
@@ -1844,13 +1995,29 @@ class LtxAdapter:
                 # photo-shoot shot, which is one of the two ways the first
                 # customer job got a portrait cut into a dance video.
                 described = " ".join(facts.split()).rstrip(".")
+                # The outfit is stated head to foot, and the source's clothing
+                # is refused by name.
+                #
+                # A reference photo is usually a portrait or a half-length
+                # shot, so the describer can only report an upper body — and
+                # a prompt that says nothing below the waist lets the model
+                # keep what the footage already had there. Client report,
+                # 11 Sep 2026: the reference showed a charcoal suit jacket,
+                # and the render kept the source's black trousers and a
+                # hanging piece of cloth under it.
+                #
+                # `_complete_outfit` is what turns "a charcoal suit jacket"
+                # into a whole costume; the closing clause is what makes the
+                # absence of the original explicit rather than implied.
                 job = replace(
                     job,
                     prompt=(
                         f"{job.prompt}\n\n"
-                        f"The person is {described}. The same person, with the "
-                        "same face, hair and clothing, stays on screen for the "
-                        "whole video."
+                        f"The person is {_complete_outfit(described)}. The same "
+                        "person, with the same face, hair and complete outfit, "
+                        "stays on screen for the whole video. None of the "
+                        "original clothing remains: no trousers, garment or "
+                        "hanging cloth from the source video is visible on them."
                     ),
                 )
         strength = job.execution_float("v2v_control_strength", _V2V_CONTROL_STRENGTH)
@@ -1893,6 +2060,14 @@ class LtxAdapter:
         )
         subject_attention = job.execution_float(
             "v2v_identity_subject_attention", _V2V_IDENTITY_SUBJECT_ATTENTION
+        )
+        # Whether the control clip carries the scene's real pixels outside the
+        # person (client request, 11 Sep 2026). On is the stronger replacement
+        # and the measured fix for the source's clothing surviving; off is the
+        # edges-only signal this path used before, and the one line that
+        # restores a fully prompt-driven background.
+        hybrid_identity_control = bool(
+            job.execution.get("v2v_identity_hybrid_control", True)
         )
         low = job.execution_float("v2v_edge_low", DEFAULT_EDGE_LOW)
         high = job.execution_float("v2v_edge_high", DEFAULT_EDGE_HIGH)
@@ -1943,6 +2118,34 @@ class LtxAdapter:
                 return [ConditioningFrame(reference, 0, reference_strength)]
             return []
 
+        # One matte per section, built once and used by both the control clip
+        # and the attention mask. They used to build their own — the same
+        # BiRefNet pass over the same window twice, ~19s of GPU each — and the
+        # only thing that stopped it was `attention` finding the file
+        # `control` happened to have written, which is a coupling through the
+        # filesystem that holds until someone reorders two calls.
+        mattes: dict[int, Path] = {}
+
+        async def matte_for(step: ChainStep, frames: int) -> Path:
+            cached = mattes.get(step.index)
+            if cached is not None:
+                return cached
+            built = await cancellable(
+                job,
+                build_person_matte(
+                    staged,
+                    job.workspace / f"matte-{step.index:04d}.mp4",
+                    start_seconds=step.segment.start_seconds,
+                    duration_seconds=step.seconds,
+                    width=grid[0],
+                    height=grid[1],
+                    fps=float(settings.ltx_frame_rate),
+                    frames=frames,
+                ),
+            )
+            mattes[step.index] = built
+            return built
+
         async def control(step: ChainStep, frames: int) -> ControlConditioning:
             path = await cancellable(
                 job,
@@ -1959,11 +2162,39 @@ class LtxAdapter:
                     high=high,
                 ),
             )
-            if not person_lock:
-                return ControlConditioning(path, strength)
-            path = await self._person_locked_control(
-                job, staged, path, step=step, frames=frames, grid=grid
-            )
+            if person_lock:
+                path = await self._person_locked_control(
+                    job,
+                    staged,
+                    path,
+                    matte=await matte_for(step, frames),
+                    step=step,
+                    frames=frames,
+                    grid=grid,
+                    invert=False,
+                )
+            elif identity and hybrid_identity_control:
+                # The mirror image of person lock, and the client's 11 Sep
+                # ask: the SCENE keeps its own pixels and the person's region
+                # keeps only edges. Without it the control clip carries the
+                # original person's skin and clothing everywhere, and those
+                # pixels bleed into the replacement — the black trousers and
+                # the hanging cloth that survived their test render.
+                #
+                # Note what this changes beyond identity: the background stops
+                # being restyled by the prompt and stays photographic. That is
+                # right for a person replacement and wrong for a look change,
+                # which is why it follows `identity` and not the engine.
+                path = await self._person_locked_control(
+                    job,
+                    staged,
+                    path,
+                    matte=await matte_for(step, frames),
+                    step=step,
+                    frames=frames,
+                    grid=grid,
+                    invert=True,
+                )
             return ControlConditioning(path, strength)
 
         async def attention(step: ChainStep, frames: int) -> MaskConditioning | None:
@@ -1981,25 +2212,17 @@ class LtxAdapter:
             replaced them is the one outcome this mode must never produce.
             """
             if identity:
-                matte = await cancellable(
-                    job,
-                    build_person_matte(
-                        staged,
-                        job.workspace / f"matte-{step.index:04d}.mp4",
-                        start_seconds=step.segment.start_seconds,
-                        duration_seconds=step.seconds,
-                        width=grid[0],
-                        height=grid[1],
-                        fps=float(settings.ltx_frame_rate),
-                        frames=frames,
-                    ),
-                )
                 weights = await cancellable(
                     job,
                     build_attention_mask(
-                        matte,
+                        await matte_for(step, frames),
                         job.workspace / f"attention-{step.index:04d}.mp4",
                         frames=frames,
+                        # Background at 1.0: the scene must keep tracking the
+                        # footage at full strength, so the camera move, the
+                        # hands and the gestures survive. Only the person's
+                        # own region is loosened, and only enough to let the
+                        # reference own the face and the clothing.
                         background=1.0,
                         subject=subject_attention,
                     ),
@@ -2096,7 +2319,7 @@ class LtxAdapter:
         # costs the same pixels several times over and softens each seam.
         stitch = (
             self._v2v_render_grid(job, source)
-            if str(job.execution.get("render_proxy") or "").strip().lower() in _PROXY_KEYS
+            if proxy_canvas_for(job.execution.get("render_proxy")) is not None
             else output_dimensions(source.width, source.height)
         )
         sized = profile != "native"
@@ -2133,6 +2356,16 @@ class LtxAdapter:
         section_frames = self._planned_section_frames(
             rendered, target_seconds, per_pass_seconds, fps
         )
+        # The source's OWN frame count is the answer, not `duration x fps`.
+        #
+        # Client measurement, 11 Sep 2026: a source of 347 frames came back as
+        # 345. The sections are planned from `duration_seconds`, and ffprobe's
+        # duration is a rounded container field — at 30fps, 347 frames is
+        # 11.5667s, and a container that rounds that to 11.5 plans 345. The
+        # error is invisible per section and lands entirely on the delivered
+        # length, which is the one thing this workflow promises exactly.
+        section_frames = self._match_source_frames(section_frames, source, fps)
+        expected_frames = sum(section_frames) if section_frames else None
         output = job.workspace / "output.mp4"
 
         async def assemble() -> Path:
@@ -2166,6 +2399,7 @@ class LtxAdapter:
                     mastered,
                     output,
                     (width, height),
+                    frames=expected_frames,
                     nvenc_timeout=settings.ltx_comfy_transfer_timeout,
                     cpu_timeout=settings.ltx_comfy_generation_timeout,
                     run=lambda awaitable: cancellable(job, awaitable),
@@ -2188,12 +2422,62 @@ class LtxAdapter:
                 tolerance_seconds=duration_tolerance(target_seconds, floor=1.0),
                 expected_width=width,
                 expected_height=height,
+                expected_frame_count=expected_frames,
+                # One frame. The soundtrack is the source's own and is laid
+                # over the picture once, so anything beyond a frame of drift
+                # means the picture is not the length the audio was cut for.
+                max_av_drift_seconds=(1.0 / fps) if keep_audio else None,
             ),
             reporter,
         )
 
         await reporter.uploading()
         return await _video_result(job, output, info)
+
+    def _match_source_frames(
+        self,
+        section_frames: list[int] | None,
+        source: MediaInfo,
+        fps: float,
+    ) -> list[int] | None:
+        """Make the sections total the source's own frame count, exactly.
+
+        Only when the delivery rate IS the source's rate — a clamped or
+        retimed result has a different, correct count of its own, and forcing
+        the source's onto it would be the same class of error in the other
+        direction. `_delivery_fps` clamps to 10..60, so a 240fps phone clip
+        legitimately lands elsewhere and is left alone.
+
+        The whole correction goes on the LAST section. It is at most a frame
+        or two against a section of hundreds, it cannot move any earlier
+        seam's timestamp, and every alternative spreads a sub-frame error
+        across cuts that are currently exact.
+        """
+        if not section_frames or not source.frame_count or not source.fps:
+            return section_frames
+        if abs(fps - source.fps) > 1e-6:
+            logger.info(
+                "v2v_frame_count_not_pinned",
+                extra={"source_fps": source.fps, "delivery_fps": fps},
+            )
+            return section_frames
+
+        planned = sum(section_frames)
+        difference = source.frame_count - planned
+        if difference == 0:
+            return section_frames
+        adjusted = list(section_frames)
+        adjusted[-1] = max(1, adjusted[-1] + difference)
+        logger.info(
+            "v2v_frame_count_pinned_to_source",
+            extra={
+                "source_frames": source.frame_count,
+                "planned_frames": planned,
+                "corrected_by": difference,
+                "final_section": adjusted[-1],
+            },
+        )
+        return adjusted
 
     # ── music-video ──────────────────────────────────────────────────────
 
@@ -2915,9 +3199,11 @@ class LtxAdapter:
         staged: Path,
         edges: Path,
         *,
+        matte: Path,
         step: ChainStep,
         frames: int,
         grid: tuple[int, int],
+        invert: bool = False,
     ) -> Path:
         """An edge map carrying the subject's real pixels inside their matte.
 
@@ -2937,19 +3223,6 @@ class LtxAdapter:
         protect the wrong pixels rather than simply protect less.
         """
         index = step.index
-        matte = await cancellable(
-            job,
-            build_person_matte(
-                staged,
-                job.workspace / f"matte-{index:04d}.mp4",
-                start_seconds=step.segment.start_seconds,
-                duration_seconds=step.seconds,
-                width=grid[0],
-                height=grid[1],
-                fps=float(settings.ltx_frame_rate),
-                frames=frames,
-            ),
-        )
         footage = await cancellable(
             job,
             extract_source_window(
@@ -2971,10 +3244,12 @@ class LtxAdapter:
                 matte,
                 job.workspace / f"hybrid-{index:04d}.mp4",
                 frames=frames,
-                # False keeps the PERSON. Inverting keeps the scene and frees
-                # the subject's region, which is what a future person
-                # REPLACEMENT needs — the same builder, the other side.
-                invert=False,
+                # False keeps the PERSON — person lock. True keeps the SCENE
+                # and frees the subject's region, which is what a person
+                # replacement needs: the same builder, the other side. Wired
+                # for identity on 11 Sep 2026, when the client's first result
+                # came back still wearing the source's trousers.
+                invert=invert,
             ),
         )
 

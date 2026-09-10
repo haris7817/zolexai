@@ -161,11 +161,19 @@ async def upscale_clip(
     log_extra: dict | None = None,
     deflicker: bool = False,
     bitrate: str | None = None,
+    frames: int | None = None,
 ) -> Path:
     """`clip` scaled to cover `target`, centre-cropped to it exactly.
 
     `run` wraps each ffmpeg call — the adapters pass `cancellable` bound to
     their job, so an abandoned job kills the encoder rather than finishing it.
+
+    `frames` pins the output's frame count. A resize is frame for frame and
+    mostly stays that way, but this is the last encode before the customer
+    sees the file, and for Video to Video the count is the thing the workflow
+    promises exactly — so it is stated rather than assumed. Omitted, the
+    encoder writes whatever the input holds, which is what every other caller
+    expects.
 
     `deflicker` prepends the client's temporal stabiliser to the same filter
     chain. It runs BEFORE the resize on purpose: the flicker is in the
@@ -191,6 +199,11 @@ async def upscale_clip(
     nvenc_codec, cpu_codec = _video_codec(target, bitrate)
     common = ["-i", str(clip), "-vf", ",".join(chain), "-pix_fmt", "yuv420p",
               *_REC709, "-c:a", "copy", "-movflags", "+faststart"]
+    if frames is not None:
+        if frames < 1:
+            raise ValueError(f"a delivery needs at least one frame, got {frames}")
+        # Bounds the video stream only; the copied audio is written whole.
+        common += ["-frames:v", str(frames)]
 
     async def _run(awaitable):
         return await (run(awaitable) if run is not None else awaitable)

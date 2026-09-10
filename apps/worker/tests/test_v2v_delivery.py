@@ -106,8 +106,11 @@ def test_the_proxy_grid_follows_the_sources_shape_rather_than_a_product_ratio() 
 
 
 def test_an_unprobeable_source_still_gets_a_grid() -> None:
-    assert proxy_grid_for_source(None, None) == (896, 512)
-    assert proxy_grid_for_source(0, 0) == (896, 512)
+    """The widest legal landscape shape of the profile, which is what the
+    named table says for 16:9. A source nobody could measure is far more
+    likely to be landscape than square."""
+    assert proxy_grid_for_source(None, None) == (1152, 512)
+    assert proxy_grid_for_source(0, 0) == (1152, 512)
 
 
 # ── The delivery frame ───────────────────────────────────────────────────
@@ -332,7 +335,7 @@ def test_the_definition_offers_the_ladder_and_keeps_the_photo_optional() -> None
     execution = workflow["execution"]
     assert execution["v2v_engine"] == "transform"
     assert execution["v2v_reference_identity"] is True
-    assert execution["render_proxy"] == "480p"
+    assert execution["render_proxy"] == "704p"
     assert execution["execution_by_quality"] == {
         "1080p": {"delivery": "1080p"},
         "4k": {"delivery": "4k"},
@@ -353,5 +356,5 @@ def test_quality_changes_the_finish_and_nothing_else() -> None:
     for level in ("1080p", "4k", "8k"):
         execution = _execution_for({"execution": base, "parameters": {"quality": level}})
         assert execution["delivery"] == level
-        assert execution["render_proxy"] == "480p", "the render must not follow the finish"
+        assert execution["render_proxy"] == "704p", "the render must not follow the finish"
         assert execution["v2v_engine"] == "transform"

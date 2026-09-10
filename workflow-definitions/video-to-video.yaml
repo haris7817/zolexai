@@ -291,18 +291,28 @@ execution:
   # delivery size below.
   #
   # BE CLEAR ABOUT WHAT THIS SELLS. The quality levels change the CONTAINER,
-  # not the amount of detail generated: 8K is the same 480-class render as
-  # 1080p, resized 9.2x. The client asked for exactly this and it is their
-  # call, but two measured facts belong next to it. Generation drops from
-  # 1024x576 to 832x480, which is 0.68x the pixels, so V2V output detail goes
-  # DOWN relative to what this tool shipped before. And a lanczos enlargement
-  # adds no detail — measured 0.29x on 7 Sep 2026 when a smaller render was
-  # upscaled to the same frame, and visibly softer.
+  # not the amount of detail generated: 8K is the same render as 1080p, just
+  # enlarged further. A lanczos enlargement adds no detail — measured 0.29x on
+  # 7 Sep 2026 — so the size below is what decides how the result looks, and
+  # the ladder only decides how big the file is.
   #
-  # Deleting the `render_proxy` line puts generation back on the measured
-  # grid; the delivery ladder keeps working and simply has less enlarging to
-  # do. That is the one-line lever if the look is judged short.
-  render_proxy: 480p
+  # 704p since 11 Sep 2026, on the client's verdict against the first real
+  # result: the identity transferred correctly, but 480-class generation did
+  # not hold "fast hands, fingers, clothing edges and facial features", and
+  # enlarging to 8K only enlarged those distortions. Their canvases:
+  #
+  #     landscape 1280x704 · vertical 704x1280 · square 704x704
+  #
+  # Any other source shape gets the nearest /64 grid with a 704 short side and
+  # a long side no greater than 1280. **/64, not the /32 their note says** —
+  # 480 was /32 and could not render at all (see `_PROXY_SHORT_SIDE` in the
+  # adapter); their three named canvases satisfy /64 anyway, so this is only a
+  # constraint on the unusual ratios.
+  #
+  # This is roughly 2x the pixels of the 512-class canvas it replaces and
+  # about 1.5x the 1024x576 the tool used before any of this, so passes cost
+  # more. Deleting the line puts generation back on the measured grid.
+  render_proxy: 704p
   delivery: 4k
 
   # Keys here replace keys above for the matching quality level, and a request

@@ -25,10 +25,15 @@ asked instead for a delivery ladder: the reference optional again, and
 `v2v-cast-replacement-archived` branch rather than deleted, because this
 guard exists precisely because this tool keeps changing shape.
 
+It moved again on 11 Sep 2026, on their verdict against the first real
+result: the identity transferred, but 480-class generation did not hold
+"fast hands, fingers, clothing edges and facial features", and enlarging
+to 8K only enlarged those distortions. Generation is 704-class now.
+
 What the current pin covers: one optional reference image that switches
 the tool between a prompt-only restyle and a person replacement, a quality
-control that selects the delivered SIZE only, and a 480-class proxy grid
-under all three levels. Music keeps its original pin.
+control that selects the delivered SIZE only, and a 704-class generation
+grid under all three levels. Music keeps its original pin.
 """
 
 from __future__ import annotations
@@ -42,7 +47,7 @@ from app.services.workflow_registry import load_registry
 DEFINITIONS = Path(app_settings.workflow_definitions_dir)
 
 PINNED_SHA256 = {
-    "video-to-video.yaml": "a46b9e7779fade63db60267a2c212ef9d321c89f5b2050ba4101312c55c87fb3",
+    "video-to-video.yaml": "ad67953c0b4027c1adfc18589171b791a26b8f00d9c0977c80105f70e25e6f4f",
     # 8 Sep 2026: the client's music-video worker (see the module note).
     # music-video.yaml re-pinned 9 Sep 2026: the client asked for a
     # reference-video link box (`settings.reference_video: true`). Only
@@ -69,21 +74,41 @@ def test_the_untouched_definitions_are_byte_identical_to_their_pins() -> None:
         )
 
 
-def test_video_to_video_contract_unchanged() -> None:
+def test_video_to_video_contract() -> None:
+    """The shape the pin above is guarding, stated in full.
+
+    Its purpose has not changed: this workflow must not drift by accident.
+    What it asserts moved on 10 and 11 Sep 2026 because the client changed the
+    tool deliberately — see the module note. The parts that did NOT move are
+    the ones worth reading here: the duration still comes from the source, the
+    two input roles are the same two, and the committed runtime is still the
+    mock the deploy overlay rewrites.
+    """
     registry = load_registry(DEFINITIONS)
     public = registry.get_public("video-to-video")
     assert public.name == "Video to Video"
     assert public.duration_mode == "source"
     assert public.supported_aspect_ratios == ["16:9", "9:16"]
-    assert public.supported_quality_levels == ["fast", "best"]
+    # Delivery sizes since 10 Sep 2026, replacing Fast/Best.
+    assert public.supported_quality_levels == ["1080p", "4k", "8k"]
     assert [spec.role for spec in public.inputs] == ["source_video", "reference_image"]
     assert public.settings.quality is True and public.settings.seed is False
+    assert public.settings.sound is True
     definition = registry.get("video-to-video")
     extra = definition.execution.model_extra or {}
     assert definition.execution.runtime == "mock"  # the overlay writes `ltx`, never anything else
     assert extra.get("v2v_engine") == "transform"
-    assert extra.get("v2v_reference_identity") is False
-    assert extra.get("execution_by_quality") == {"best": {"v2v_reference_identity": True}}
+    # On for every job and inert without a photo, so the quality overlay
+    # carries the delivered size and nothing else.
+    assert extra.get("v2v_reference_identity") is True
+    assert extra.get("execution_by_quality") == {
+        "1080p": {"delivery": "1080p"},
+        "4k": {"delivery": "4k"},
+        "8k": {"delivery": "8k"},
+    }
+    # 704 since 11 Sep 2026: 480-class generation did not hold hands, fingers
+    # or clothing edges, and enlarging only enlarged the distortions.
+    assert extra.get("render_proxy") == "704p"
     assert definition.execution.timeout_seconds == 5400
 
 

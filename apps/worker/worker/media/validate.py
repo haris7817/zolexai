@@ -51,6 +51,29 @@ class OutputExpectation:
     expected_width: int | None = None
     expected_height: int | None = None
 
+    expected_frame_count: int | None = None
+    """Exact frames the delivered video must contain.
+
+    Duration alone cannot state this. A file can carry the right number of
+    seconds and the wrong number of frames — the container rounds, and a
+    workflow that promises "the same length as your video" is promising the
+    frames, not a rounded float. Video to Video pins it because its sections
+    are planned from a duration and delivered against the source's own count
+    (client measurement, 11 Sep 2026: 347 frames in, 345 out).
+
+    `None` means the caller has no exact expectation, which is every workflow
+    whose length it chose itself.
+    """
+
+    max_av_drift_seconds: float | None = None
+    """How far the audio may sit from the video, when both are present.
+
+    Separate from `tolerance_seconds`, which asks whether the FILE is the
+    right length. This asks whether its two streams agree with each other, and
+    the answer wants to be much tighter: a soundtrack laid once over a stitched
+    picture is either aligned or it is visibly late.
+    """
+
     require_decodable: bool = True
     """Decode the file rather than only reading its metadata.
 
@@ -110,6 +133,30 @@ async def verify_output(path: Path, expectation: OutputExpectation) -> MediaInfo
                     f"{expectation.expected_seconds:.2f}s by {audio_drift:.2f}s "
                     f"(tolerance {tolerance:.2f}s)"
                 )
+
+    if expectation.expected_frame_count is not None:
+        if info.frame_count is None:
+            problems.append(
+                f"reports no frame count, but {expectation.expected_frame_count} "
+                "were required"
+            )
+        elif info.frame_count != expectation.expected_frame_count:
+            problems.append(
+                f"has {info.frame_count} frames, not the required "
+                f"{expectation.expected_frame_count}"
+            )
+
+    if (
+        expectation.max_av_drift_seconds is not None
+        and info.duration_seconds is not None
+        and info.audio_duration_seconds is not None
+    ):
+        drift = abs(info.audio_duration_seconds - info.duration_seconds)
+        if drift > expectation.max_av_drift_seconds:
+            problems.append(
+                f"audio and video differ by {drift:.3f}s, over the "
+                f"{expectation.max_av_drift_seconds:.3f}s allowed"
+            )
 
     if expectation.expected_width and info.width != expectation.expected_width:
         problems.append(f"width {info.width} is not the requested {expectation.expected_width}")

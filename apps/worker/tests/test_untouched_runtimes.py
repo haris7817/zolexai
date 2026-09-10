@@ -28,14 +28,16 @@ ROOT = Path(__file__).resolve().parents[3]
 #: The CLI runtime's source. Pinned at the milestone's starting commit
 #: (926d2e3) and unmoved through it — only its callers changed shape.
 #:
-#: Re-based 10 Sep 2026 for the client's Video to Video rework, which is a
-#: change to the tool itself rather than to what surrounds it: generation on a
-#: 480-class proxy grid, a 1080p/4K/8K delivery finish, and identity gated by
-#: whether the customer attached a photo. The guard was never a rule against
-#: the client changing their own tool; it exists so that nothing ELSE moves
-#: this file quietly. Everything it protects is still asserted by the suites
-#: named below, and by test_v2v_delivery.
-PINNED_LTX_ADAPTER_SHA256 = "91bef794627099bda1e99aaea093b660772bd40f00f0de9a2437fe1e8d34c074"
+#: Re-based 10 Sep 2026 for the client's Video to Video rework, and again on
+#: 11 Sep when they raised generation from 480-class to 704 after seeing the
+#: first real result. Both are changes to the tool itself rather than to what
+#: surrounds it: a proxy generation grid, a 1080p/4K/8K delivery finish, and
+#: identity gated by whether the customer attached a photo. The guard was
+#: never a rule against the client changing their own tool; it exists so that
+#: nothing ELSE moves this file quietly. Everything it protects is still
+#: asserted by the suites named below, and by test_v2v_delivery and
+#: test_ltx_video_to_video.
+PINNED_LTX_ADAPTER_SHA256 = "5fdbb7e7ac114060a315b008da2a26a2e999e92589c415c7cc77ede8f9be63bd"
 
 
 def _sha256_lf(path: Path) -> str:
@@ -64,7 +66,7 @@ def test_the_new_runtimes_decline_the_untouched_workflows() -> None:
 
 
 def test_the_resolver_keeps_video_to_video_on_its_runtime() -> None:
-    for quality in ("fast", "best", None):
+    for quality in ("1080p", "4k", "8k", None):
         job = AdapterJob(
             job_id="j",
             workflow_id="video-to-video",
@@ -73,9 +75,12 @@ def test_the_resolver_keeps_video_to_video_on_its_runtime() -> None:
             parameters={"quality": quality} if quality else {},
             execution={
                 "runtime": "ltx",
-                "runtime_by_quality": {"fast": "ltx", "best": "ltx"},
                 "v2v_engine": "transform",
-                "execution_by_quality": {"best": {"v2v_reference_identity": True}},
+                "execution_by_quality": {
+                    "1080p": {"delivery": "1080p"},
+                    "4k": {"delivery": "4k"},
+                    "8k": {"delivery": "8k"},
+                },
             },
         )
         assert resolve_adapter(job).name == "ltx"
