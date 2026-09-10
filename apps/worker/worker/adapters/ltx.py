@@ -277,12 +277,30 @@ _PROXY_SHORT_SIDE = 512
 #: trade-off recorded against `_PROXY_SHORT_SIDE`: the enlargement was never
 #: the problem, the pixels underneath it were.
 #:
-#: These are the client's named canvases, and the aspect search below returns
-#: exactly them for the three common shapes. The table is what an unprobeable
-#: source falls back to.
+#: **The long side is capped at 1152, not the 1280 they asked for, and that is
+#: measured.** 1280x704 renders a prompt-only restyle fine (130 s), and fails
+#: every job that carries a reference photo:
+#:
+#:     ltx_pipelines/ic_lora.py, encode_video(...)
+#:     video_vae/transformer/chunked/mlp.py, _chunked_residual_modulated_impl
+#:     CUBLAS_STATUS_INTERNAL_ERROR ... then an illegal memory access
+#:
+#: It is not headroom: it reproduced with 70 GB free and again with
+#: `LTX_UNQUANTIZED_OFFLOAD=cpu`. Only identity jobs encode a second video
+#: through the VAE, and that encode is where it dies — the documented "the VAE
+#: fails on a SET of bad shapes, not above a threshold" behaviour recorded
+#: against `_GRID_CEILINGS`. 1152x704 carries the same reference through in
+#: 151 s, so that is the shape, and it is still 1.77x the pixels of the
+#: 512-class canvas the client rejected.
+#:
+#: 704x1152 portrait is NOT separately measured. The set is shape AND frame
+#: count, and only the landscape pair has been run.
+#:
+#: The aspect search below returns these for the three common shapes. The
+#: table is what an unprobeable source falls back to.
 _PROXY_704_DIMENSIONS: dict[str, tuple[int, int]] = {
-    "16:9": (1280, 704),
-    "9:16": (704, 1280),
+    "16:9": (1152, 704),
+    "9:16": (704, 1152),
     "1:1": (704, 704),
 }
 
@@ -294,7 +312,9 @@ _PROXY_704_DIMENSIONS: dict[str, tuple[int, int]] = {
 #: way 480 did. See `_PROXY_SHORT_SIDE`; the constraint is the model's.
 _PROXY_CANVASES: dict[str, tuple[int, int]] = {
     "512p": (_PROXY_SHORT_SIDE, 1152),
-    "704p": (704, 1280),
+    # 1152, not the 1280 the client's note asks for. Measured, 11 Sep 2026 —
+    # see `_PROXY_704_DIMENSIONS`.
+    "704p": (704, 1152),
 }
 
 #: `480p` is what the client's own workflow file says. It is kept working

@@ -56,37 +56,19 @@ inputs:
 duration_mode: source
 supported_durations: []
 supported_aspect_ratios: ["16:9", "9:16"]
-# The Fast/Best toggle. Revised 28 Aug 2026, same day it shipped, on the
-# client's verdict: "I put a video and press better and give me a whole
-# different video."
-#
-# That was accurate. Best had been routed to an engine that reads STILLS —
-# the reference photo plus the source's first frame — and generates a new
-# performance from them. It produced a good video of the right person in a
-# plausible place, and it threw the customer's footage away. Whatever else
-# Video to Video is, it is the workflow where the uploaded video comes back.
-#
-# So both levels now run the engine that drives every frame from the source,
-# and the difference between them is WHAT IS ASKED OF IT — which is a real
-# difference in work and cost, not a label:
-#
-#   Fast   restyles the footage from the prompt. The reference photo, when
-#          one is given, is a look hint. No matting pass.
-#   Best   additionally replaces the PERSON with the one in the reference
-#          photo: each pass mattes the people in its own window and the
-#          reference is re-shown inside it, so the face is the photo's while
-#          the motion stays the footage's. Roughly 27 s per pass on top.
-#
-# Which engine each level runs is the deployment's
-# execution.runtime_by_quality, never named here: engines are private. The
-# worker also refuses to route a level to an engine that cannot serve this
-# workflow — see `resolve_adapter` — so a stale deployment mapping degrades
-# to the base runtime instead of failing a customer's job.
 # Since 10 Sep 2026 the quality control picks the DELIVERY SIZE, not the
-# engine. Fast/Best is gone: with identity gated by whether a photo was
-# uploaded, the two levels no longer differed by anything a customer could
-# name. See the `delivery` keys in the execution block for what these buy,
-# and for the honest note about what they do not.
+# engine.
+#
+# It used to be Fast/Best, and that pair had a real job: Best replaced the
+# person from the reference photo and Fast did not, so a customer with no
+# photo could still restyle their footage. Both ran the same engine — the one
+# that drives every frame from the source, because whatever else Video to
+# Video is, it is the workflow where the uploaded video comes back.
+#
+# Gating identity on whether a photo was UPLOADED does that job better and
+# says it plainly, so the levels stopped differing by anything a customer
+# could name. See the `delivery` keys in the execution block for what these
+# buy, and for the honest note about what they do not.
 supported_quality_levels: ["1080p", "4k", "8k"]
 
 settings:
@@ -301,17 +283,23 @@ execution:
   # not hold "fast hands, fingers, clothing edges and facial features", and
   # enlarging to 8K only enlarged those distortions. Their canvases:
   #
-  #     landscape 1280x704 · vertical 704x1280 · square 704x704
+  #     landscape 1152x704 · vertical 704x1152 · square 704x704
+  #
+  # TWO DEPARTURES FROM THEIR NOTE, both measured on the card, both recorded
+  # in full against `_PROXY_704_DIMENSIONS` and `_PROXY_SHORT_SIDE`:
+  #
+  #   * the lattice is /64, not /32. 480 was /32 and could not render at all.
+  #     Their named canvases satisfy /64 anyway, so this only binds on the
+  #     unusual ratios;
+  #   * the long side is 1152, not 1280. 1280x704 renders a prompt-only
+  #     restyle fine and fails EVERY job carrying a reference photo, inside
+  #     the VAE's encode of the second video. Not headroom — it reproduced
+  #     with 70 GB free and with the transformer offloaded to CPU.
   #
   # Any other source shape gets the nearest /64 grid with a 704 short side and
-  # a long side no greater than 1280. **/64, not the /32 their note says** —
-  # 480 was /32 and could not render at all (see `_PROXY_SHORT_SIDE` in the
-  # adapter); their three named canvases satisfy /64 anyway, so this is only a
-  # constraint on the unusual ratios.
-  #
-  # This is roughly 2x the pixels of the 512-class canvas it replaces and
-  # about 1.5x the 1024x576 the tool used before any of this, so passes cost
-  # more. Deleting the line puts generation back on the measured grid.
+  # a long side no greater than 1152. That is still 1.77x the pixels of the
+  # 512-class canvas the client rejected, so passes cost appreciably more.
+  # Deleting the line puts generation back on the measured grid.
   render_proxy: 704p
   delivery: 4k
 

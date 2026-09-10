@@ -33,7 +33,9 @@ def parse_args() -> argparse.Namespace:
     ))
     parser.add_argument("--delivery", default="1080p",
                         choices=("native", "1080p", "4k", "8k"))
-    parser.add_argument("--proxy", default="480p", choices=("480p", "off"))
+    parser.add_argument("--proxy", default="704p",
+                        choices=("704p", "512p", "480p", "off"),
+                        help="the render_proxy profile, or off for the measured grid")
     parser.add_argument("--seconds", type=float, default=0.0,
                         help="trim the source to this many seconds first")
     parser.add_argument("--workspace", type=Path,
@@ -92,8 +94,8 @@ async def main() -> int:
         "v2v_identity_subject_attention": 0.50,
         "delivery": args.delivery,
     }
-    if args.proxy == "480p":
-        execution["render_proxy"] = "480p"
+    if args.proxy != "off":
+        execution["render_proxy"] = args.proxy
 
     job = AdapterJob(
         job_id="v2v-smoke-0000-0000-000000000001",

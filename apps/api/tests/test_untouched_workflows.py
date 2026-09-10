@@ -47,7 +47,7 @@ from app.services.workflow_registry import load_registry
 DEFINITIONS = Path(app_settings.workflow_definitions_dir)
 
 PINNED_SHA256 = {
-    "video-to-video.yaml": "ad67953c0b4027c1adfc18589171b791a26b8f00d9c0977c80105f70e25e6f4f",
+    "video-to-video.yaml": "2baea7173712443cd197b280e63aadc079c50c971a00bf22819f6d4e73e72f20",
     # 8 Sep 2026: the client's music-video worker (see the module note).
     # music-video.yaml re-pinned 9 Sep 2026: the client asked for a
     # reference-video link box (`settings.reference_video: true`). Only

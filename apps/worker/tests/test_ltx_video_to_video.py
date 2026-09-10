@@ -89,21 +89,26 @@ def v2v_job(workspace: Path, source: Path | None, reference: Path | None = None,
 # ── The 704 canvases ─────────────────────────────────────────────────────
 
 
-def test_the_three_named_canvases_are_exactly_what_the_client_asked_for() -> None:
-    assert proxy_704_grid_for_source(1920, 1080) == (1280, 704)
-    assert proxy_704_grid_for_source(1080, 1920) == (704, 1280)
+def test_the_704_canvases_are_the_measured_ones() -> None:
+    """704 on the short side, as asked. The long side is 1152 rather than the
+    1280 in their note, and that is measured rather than preferred: 1280x704
+    renders a prompt-only restyle fine and fails EVERY job carrying a
+    reference photo, inside the VAE's encode of the second video. See
+    `_PROXY_704_DIMENSIONS` for the trace and the two ruled-out causes."""
+    assert proxy_704_grid_for_source(1920, 1080) == (1152, 704)
+    assert proxy_704_grid_for_source(1080, 1920) == (704, 1152)
     assert proxy_704_grid_for_source(1000, 1000) == (704, 704)
 
 
 def test_an_unusual_ratio_keeps_its_own_shape_within_the_bounds() -> None:
     """A 4:5 phone clip and a 2.39:1 anamorphic one are the cases with no
     named canvas. Both must land on the /64 lattice, keep a 704 short side and
-    never exceed 1280 on the long one."""
+    never exceed the measured 1152 on the long one."""
     for width, height in ((1080, 1350), (2048, 858), (1440, 1080), (640, 480), (1280, 704)):
         grid = proxy_704_grid_for_source(width, height)
         assert grid[0] % 64 == 0 and grid[1] % 64 == 0, f"{width}x{height} -> {grid}"
         assert min(grid) == 704, f"{width}x{height} -> {grid} is not 704-class"
-        assert max(grid) <= 1280, f"{width}x{height} -> {grid} exceeds the long-side cap"
+        assert max(grid) <= 1152, f"{width}x{height} -> {grid} exceeds the long-side cap"
 
     portrait = proxy_704_grid_for_source(1080, 1350)
     assert portrait[0] == 704 and portrait[1] > 704, "a tall source rendered wide"
@@ -122,7 +127,7 @@ def test_the_lattice_is_64_not_32() -> None:
 
 
 def test_the_profile_names_resolve_and_480_is_never_used_literally() -> None:
-    assert proxy_canvas_for("704p") == (704, 1280)
+    assert proxy_canvas_for("704p") == (704, 1152)
     assert proxy_canvas_for("512p") == (512, 1152)
     # Their older file said 480p. It keeps working and resolves to the
     # smallest LEGAL canvas rather than being rejected or rendered.
