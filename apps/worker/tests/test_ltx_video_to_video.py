@@ -430,3 +430,32 @@ async def test_each_level_asks_for_the_same_render(
     assert (int(value_of(argv, "--width")), int(value_of(argv, "--height"))) == (
         asked_of_the_pipeline(proxy_704_grid_for_source(256, 144))
     )
+
+
+# ── The seams the tests always stub ──────────────────────────────────────
+
+
+def test_every_model_subprocess_seam_resolves_to_a_script_that_exists() -> None:
+    """The wiring no test exercises, because every test replaces it.
+
+    Each of these is a settings property that builds an argv for a script run
+    in the LTX environment. The suites stub the FUNCTIONS that call them, so a
+    missing property or a renamed script is invisible here and fails on the
+    first real job instead — which is exactly what happened on 11 Sep 2026:
+    restoring the multi-person anchor without its `multi_person_anchor_command`
+    setting raised `AttributeError` on the card, after a clean test run.
+    """
+    from worker.core.config import settings
+
+    seams = (
+        "person_matte_argv",
+        "person_anchor_argv",
+        "multi_person_anchor_argv",
+        "director_planner_argv",
+    )
+    for name in seams:
+        argv = getattr(settings, name, None)
+        assert argv, f"settings.{name} is missing or empty"
+        script = Path(argv[-1])
+        assert script.suffix == ".py", f"settings.{name} does not end in a script"
+        assert script.is_file(), f"settings.{name} points at a missing file: {script}"

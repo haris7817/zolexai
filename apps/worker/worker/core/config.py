@@ -212,6 +212,17 @@ class WorkerSettings(BaseSettings):
     """How to build the composited identity anchor for
     `execution.v2v_reference_identity` — see `person_anchor_argv`."""
 
+    multi_person_anchor_command: str = ""
+    """How to build the one-to-four-person identity/background anchor that
+    Video to Video opens on — see `multi_person_anchor_argv`.
+
+    Empty means "the script shipped in this checkout, run in the LTX
+    environment", the same pattern as every other model subprocess here. The
+    script REFUSES an ambiguous person count rather than assigning a reference
+    to whichever source person happens to be nearest: a job that maps Person 2
+    onto the wrong body is worse than a job that stops and says so.
+    """
+
     director_planner_command: str = ""
     """
     How to invoke the Director-mode scene planner, which turns a one-line idea
@@ -1616,6 +1627,14 @@ class WorkerSettings(BaseSettings):
         if self.person_anchor_command:
             return shlex.split(self.person_anchor_command)
         script = Path(__file__).resolve().parents[2] / "scripts" / "person_anchor.py"
+        return ["uv", "run", "python", str(script)]
+
+    @property
+    def multi_person_anchor_argv(self) -> list[str]:
+        """The one-to-four-person anchor command, as argv — same pattern."""
+        if self.multi_person_anchor_command:
+            return shlex.split(self.multi_person_anchor_command)
+        script = Path(__file__).resolve().parents[2] / "scripts" / "multi_person_anchor.py"
         return ["uv", "run", "python", str(script)]
 
     @property

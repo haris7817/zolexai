@@ -33,8 +33,8 @@ def parse_args() -> argparse.Namespace:
     ))
     parser.add_argument("--delivery", default="1080p",
                         choices=("native", "1080p", "4k", "8k"))
-    parser.add_argument("--proxy", default="704p",
-                        choices=("704p", "512p", "480p", "off"),
+    parser.add_argument("--proxy", default="540p",
+                        choices=("540p", "704p", "512p", "480p", "off"),
                         help="the render_proxy profile, or off for the measured grid")
     parser.add_argument("--seconds", type=float, default=0.0,
                         help="trim the source to this many seconds first")
