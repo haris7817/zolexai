@@ -57,7 +57,7 @@ from worker.media.captions import CaptionReport, remove_captions
 from worker.media.preview import ensure_faststart, write_preview
 from worker.media.upscale import DELIVERY_4K as _DELIVERY_4K
 from worker.media.upscale import DELIVERY_8K as _DELIVERY_8K
-from worker.media.upscale import is_4k, is_8k, upscale_clip
+from worker.media.upscale import bitrate_for, is_4k, is_8k, upscale_clip
 from worker.prompt.ltx25 import apply_guidelines
 from worker.prompt.no_text import without_visible_text
 from worker.providers.ltx_comfy import LtxComfyService
@@ -538,7 +538,11 @@ class LtxHdAdapter:
                 run=lambda awaitable: cancellable(job, awaitable),
                 log_extra={"job_id": job.job_id, "workflow_id": job.workflow_id},
                 deflicker=stabilize,
-                bitrate=settings.ltx_hd_delivery_bitrate or None,
+                bitrate=(
+                    bitrate_for(target, settings.ltx_hd_delivery_bitrate)
+                    if settings.ltx_hd_delivery_bitrate
+                    else None
+                ),
             )
         except FfmpegError as exc:
             raise AdapterError(

@@ -43,6 +43,7 @@ play it); anything at or under 4096 stays H.264 exactly as before.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from worker.core.logging import get_logger
@@ -127,6 +128,32 @@ def headroom(bitrate: str) -> tuple[str, str]:
     suffix = bitrate[len(digits) :]
     value = int(digits)
     return f"{int(value * 1.5)}{suffix}", f"{value * 3}{suffix}"
+
+
+def bitrate_for(target: tuple[int, int], master_rate: str) -> str:
+    """`master_rate` scaled down for a frame smaller than 8K.
+
+    The client named two numbers on 11 Sep 2026 — 30M for the 8K master and
+    5M for a 1080p web preview — and a single global rate satisfies neither.
+    Applied flat, 30M gives a 30 s **1080p** file ~110 MB, six times their own
+    number for that frame and absurd for 2 MP.
+
+    Rate scales with the SQUARE ROOT of pixel count, not linearly. Linear
+    would put 1080p at 1.9M, which is visibly worse than their preview; the
+    square root lands 7.5M / 15M / 30M across 1080p / 4K / 8K, which brackets
+    both of their anchors — a delivered 1080p a little above their preview, as
+    a master should be, and their 30M at 8K exactly.
+
+    An unparseable rate is returned unchanged rather than guessed at.
+    """
+    digits = "".join(c for c in master_rate if c.isdigit())
+    if not digits:
+        return master_rate
+    suffix = master_rate[len(digits) :]
+    reference = DELIVERY_8K["16:9"][0] * DELIVERY_8K["16:9"][1]
+    pixels = max(1, target[0] * target[1])
+    scaled = int(int(digits) * math.sqrt(pixels / reference))
+    return f"{max(1, scaled)}{suffix}"
 
 
 def _video_codec(target: tuple[int, int], bitrate: str | None) -> tuple[list[str], list[str]]:

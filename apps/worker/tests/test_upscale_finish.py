@@ -105,6 +105,28 @@ def test_an_unparseable_bitrate_does_not_fail_a_rendered_job() -> None:
     assert headroom("fast") == ("fast", "fast")
 
 
+def test_the_rate_follows_the_frame_rather_than_being_one_global_number() -> None:
+    """A single rate satisfies neither of the client's two numbers.
+
+    They named 30M for the 8K master and 5M for a 1080p preview. Applied
+    flat, 30M gives a 30 s **1080p** delivery of ~110 MB — six times their own
+    figure for that frame, for 2 MP of picture. Caught before it shipped,
+    when the client chose 1080p for the first real test.
+
+    Square root of pixel count, not linear: linear puts 1080p at 1.9M, below
+    their preview, which is the opposite mistake.
+    """
+    from worker.media.upscale import bitrate_for
+
+    assert bitrate_for(DELIVERY_8K["16:9"], "30M") == "30M"     # their anchor, exact
+    assert bitrate_for(DELIVERY_4K["16:9"], "30M") == "15M"
+    assert bitrate_for((1920, 1080), "30M") == "7M"             # just above their 5M preview
+    # Orientation is not a size: a portrait frame has the same pixels.
+    assert bitrate_for((1080, 1920), "30M") == bitrate_for((1920, 1080), "30M")
+    # Unparseable is returned untouched rather than guessed at.
+    assert bitrate_for((1920, 1080), "veryfast") == "veryfast"
+
+
 def test_a_tier_is_only_a_tier_when_it_is_spelled_like_one() -> None:
     """Both readers are deliberately strict: a typo that silently promoted a
     job would multiply its frame by four, or by sixteen."""
