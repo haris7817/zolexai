@@ -109,8 +109,11 @@ def is_8k(raw: object) -> bool:
     return str(raw or "").strip().lower() in ("8k", "4320p", "uhd8k")
 
 
-def _headroom(bitrate: str) -> tuple[str, str]:
-    """`-maxrate` and `-bufsize` for a target rate: 1.5x and 2x it.
+def headroom(bitrate: str) -> tuple[str, str]:
+    """`-maxrate` and `-bufsize` for a target rate: 1.5x and 3x it.
+
+    The client's own ratios, 11 Sep 2026 — they write 30M/45M/90M for the 8K
+    master and 5M/7M/14M for the web preview, which is 1x/1.5x/3x both times.
 
     A hard cap at the target would starve the opening seconds of a shot,
     which is where an enlarged 480p frame needs the bits most. A string this
@@ -123,7 +126,7 @@ def _headroom(bitrate: str) -> tuple[str, str]:
         return bitrate, bitrate
     suffix = bitrate[len(digits) :]
     value = int(digits)
-    return f"{int(value * 1.5)}{suffix}", f"{value * 2}{suffix}"
+    return f"{int(value * 1.5)}{suffix}", f"{value * 3}{suffix}"
 
 
 def _video_codec(target: tuple[int, int], bitrate: str | None) -> tuple[list[str], list[str]]:
@@ -136,15 +139,21 @@ def _video_codec(target: tuple[int, int], bitrate: str | None) -> tuple[list[str
     choose.
     """
     hevc = max(target) > _H264_MAX_SIDE
+    # p6 for the HEVC master, p5 below it — the client's own presets,
+    # 11 Sep 2026. p6 is slower per frame and the 8K master is the one file
+    # where that is worth paying for.
     nvenc = ["-c:v", "hevc_nvenc", "-tag:v", "hvc1"] if hevc else ["-c:v", "h264_nvenc"]
-    nvenc += ["-preset", "p5", "-tune", "hq"]
+    nvenc += ["-preset", "p6" if hevc else "p5", "-tune", "hq"]
     cpu = ["-c:v", "libx265", "-tag:v", "hvc1"] if hevc else ["-c:v", "libx264"]
     cpu += ["-preset", "fast"]
     if bitrate is None:
         return [*nvenc, "-cq", "19"], [*cpu, "-crf", "18"]
-    ceiling, buffer = _headroom(bitrate)
+    ceiling, buffer = headroom(bitrate)
+    # `-cq` alongside VBR is a quality CEILING, not a target: NVENC spends up
+    # to the bitrate but stops early on frames that do not need it. The
+    # client's 22, which on an upscaled source is most frames.
     return (
-        [*nvenc, "-rc", "vbr", "-cq", "0", "-b:v", bitrate,
+        [*nvenc, "-rc", "vbr", "-cq", "22", "-b:v", bitrate,
          "-maxrate", ceiling, "-bufsize", buffer],
         [*cpu, "-b:v", bitrate, "-maxrate", ceiling, "-bufsize", buffer],
     )
@@ -232,6 +241,7 @@ __all__ = [
     "DEFLICKER",
     "DELIVERY_4K",
     "DELIVERY_8K",
+    "headroom",
     "is_4k",
     "is_8k",
     "upscale_clip",

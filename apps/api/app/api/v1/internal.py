@@ -43,7 +43,7 @@ from app.schemas.internal import (
 from app.schemas.workflow import ExecutionSpec
 from app.services import queue
 from app.services.generation import GenerationService
-from app.services.storage import output_key
+from app.services.storage import output_key, preview_output_key
 
 logger = get_logger(__name__)
 
@@ -238,6 +238,22 @@ async def claim_job(
         expires_in=output_upload_ttl(definition.execution),
     )
 
+    # A second slot, for the small copy the web player loads instead of a
+    # 300 MB master (client instruction, 11 Sep 2026). Always presigned, never
+    # required: an adapter that makes no preview simply does not PUT to it, and
+    # an unused presigned URL costs nothing but the HMAC that made it. Video
+    # only, because that is the only output type with the problem.
+    preview_key = preview_output_key(job.user_id, job.id)
+    preview_upload = None
+    if content_type.startswith("video/"):
+        preview_upload = await asyncio.to_thread(
+            storage.presign_upload,
+            preview_key,
+            content_type="video/mp4",
+            max_size_bytes=0,
+            expires_in=output_upload_ttl(definition.execution),
+        )
+
     inputs: list[ClaimedInput] = []
     for link, asset in await repo.load_inputs(job.id):
         if asset.status != AssetStatus.READY:
@@ -280,6 +296,8 @@ async def claim_job(
             output_upload_key=out_key,
             output_upload_url=upload.url,
             output_content_type=content_type,
+            preview_upload_key=preview_key if preview_upload else "",
+            preview_upload_url=preview_upload.url if preview_upload else "",
         ),
         poll_after_seconds=5,
     )
@@ -353,6 +371,10 @@ async def complete_job(
         width=payload.width,
         height=payload.height,
         result=payload.result,
+        preview_key=payload.preview_key,
+        preview_size_bytes=payload.preview_size_bytes,
+        preview_width=payload.preview_width,
+        preview_height=payload.preview_height,
     )
     if job is None:
         logger.warning("worker_complete_rejected", extra={"reason": reason})

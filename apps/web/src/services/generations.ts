@@ -126,3 +126,24 @@ export async function cancelGeneration(
 export function primaryOutput(job: GenerationJob) {
   return job.outputs.find((output) => output.is_primary) ?? job.outputs[0];
 }
+
+/**
+ * What the PLAYER should load, which is not always what the Download button
+ * gives you.
+ *
+ * A 4K or 8K master is 300-400 MB, and a browser asked to play one fetches a
+ * large part of it before the first frame appears. When a job carries a
+ * non-primary video output it is the 1080p fast-start copy the worker made
+ * for exactly this (client instruction, 11 Sep 2026: "Do NOT play the actual
+ * 8K master on your webpage"), so the page plays that and the customer still
+ * downloads the real thing.
+ *
+ * Falls back to the primary output, which is every job made before previews
+ * existed, every 1080p delivery, and every non-video result.
+ */
+export function playableOutput(job: GenerationJob) {
+  const preview = job.outputs.find(
+    (output) => !output.is_primary && output.kind === "video" && output.url,
+  );
+  return preview ?? primaryOutput(job);
+}

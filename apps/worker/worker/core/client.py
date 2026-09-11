@@ -261,6 +261,10 @@ class WorkerApiClient:
         width: int | None = None,
         height: int | None = None,
         result: dict[str, Any] | None = None,
+        preview_key: str = "",
+        preview_size_bytes: int | None = None,
+        preview_width: int | None = None,
+        preview_height: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "worker_id": worker_id,
@@ -277,6 +281,16 @@ class WorkerApiClient:
         # every non-music adapter — sees the exact request it always did.
         if result:
             payload["result"] = result
+        # Same discipline: a job with no preview sends no preview fields, so an
+        # API that predates them sees the request it always did. The schema
+        # forbids extras, and this is what keeps a new worker safe against an
+        # API deployed behind it — which is the normal ordering here, since the
+        # node is a file copy and the VPS is a rebuild.
+        if preview_key:
+            payload["preview_key"] = preview_key
+            payload["preview_size_bytes"] = preview_size_bytes
+            payload["preview_width"] = preview_width
+            payload["preview_height"] = preview_height
         return await self._post(f"/internal/jobs/{job_id}/complete", payload)
 
     async def report_failure(

@@ -33,11 +33,26 @@ def _validate(**overrides):
     return REGISTRY.validate_request(**request)
 
 
-async def test_text_to_video_has_no_toggle_and_the_final_ladder(client: AsyncClient) -> None:
+async def test_text_to_video_sells_a_delivery_size_and_the_final_ladder(
+    client: AsyncClient,
+) -> None:
+    """The toggle came back, meaning something different from when it left.
+
+    It was removed on 5 Sep 2026 because it chose an ENGINE and there is only
+    one engine now. It returns on 11 Sep 2026 choosing a delivered SIZE, at
+    the client's instruction: "there is option for user to select 1080 4k or
+    8k so on the bases of that we upscale video".
+
+    That is the customer's call because they carry its cost — 1080p is ~10 MB
+    and 8K is 300-400 MB to download. It is not a quality dial: the
+    generation canvas is identical at all three, so every level renders for
+    the same time and delivers the same picture in a different frame.
+    """
     workflow = (await client.get("/api/v1/workflows/text-to-video")).json()
-    assert workflow["supported_quality_levels"] == []
+    assert workflow["supported_quality_levels"] == ["1080p", "4k", "8k"]
+    # Length does not depend on size: the same four at every level.
     assert workflow["supported_durations_by_quality"] == {}
-    assert workflow["settings"]["quality"] is False
+    assert workflow["settings"]["quality"] is True
     assert workflow["settings"]["prompt_modes"] is False
     assert workflow["settings"]["sound"] is True
     assert workflow["supported_durations"] == ["5s", "10s", "15s", "30s"]
@@ -50,14 +65,20 @@ async def test_text_to_video_has_no_toggle_and_the_final_ladder(client: AsyncCli
     assert "comfy" not in json.dumps(workflow).lower()
 
 
-def test_text_to_video_refuses_a_quality_level_now() -> None:
+def test_text_to_video_takes_the_three_sizes_and_still_refuses_the_old_names() -> None:
+    """The retired ENGINE names stay refused. A client still sending "best"
+    is out of date, and answering it with a guess is how a stale build keeps
+    working until it suddenly does not."""
     import pytest
 
     from app.services.workflow_registry import ValidationFailed
 
-    for level in ("best", "fast", "standard"):
+    for level in ("1080p", "4k", "8k", None):
+        _validate(duration="5s", quality=level)
+
+    for retired in ("best", "fast", "standard", "ultra"):
         with pytest.raises(ValidationFailed) as raised:
-            _validate(duration="5s", quality=level)
+            _validate(duration="5s", quality=retired)
         assert any(p["field"] == "quality" for p in raised.value.details["fields"])
 
 

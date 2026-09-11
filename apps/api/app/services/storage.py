@@ -117,6 +117,17 @@ def output_key(user_id: uuid.UUID, job_id: uuid.UUID, content_type: str) -> str:
     return f"users/{user_id}/generated/{job_id}/output{extension}"
 
 
+def preview_output_key(user_id: uuid.UUID, job_id: uuid.UUID) -> str:
+    """Where a job's small web-player copy lives, beside its master.
+
+    Same prefix as `output_key` on purpose: one job's files stay in one place,
+    so a lifecycle rule or a delete sweeps both without knowing a preview
+    exists. Always `.mp4` — a preview is H.264 whatever the master is, because
+    it exists to be decoded by a browser (client instruction, 11 Sep 2026).
+    """
+    return f"users/{user_id}/generated/{job_id}/preview.mp4"
+
+
 def with_extension(name: str, content_type: str) -> str:
     """Ensures a download name ends in the extension its content type implies.
 

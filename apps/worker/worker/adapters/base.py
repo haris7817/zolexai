@@ -224,6 +224,18 @@ class AdapterResult:
     job by the API and shown on the result page. Bounded (64 KB serialised);
     never model names, paths or internals."""
 
+    preview_path: Path | None = None
+    """A small, fast-start copy of `path` for the web player, when the
+    delivered file is too large to stream comfortably.
+
+    Client instruction, 11 Sep 2026: "Do NOT play the actual 8K master on your
+    webpage." The master stays the download and this is what the page loads.
+    None means the delivery is already small enough to play directly, which is
+    every 1080p job and every tool that does not make one.
+
+    Optional on purpose: a preview is a convenience, and an adapter that
+    cannot produce one still returns a complete result."""
+
     @property
     def size_bytes(self) -> int:
         return self.path.stat().st_size

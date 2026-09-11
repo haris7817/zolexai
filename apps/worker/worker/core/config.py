@@ -1029,10 +1029,49 @@ class WorkerSettings(BaseSettings):
     `execution.delivery` overrides per job.
     """
 
-    ltx_caption_removal: bool = True
+    ltx_hd_preview_bitrate: str = "5M"
+    """
+    Target rate for the 1080p web preview. The client's number, 11 Sep 2026,
+    with `-maxrate`/`-bufsize` following at 1.5x and 3x (`media.upscale.headroom`).
+    """
+
+    ltx_hd_preview: bool = True
+    """
+    Whether a delivery larger than 1080p also produces a small fast-start
+    copy for the web player.
+
+    Client instruction, 11 Sep 2026, and they called it the most important
+    change of the set: "Do NOT play the actual 8K master on your webpage."
+    An 8K master is 300-400 MB and a browser must fetch a large part of it
+    before the first frame; the preview is ~8 MB and looks the same inside a
+    player. The master stays the download.
+
+    A 1080p delivery makes no preview — it is already one.
+    """
+
+    ltx_caption_removal: bool = False
     """
     Whether a rendered clip is checked for burned-in captions and repaired
     before it is enlarged.
+
+    **OFF since 11 Sep 2026, at the client's instruction, because the repair
+    became the worse defect.** They reported "rectángulos borrosos/pixelados"
+    on the lunar ground and above an astronaut's chest in a 16:9 8K render and
+    asked us to "completely bypass every post-processing operation related to
+    caption removal [...] For normal text-to-video generation NONE of these
+    filters should run."
+
+    They were right, and the mechanism is not what either of us first guessed.
+    Checked against the masks on two affected clips: the detector is NOT
+    misfiring — every box sits on a real caption. What shows is the INPAINT.
+    ProPainter reconstructs grass convincingly and a detailed astronaut suit
+    or lunar rock much less so, and whatever softness it leaves is then
+    magnified 8.9x by the upscale to 8K. A caption in a close-up sits exactly
+    where they saw it: over the chest.
+
+    So the code stays and the switch is off. Turning it on is a deliberate
+    choice for a clip whose captions matter more than a soft rectangle might.
+    See `docs/internal/burned-in-captions.md`.
 
     Client instruction, 10 Sep 2026, after the positive-prompt clause below
     failed to stop them: detect, mask, inpaint, THEN upscale. See
@@ -1088,13 +1127,22 @@ class WorkerSettings(BaseSettings):
     through at CFG 1.0.
     """
 
-    ltx_hd_delivery_bitrate: str = "100M"
+    ltx_hd_delivery_bitrate: str = "30M"
     """
     Target video bitrate for the finishing pass, as an ffmpeg rate string.
-    Client instruction, 10 Sep 2026: "video bitrate: 35-45 Mbps →
-    approximately 100 Mbps" — 35-45 was what constant-quality `-cq 19`
-    happened to produce at 4K, so an explicit target is the only way to hold
-    a number. `-maxrate` and `-bufsize` follow at 1.5x and 2x.
+    `-maxrate` and `-bufsize` follow at 1.5x and 3x (`media.upscale.headroom`).
+
+    **The number moved once, and down.** On 10 Sep 2026 the client asked for
+    "35-45 Mbps → approximately 100 Mbps": 35-45 was wherever constant-quality
+    `-cq 19` happened to land, and naming a target is the only way to hold a
+    number. On 11 Sep, having seen what 100M does to an 8K file, they revised
+    it to 30M — "because your 8K is being produced by upscaling a
+    lower-resolution generation, there is especially little reason to save it
+    at extremely high 8K bitrates like 100-200 Mbps".
+
+    That is correct on the merits, not just on file size. The picture came
+    from an 864x480 render; bits spent above what that detail needs encode
+    interpolation, and a 30 s master drops from ~375 MB to ~110 MB for it.
 
     Empty restores constant-quality encoding, which is what every file before
     10 Sep 2026 used.

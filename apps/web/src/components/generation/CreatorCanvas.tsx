@@ -4,7 +4,7 @@ import type { GenerationJob, Workflow } from "@zolexai/workflow-contracts";
 import { brand } from "@/config/brand";
 import { Icon } from "@/components/ui/Icon";
 import { MediaPreview } from "@/components/media/MediaPreview";
-import { primaryOutput } from "@/services/generations";
+import { playableOutput, primaryOutput } from "@/services/generations";
 import { cn } from "@/lib/cn";
 import { ResultActions } from "./ResultActions";
 
@@ -163,7 +163,13 @@ export function GenerationResult({
   onReuseSettings: () => void;
   onVariation: () => void;
 }) {
+  // The MASTER decides the shape and the duration, because those are facts
+  // about the delivered file. What the PLAYER loads is the preview when there
+  // is one — an 8K master is 300-400 MB and a browser fetches most of it
+  // before the first frame. Download still hands over the master
+  // (`ResultActions`, which stays on `primaryOutput`).
   const output = primaryOutput(job);
+  const playable = playableOutput(job);
   const shape = previewShape(job);
   const duration = resultDuration(job);
 
@@ -179,7 +185,7 @@ export function GenerationResult({
       }}
     >
       <MediaPreview
-        url={output?.url ?? null}
+        url={playable?.url ?? null}
         kind={output?.kind ?? "image"}
         aspectRatio={shape.css}
         fallbackGradient={workflow.ui.thumb}

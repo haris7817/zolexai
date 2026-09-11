@@ -40,6 +40,12 @@ def _execution_for(claim: dict[str, Any]) -> dict[str, Any]:
         quality = str((claim.get("parameters") or {}).get("quality") or "").strip().lower()
         for key, value in (overlay.get(quality) or {}).items():
             execution[str(key)] = value
+    # Whether this API offered somewhere to PUT a web preview. An adapter asks
+    # before spending an encode on one, so a worker deployed ahead of the API
+    # that accepts previews does not make files nobody can take — which is the
+    # normal ordering here, since the node is a file copy and the VPS is a
+    # rebuild behind it.
+    execution["preview_wanted"] = bool(claim.get("preview_upload_url"))
     return execution
 
 

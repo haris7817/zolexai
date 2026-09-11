@@ -54,6 +54,7 @@ from worker.dialogue import add_auto_dialogue
 from worker.longform import GENERATE_FROM, GENERATE_TO, StageReporter
 from worker.media import FfmpegError, OutputExpectation, ffmpeg, verify_output
 from worker.media.captions import CaptionReport, remove_captions
+from worker.media.preview import ensure_faststart, write_preview
 from worker.media.upscale import DELIVERY_4K as _DELIVERY_4K
 from worker.media.upscale import DELIVERY_8K as _DELIVERY_8K
 from worker.media.upscale import is_4k, is_8k, upscale_clip
@@ -294,6 +295,15 @@ class LtxHdAdapter:
             output = await self._upscale(job, service, output, canvas, delivered)
         output = await self._finish(job, reporter, output, tier, aspect, delivered)
 
+        # Every delivered file starts playing on its first bytes. The encode
+        # paths already write `+faststart`; a 1080p delivery with stabilising
+        # off does not encode at all and is handed over as ComfyUI saved it,
+        # which is the case the client measured with its index at the end.
+        if output == job.workspace / "output.mp4":
+            output = await ensure_faststart(
+                output, timeout=settings.ltx_comfy_transfer_timeout
+            )
+
         wall = time.monotonic() - started
         try:
             info = await verify_output(
@@ -324,6 +334,21 @@ class LtxHdAdapter:
                 **captions.log_fields,
             },
         )
+        # A small copy for the web player, so the page never loads the master.
+        preview = None
+        if settings.ltx_hd_preview and job.execution.get("preview_wanted", True):
+            preview = await write_preview(
+                output,
+                job.workspace / "preview_1080p.mp4",
+                width=info.width or 0,
+                height=info.height or 0,
+                fps=settings.ltx_comfy_frame_rate,
+                nvenc_timeout=settings.ltx_comfy_transfer_timeout,
+                cpu_timeout=settings.ltx_comfy_generation_timeout,
+                run=lambda awaitable: cancellable(job, awaitable),
+                log_extra={"job_id": job.job_id, "workflow_id": job.workflow_id},
+            )
+
         await reporter.uploading()
         return AdapterResult(
             path=output,
@@ -332,6 +357,7 @@ class LtxHdAdapter:
             duration_seconds=info.duration_seconds,
             width=info.width,
             height=info.height,
+            preview_path=preview,
         )
 
     # ── Readings ─────────────────────────────────────────────────────────

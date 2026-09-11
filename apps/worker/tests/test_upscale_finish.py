@@ -25,8 +25,8 @@ from worker.media.upscale import (
     DEFLICKER,
     DELIVERY_4K,
     DELIVERY_8K,
-    _headroom,
     _video_codec,
+    headroom,
     is_4k,
     is_8k,
     upscale_clip,
@@ -63,16 +63,28 @@ def test_an_8k_frame_goes_to_hevc_because_nvenc_has_no_h264_that_large() -> None
 
 
 def test_a_bitrate_turns_both_encoders_into_capped_vbr() -> None:
-    """The client asked for "approximately 100 Mbps" in place of the 35-45
-    they measured. 35-45 was not a setting — it was wherever `-cq 19` landed
-    on their content — so honouring a number means naming one.
+    """A named rate, because `-cq` alone lands wherever the content puts it.
+
+    The number moved once. On 10 Sep the client asked for ~100 Mbps in place
+    of the 35-45 their files measured; on 11 Sep, having seen the file sizes,
+    they revised it down to 30M/45M/90M for the 8K master — "because your 8K
+    is being produced by upscaling a lower-resolution generation, there is
+    especially little reason to save it at extremely high 8K bitrates". They
+    are right: the detail is not there to preserve.
     """
-    nvenc, cpu = _video_codec(DELIVERY_8K["16:9"], "100M")
+    nvenc, cpu = _video_codec(DELIVERY_8K["16:9"], "30M")
     for argv in (nvenc, cpu):
-        assert argv[argv.index("-b:v") + 1] == "100M"
-        assert argv[argv.index("-maxrate") + 1] == "150M"
-        assert argv[argv.index("-bufsize") + 1] == "200M"
+        assert argv[argv.index("-b:v") + 1] == "30M"
+        assert argv[argv.index("-maxrate") + 1] == "45M"
+        assert argv[argv.index("-bufsize") + 1] == "90M"
     assert "-rc" in nvenc and nvenc[nvenc.index("-rc") + 1] == "vbr"
+    # The client's own quality ceiling alongside the rate.
+    assert nvenc[nvenc.index("-cq") + 1] == "22"
+    # p6 for the 8K master, their preset; p5 below it.
+    assert nvenc[nvenc.index("-preset") + 1] == "p6"
+    assert _video_codec(DELIVERY_4K["16:9"], "30M")[0][
+        _video_codec(DELIVERY_4K["16:9"], "30M")[0].index("-preset") + 1
+    ] == "p5"
 
     # No bitrate is the pre-10-Sep behaviour, untouched.
     nvenc, cpu = _video_codec(DELIVERY_4K["16:9"], None)
@@ -84,10 +96,13 @@ def test_an_unparseable_bitrate_does_not_fail_a_rendered_job() -> None:
     """A finishing pass runs after the GPU time has already been spent. A
     config string nobody can parse is a reason to encode conservatively, not
     a reason to throw away the render."""
-    assert _headroom("100M") == ("150M", "200M")
-    assert _headroom("100000k") == ("150000k", "200000k")
-    assert _headroom("120") == ("180", "240")
-    assert _headroom("fast") == ("fast", "fast")
+    # 1.5x and 3x — the client's own ratios, which they write twice: 30/45/90
+    # for the master and 5/7/14 for the preview.
+    assert headroom("30M") == ("45M", "90M")
+    assert headroom("5M") == ("7M", "15M")
+    assert headroom("100000k") == ("150000k", "300000k")
+    assert headroom("120") == ("180", "360")
+    assert headroom("fast") == ("fast", "fast")
 
 
 def test_a_tier_is_only_a_tier_when_it_is_spelled_like_one() -> None:

@@ -582,6 +582,10 @@ class GenerationService:
         width: int | None,
         height: int | None,
         result: dict[str, Any] | None = None,
+        preview_key: str = "",
+        preview_size_bytes: int | None = None,
+        preview_width: int | None = None,
+        preview_height: int | None = None,
     ) -> tuple[GenerationJob | None, str]:
         authorized = await self._lock_and_authorize(job_id, worker_id, lease_token)
         if isinstance(authorized, tuple):
@@ -601,6 +605,25 @@ class GenerationService:
             height=height,
         )
         await self.repo.attach_output(job, asset=asset, is_primary=True)
+
+        # The small copy the web player loads instead of the master (client
+        # instruction, 11 Sep 2026). Attached as a NON-primary output, which
+        # is what `is_primary` was always for — the column's own comment says
+        # "a job may also emit a thumbnail or preview". Nothing that reads the
+        # primary output changes, so a job without one behaves as before.
+        if preview_key:
+            preview = await self.assets.register_generated(
+                user_id=job.user_id,
+                kind=AssetKind.VIDEO,
+                storage_key=preview_key,
+                content_type="video/mp4",
+                name=f"{job.workflow_id}-{str(job.id)[:8]}-preview",
+                size_bytes=preview_size_bytes,
+                duration_seconds=duration_seconds,
+                width=preview_width,
+                height=preview_height,
+            )
+            await self.repo.attach_output(job, asset=preview, is_primary=False)
 
         # The worker's structured report, if any (Music: lyrics, timing,
         # coverage). Stored whole; the schema already bounded its size.

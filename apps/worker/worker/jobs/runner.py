@@ -165,6 +165,23 @@ class JobRunner:
                 claim["output_upload_url"], result.path, claim["output_content_type"]
             )
 
+            # The small copy the web page plays instead of the master (client
+            # instruction, 11 Sep 2026). Best-effort on purpose: the master is
+            # already uploaded and the job is already a success, so a preview
+            # that will not go up is logged and dropped rather than allowed to
+            # fail a render that cost minutes of GPU time. The page then plays
+            # the master, which is what it did before previews existed.
+            preview_key = ""
+            preview_size = None
+            if result.preview_path and claim.get("preview_upload_url"):
+                try:
+                    preview_size = await upload_output_file(
+                        claim["preview_upload_url"], result.preview_path, "video/mp4"
+                    )
+                    preview_key = claim["preview_upload_key"]
+                except Exception as exc:  # noqa: BLE001 - never fail a done job
+                    logger.warning("preview_upload_failed", extra={"detail": str(exc)[-300:]})
+
             response = await self.client.report_complete(
                 job_id,
                 worker_id=self.worker_id,
@@ -177,6 +194,8 @@ class JobRunner:
                 width=result.width,
                 height=result.height,
                 result=result.report,
+                preview_key=preview_key,
+                preview_size_bytes=preview_size,
             )
             if not response.get("accepted", False):
                 raise LeaseLost(response.get("reason", "completion rejected"))

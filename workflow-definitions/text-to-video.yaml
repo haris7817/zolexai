@@ -37,13 +37,22 @@ supported_durations: ["5s", "10s", "15s", "30s"]
 # 4:5 left with the engine change: the canvas selector the new workflow uses
 # offers 1:1, 9:16 and 16:9 among the product's ratios and has no 4:5.
 supported_aspect_ratios: ["16:9", "9:16", "1:1"]
-# No quality toggle (client decision, 5 Sep 2026): the Best and Standard
-# options are gone, and with them the only route to the engine they selected.
-# One workflow, one engine, nothing to choose.
-supported_quality_levels: []
+# A DELIVERY SIZE toggle, not an engine toggle (client instruction, 11 Sep
+# 2026: "there is option for user to select 1080 4k or 8k so on the bases of
+# that we upscale video").
+#
+# The 5 Sep decision removed Best/Standard and was right: those chose between
+# engines, and there is one engine now. This chooses how large the finished
+# file is, which is the customer's to decide because they are the one who has
+# to download it — 1080p is ~10 MB, 8K is 300-400 MB.
+#
+# Every level renders identically. The generation canvas does not move, so a
+# 1080p job and an 8K job are the same video in different frames, and picking
+# 8K buys size, not detail.
+supported_quality_levels: ["1080p", "4k", "8k"]
 
 settings:
-  quality: false
+  quality: true
   # A sound on/off choice: the workflow delivers an audio track, and a
   # customer may want a silent file.
   sound: true
@@ -98,6 +107,24 @@ execution:
   # Single-pass ceiling: 30 seconds — the client's ladder and the pack's own
   # slider maximum. Every offered length is one pass.
   max_segment_seconds: 30
+
+  # ── What the customer's quality choice means here ───────────────────────
+  #
+  # A DELIVERY SIZE, and nothing else. The generation canvas is the same at
+  # every level, so all three render for the same time and produce the same
+  # picture; only the frame it is delivered in changes, by one lanczos resize
+  # after the render (`worker/media/upscale.py`).
+  #
+  # It is the customer's choice because they carry its cost: 1080p is ~10 MB,
+  # 4K ~90 MB, 8K 300-400 MB. Whichever they pick, the page plays a 1080p
+  # preview and the download hands over what they chose.
+  execution_by_quality:
+    1080p:
+      delivery: 1080p
+    4k:
+      delivery: 4k
+    8k:
+      delivery: 8k
 
   # Deterministic prompt structuring (worker-side). The user's text reaches
   # the model verbatim as the first block; the worker appends derived

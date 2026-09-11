@@ -120,6 +120,14 @@ class ClaimedJob(BaseModel):
     output_upload_url: str
     output_content_type: str
 
+    preview_upload_key: str = ""
+    """Where a worker may PUT a small web-player copy of a video result.
+
+    Empty means this job has no preview slot — a non-video output. A worker
+    that produces no preview simply does not use it; the job completes exactly
+    as before, and the page falls back to playing the master."""
+    preview_upload_url: str = ""
+
 
 class JobClaimResponse(BaseModel):
     job: ClaimedJob | None = None
@@ -183,6 +191,15 @@ class JobCompleteRequest(BaseModel):
     duration_seconds: float | None = Field(default=None, ge=0)
     width: int | None = Field(default=None, ge=1)
     height: int | None = Field(default=None, ge=1)
+
+    preview_key: str = Field(default="", max_length=512)
+    """Set when the worker also PUT a small web-player copy. Empty is the
+    normal answer for a 1080p job, for every non-video output, and for any
+    adapter that does not make one — the page then plays the master, which is
+    what it did before previews existed."""
+    preview_size_bytes: int | None = Field(default=None, ge=0)
+    preview_width: int | None = Field(default=None, ge=1)
+    preview_height: int | None = Field(default=None, ge=1)
 
     result: dict[str, Any] | None = None
     """Structured, customer-safe facts about the output beyond the file
