@@ -99,7 +99,6 @@ from __future__ import annotations
 import asyncio
 import math
 import os
-import re
 import signal
 import zlib
 from collections import deque
@@ -154,11 +153,13 @@ from worker.media import (
     FfmpegError,
     MediaInfo,
     OutputExpectation,
+    VoiceCloneError,
     audio_onsets,
     build_attention_mask,
     build_hybrid_control,
-    build_identity_anchor,
+    build_multi_identity_anchor,
     build_person_matte,
+    clone_source_voices,
     concat_segments,
     duration_tolerance,
     extract_edge_control,
@@ -320,7 +321,19 @@ _PROXY_CANVASES: dict[str, tuple[int, int]] = {
 #: `480p` is what the client's own workflow file says. It is kept working
 #: rather than rejected, and resolves to the smallest LEGAL canvas — which is
 #: 512, because 480 cannot render at all.
-_PROXY_ALIASES: dict[str, str] = {"480p": "512p", "fast": "512p"}
+_PROXY_ALIASES: dict[str, str] = {
+    # The client has named this canvas three ways in three days. All of them
+    # resolve to the same legal grid, because the grid is what the model will
+    # accept and the name is what the workflow happens to say.
+    #
+    # `540p` is their 11 Sep name, and their own README does the arithmetic:
+    # "this LTX runtime requires both dimensions divisible by 64, 16:9 uses
+    # 896x512 ... instead of invalid literal 960x540". That is the same /64
+    # rule that killed their 480, independently arrived at.
+    "540p": "512p",
+    "480p": "512p",
+    "fast": "512p",
+}
 
 #: Single-pass ceilings **measured per grid**, in seconds. Not derived.
 #:
@@ -896,90 +909,6 @@ def delivery_dimensions_for_source(
         return max(2, round(value / 2) * 2)
 
     return even(width * scale), even(height * scale)
-
-
-#: Upper-body garments, and the lower half each one implies.
-#:
-#: The describer reports what it can SEE, and a reference photo usually stops
-#: at the waist — so the caption arrives describing a jacket and nothing else,
-#: and the model dresses the legs from the footage it already has. These pairs
-#: are deliberately plain and deliberately few: the aim is a costume that
-#: cannot be mistaken for the source's, not a wardrobe department.
-_OUTFIT_COMPLETIONS: tuple[tuple[tuple[str, ...], str], ...] = (
-    (
-        ("suit jacket", "blazer", "suit", "tuxedo", "dinner jacket"),
-        "matching {colour}suit trousers and black dress shoes",
-    ),
-    (
-        ("waistcoat", "vest", "dress shirt", "shirt and tie"),
-        "matching {colour}tailored trousers and black dress shoes",
-    ),
-    (
-        ("hoodie", "sweatshirt", "tracksuit top", "puffer", "bomber jacket"),
-        "matching {colour}tracksuit trousers and white trainers",
-    ),
-    (
-        ("leather jacket", "denim jacket", "jacket", "coat", "overcoat"),
-        "dark tapered trousers and black boots",
-    ),
-    (
-        ("t-shirt", "tee", "jumper", "sweater", "polo", "blouse", "top"),
-        "dark tapered trousers and plain dark shoes",
-    ),
-)
-
-#: Words that mean the caption already reaches the floor, so nothing is added.
-#:
-#: Matched on word boundaries, and "dress" only when it is the garment rather
-#: than the adjective — "a white dress shirt" describes a top, and reading it
-#: as a dress is how the first version of this decided a suit jacket already
-#: reached the floor.
-_LOWER_BODY_WORDS: tuple[str, ...] = (
-    "trouser", "trousers", "jeans", "pants", "shorts", "skirt",
-    "leggings", "joggers", "chinos", "shoe", "shoes", "boots", "trainers",
-    "sneakers", "heels", "sandals", "kilt",
-)
-_LOWER_BODY_RE = re.compile(
-    r"\b(?:" + "|".join(_LOWER_BODY_WORDS) + r")\b"
-    r"|\bdress(?!\s+shirt)\b"
-    r"|\bfull[- ]length\b|\bhead to toe\b",
-    re.IGNORECASE,
-)
-
-#: Colours worth carrying down from the top half, longest first so "dark grey"
-#: is read before "grey".
-_OUTFIT_COLOURS: tuple[str, ...] = (
-    "charcoal", "dark grey", "dark gray", "light grey", "light blue",
-    "navy", "black", "white", "grey", "gray", "brown", "beige", "cream",
-    "blue", "green", "red", "burgundy", "tan", "olive", "pink", "purple",
-)
-
-
-def _complete_outfit(described: str) -> str:
-    """The caption, extended to a whole costume when it stops at the waist.
-
-    Returns `described` untouched when it already names something below the
-    waist, when it names no garment this knows how to finish, or when it is
-    empty. Adding a second guess on top of a caption that already reaches the
-    floor would be the opposite failure — a prompt describing two outfits.
-    """
-    text = (described or "").strip()
-    if not text:
-        return text
-    lowered = text.lower()
-    if _LOWER_BODY_RE.search(lowered):
-        return text
-
-    for garments, completion in _OUTFIT_COMPLETIONS:
-        hit = next((g for g in garments if g in lowered), None)
-        if hit is None:
-            continue
-        # The colour stated nearest the garment, so a "charcoal suit jacket"
-        # gets charcoal trousers rather than the hair colour's.
-        before = lowered[: lowered.index(hit)]
-        colour = next((c for c in _OUTFIT_COLOURS if c in before), "")
-        return f"{text}, with {completion.format(colour=f'{colour} ' if colour else '')}"
-    return text
 
 
 def output_dimensions(width: int | None, height: int | None) -> tuple[int, int]:
@@ -1755,6 +1684,68 @@ class LtxAdapter:
 
     # ── video-to-video ───────────────────────────────────────────────────
 
+    async def _v2v_reference_images(self, job: AdapterJob) -> list[Path]:
+        """The ordered person references: none, or one to four, in order.
+
+        Restored on 11 Sep 2026 after the client withdrew it on the 10th and
+        asked for it back on the 11th. It is optional now where their 9 Sep
+        package made slot 1 mandatory, so an empty set is an ordinary
+        prompt-only restyle rather than a refusal.
+
+        A HOLE is refused. Slot 3 filled with slot 2 empty has no honest
+        reading — the slots are positional against the source's people from
+        screen-left, so a gap would silently shift everyone after it.
+        """
+        roles = ("reference_image", "reference_image_2", "reference_image_3", "reference_image_4")
+        items = [job.input_for(role) for role in roles]
+        last = max((index for index, item in enumerate(items) if item is not None), default=-1)
+        if last >= 0:
+            skipped = [roles[index] for index in range(last + 1) if items[index] is None]
+            if skipped:
+                raise AdapterError(
+                    "Please fill the person reference slots in order without skipping one.",
+                    internal_detail=f"non-contiguous V2V references; missing {skipped}",
+                    retriable=False,
+                )
+        maximum = max(1, min(4, job.execution_int("v2v_max_people", 4)))
+        count = last + 1
+        if count > maximum:
+            raise AdapterError(
+                f"This workflow supports up to {maximum} replacement people.",
+                internal_detail=f"received {count} references with v2v_max_people={maximum}",
+                retriable=False,
+            )
+        images: list[Path] = []
+        for role in roles[:count]:
+            image = await self._conditioning_image(job, role)
+            if image is None:
+                raise AdapterError(
+                    "One of the person reference images is missing.",
+                    internal_detail=f"validated slot {role} unexpectedly resolved to None",
+                    retriable=False,
+                )
+            images.append(image)
+        return images
+
+    @staticmethod
+    def _v2v_voice_references(job: AdapterJob) -> list[Path | None]:
+        """Four POSITIONAL voice slots, and holes stay holes.
+
+        The opposite rule to the images above, deliberately. Voice slot N
+        belongs to Person N, and a customer may clone Person 3 while leaving
+        Persons 1 and 2 with their own voices — so closing the gap would hand
+        Person 1 the voice meant for Person 3.
+
+        An empty slot is not a missing value. It is an instruction: keep that
+        speaker's original voice.
+        """
+        roles = ("voice_reference", "voice_reference_2", "voice_reference_3", "voice_reference_4")
+        slots: list[Path | None] = []
+        for role in roles:
+            item = job.input_for(role)
+            slots.append(item.require_path() if item is not None else None)
+        return slots
+
     @staticmethod
     def _uses_reference_identity(job: AdapterJob, reference: Path | None) -> bool:
         """Whether this job replaces the person, rather than restyling them.
@@ -1828,12 +1819,14 @@ class LtxAdapter:
         self._v2v_delivery_profile(job)
 
         target_seconds = source.duration_seconds or 0.0
-        reference = await self._conditioning_image(job, "reference_image")
+        references = await self._v2v_reference_images(job)
+        reference = references[0] if references else None
+        background = await self._conditioning_image(job, "background_image")
         grid = self._v2v_render_grid(job, source)
 
         if str(job.execution.get("v2v_engine") or "").strip() == "transform":
             return await self._run_transform(
-                job, reporter, staged, source, target_seconds, reference, grid
+                job, reporter, staged, source, target_seconds, references, background, grid
             )
 
         if self._uses_reference_identity(job, reference):
@@ -1946,7 +1939,8 @@ class LtxAdapter:
         staged: Path,
         source: MediaInfo,
         target_seconds: float,
-        reference: Path | None,
+        references: list[Path],
+        background: Path | None,
         grid: tuple[int, int],
     ) -> AdapterResult:
         """Restyle by CONTROL SIGNAL rather than by stills — the strong path.
@@ -1983,6 +1977,7 @@ class LtxAdapter:
         # map's grip is loosened over the person's own region so the source's
         # facial geometry stops being re-imposed. Without a reference image
         # the flag is inert and the job is an ordinary transform.
+        reference = references[0] if references else None
         identity = self._uses_reference_identity(job, reference)
         if identity and person_lock:
             raise AdapterError(
@@ -2006,38 +2001,48 @@ class LtxAdapter:
             # after the user's own text — which stays verbatim, first.
             # "" on any failure means the prompt simply goes through
             # unchanged; the description is reinforcement, not a dependency.
-            facts = await cancellable(job, reference_person_facts(reference))
-            if facts:
-                # Caption voice, and NO photograph vocabulary. "The person
-                # from the reference image, exactly as photographed" reads as
-                # meta to a human and as CONTENT to the model — words like
-                # "image" and "photographed" in the prompt invite a posed
-                # photo-shoot shot, which is one of the two ways the first
-                # customer job got a portrait cut into a dance video.
-                described = " ".join(facts.split()).rstrip(".")
-                # The outfit is stated head to foot, and the source's clothing
-                # is refused by name.
+            described: list[str] = []
+            for number, image in enumerate(references, 1):
+                facts = await cancellable(job, reference_person_facts(image))
+                if facts:
+                    # Caption voice, and NO photograph vocabulary. "The person
+                    # from the reference image, exactly as photographed" reads
+                    # as meta to a human and as CONTENT to the model — words
+                    # like "image" and "photographed" invite a posed
+                    # photo-shoot shot, which is one of the two ways the first
+                    # customer job got a portrait cut into a dance video.
+                    clean = " ".join(facts.split()).rstrip(".")
+                    label = "The person" if len(references) == 1 else f"Person {number}"
+                    described.append(f"{label} is {clean}")
+            if described:
+                # WHAT THE LOCK COVERS, and what it deliberately does not.
                 #
-                # A reference photo is usually a portrait or a half-length
-                # shot, so the describer can only report an upper body — and
-                # a prompt that says nothing below the waist lets the model
-                # keep what the footage already had there. Client report,
-                # 11 Sep 2026: the reference showed a charcoal suit jacket,
-                # and the render kept the source's black trousers and a
-                # hanging piece of cloth under it.
+                # Face, hair, skin and body — the client's 11 Sep rule. Their
+                # earlier ask that morning was the opposite: carry the
+                # reference's outfit and refuse the source's by name. They
+                # replaced it the same day with "identity lock applies to
+                # face/hair/skin/body identity; prompt-requested
+                # clothing/accessory changes remain allowed", and this follows
+                # that, because a customer asking for a charcoal suit should
+                # get one whatever the reference photo happens to wear.
                 #
-                # `_complete_outfit` is what turns "a charcoal suit jacket"
-                # into a whole costume; the closing clause is what makes the
-                # absence of the original explicit rather than implied.
+                # The cost of the change is worth stating: nothing now refuses
+                # the SOURCE's clothing, so a jacket the footage already had
+                # may persist. That was the defect behind the earlier ask.
+                mapping = ""
+                if len(references) > 1:
+                    mapping = (
+                        f"There are exactly {len(references)} people. At the opening "
+                        "frame they map from screen-left to right in this order, and "
+                        "each keeps their own identity for the whole video. "
+                    )
                 job = replace(
                     job,
                     prompt=(
                         f"{job.prompt}\n\n"
-                        f"The person is {_complete_outfit(described)}. The same "
-                        "person, with the same face, hair and complete outfit, "
-                        "stays on screen for the whole video. None of the "
-                        "original clothing remains: no trousers, garment or "
-                        "hanging cloth from the source video is visible on them."
+                        f"{mapping}{'. '.join(described)}. "
+                        "Their faces, hair, skin tone and body type stay exactly as "
+                        "described for the whole video."
                     ),
                 )
         strength = job.execution_float("v2v_control_strength", _V2V_CONTROL_STRENGTH)
@@ -2056,23 +2061,32 @@ class LtxAdapter:
         # shipped behaviour — when it cannot be built; the log says why.
         anchor = reference
         if identity and job.execution.get("v2v_identity_composited_anchor", True):
-            built = await cancellable(
-                job,
-                build_identity_anchor(
-                    staged,
-                    reference,
-                    job.workspace / "identity-anchor.png",
-                    start_seconds=0.0,
-                    width=grid[0],
-                    height=grid[1],
-                ),
-            )
-            if built is not None:
-                anchor = built
-            else:
-                anchor_strength = min(
-                    anchor_strength, _V2V_IDENTITY_RAW_ANCHOR_STRENGTH
+            try:
+                anchor = await cancellable(
+                    job,
+                    build_multi_identity_anchor(
+                        staged,
+                        references,
+                        job.workspace / "identity-anchor.png",
+                        start_seconds=0.0,
+                        width=grid[0],
+                        height=grid[1],
+                        background=background,
+                    ),
                 )
+            except FfmpegError as exc:
+                # Strict by default for a MULTI-person cast: mapping four
+                # references onto whichever people the matte happened to find
+                # is not a weaker result, it is a different one, and the
+                # customer cannot see which they got.
+                if job.execution.get("v2v_require_composited_anchor", True):
+                    raise AdapterError(
+                        "The reference people could not be mapped to this video. Use clear "
+                        "full-body references and an opening frame where everyone is visible.",
+                        internal_detail=f"multi-person identity anchor failed: {exc}",
+                        retriable=False,
+                    ) from exc
+                anchor_strength = min(anchor_strength, _V2V_IDENTITY_RAW_ANCHOR_STRENGTH)
         elif identity:
             anchor_strength = min(anchor_strength, _V2V_IDENTITY_RAW_ANCHOR_STRENGTH)
         refresh_strength = job.execution_float(
@@ -2086,8 +2100,14 @@ class LtxAdapter:
         # and the measured fix for the source's clothing surviving; off is the
         # edges-only signal this path used before, and the one line that
         # restores a fully prompt-driven background.
+        # OFF by default since 11 Sep 2026, matching the client's package,
+        # which builds its identity control with `invert=False`. It was added
+        # that morning for a clothing-bleed complaint their later rule
+        # reframed: the prompt owns clothing now, so the source's garments
+        # surviving is a prompt problem rather than a control-signal one.
+        # One line brings it back, and the measurement behind it stands.
         hybrid_identity_control = bool(
-            job.execution.get("v2v_identity_hybrid_control", True)
+            job.execution.get("v2v_identity_hybrid_control", False)
         )
         low = job.execution_float("v2v_edge_low", DEFAULT_EDGE_LOW)
         high = job.execution_float("v2v_edge_high", DEFAULT_EDGE_HIGH)
@@ -2370,6 +2390,24 @@ class LtxAdapter:
             "0",
         )
         keep_audio = source.has_audio and wants_sound
+        voice_slots = self._v2v_voice_references(job)
+        if any(voice_slots) and not keep_audio:
+            raise AdapterError(
+                "This video has no voices to replace."
+                if not source.has_audio
+                else "Turn sound on to use AI voice cloning.",
+                internal_detail=(
+                    "voice reference supplied with "
+                    f"has_audio={source.has_audio} wants_sound={wants_sound}"
+                ),
+                retriable=False,
+            )
+        if any(voice_slots) and not job.execution.get("v2v_voice_clone", True):
+            raise AdapterError(
+                "AI voice cloning is not enabled for this workflow.",
+                internal_detail="voice references supplied while v2v_voice_clone is false",
+                retriable=False,
+            )
         self._record_audio_mode(
             job, AudioMode.SOURCE_AUDIO if keep_audio else AudioMode.NO_AUDIO
         )
@@ -2407,9 +2445,45 @@ class LtxAdapter:
             # precisely so the join is encoded once — see its module note.
             mastered = picture
             if keep_audio:
-                await reporter.muxing("Restoring your audio…")
+                # BEFORE the upscale, deliberately. The cloned mix is audio, so
+                # nothing is gained by carrying an 8K picture through the
+                # conversion — and the single delivery encode then copies one
+                # finished soundtrack rather than re-muxing an enlarged file.
+                soundtrack = staged
+                if any(voice_slots):
+                    await reporter.muxing("Cloning the selected voices…")
+                    try:
+                        soundtrack = await cancellable(
+                            job,
+                            clone_source_voices(
+                                staged,
+                                voice_slots,
+                                job.workspace / "voice-cloned-mix.wav",
+                                duration_seconds=target_seconds,
+                                mapping_mode=str(
+                                    job.execution.get("v2v_voice_mapping")
+                                    or "visual_slot_order"
+                                ),
+                                preserve_unmapped_voices=bool(
+                                    job.execution.get("v2v_preserve_unmapped_voices", True)
+                                ),
+                                preserve_non_speech_audio=bool(
+                                    job.execution.get("v2v_preserve_non_speech_audio", True)
+                                ),
+                            ),
+                        )
+                    except VoiceCloneError as exc:
+                        raise AdapterError(
+                            "The AI voices could not be applied. Check the voice samples, "
+                            "then try again.",
+                            internal_detail=f"voice clone failed: {exc}",
+                            retriable=False,
+                        ) from exc
+                await reporter.muxing(
+                    "Adding the cloned voices…" if any(voice_slots) else "Restoring your audio…"
+                )
                 mastered = await mux_audio(
-                    picture, staged, job.workspace / "mastered.mp4"
+                    picture, soundtrack, job.workspace / "mastered.mp4"
                 )
             if not sized:
                 return mastered.replace(output)

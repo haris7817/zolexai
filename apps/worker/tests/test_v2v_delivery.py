@@ -335,7 +335,7 @@ def test_the_definition_offers_the_ladder_and_keeps_the_photo_optional() -> None
     execution = workflow["execution"]
     assert execution["v2v_engine"] == "transform"
     assert execution["v2v_reference_identity"] is True
-    assert execution["render_proxy"] == "704p"
+    assert execution["render_proxy"] == "540p"
     assert execution["execution_by_quality"] == {
         "1080p": {"delivery": "1080p"},
         "4k": {"delivery": "4k"},
@@ -356,5 +356,5 @@ def test_quality_changes_the_finish_and_nothing_else() -> None:
     for level in ("1080p", "4k", "8k"):
         execution = _execution_for({"execution": base, "parameters": {"quality": level}})
         assert execution["delivery"] == level
-        assert execution["render_proxy"] == "704p", "the render must not follow the finish"
+        assert execution["render_proxy"] == "540p", "the render must not follow the finish"
         assert execution["v2v_engine"] == "transform"

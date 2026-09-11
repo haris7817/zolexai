@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[3]
 #: nothing ELSE moves this file quietly. Everything it protects is still
 #: asserted by the suites named below, and by test_v2v_delivery and
 #: test_ltx_video_to_video.
-PINNED_LTX_ADAPTER_SHA256 = "450e4ea2464b327384024c1b9c36d323fcbbce63a992f57f73ade0464a1b6e09"
+PINNED_LTX_ADAPTER_SHA256 = "c4655905ebb9f2b5933dcdb0b072faa80548d117b379efd440b1df679414e7b7"
 
 
 def _sha256_lf(path: Path) -> str:

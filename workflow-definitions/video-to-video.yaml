@@ -28,26 +28,100 @@ inputs:
     accept: ["video/mp4", "video/quicktime", "video/webm"]
     max_size_mb: 512
 
-  # Optional reference image, and the switch between this tool's two paths.
-  # Empty is a prompt-only restyle; a photo turns on person replacement (see
-  # `v2v_reference_identity`). It stayed optional through the client's 9 Sep
-  # package, which made it mandatory, and their 10 Sep one, which made it
-  # optional again — the help line has to be true in both states, so it leads
-  # with what leaving it empty does.
+  # Up to four ordered person references (client package, 11 Sep 2026).
   #
-  # The single-person expectation is still set deliberately: a source with
-  # several people has all of them matted and re-imagined, so which one the
-  # photo becomes is undefined. That is measured, not a guess.
+  # This tool has now had one optional reference, then four mandatory ones,
+  # then one optional one again, and now four optional ones — in four days.
+  # The rule that survived all of it: an EMPTY set is a prompt-only restyle,
+  # and slots are positional against the source's people from screen-left, so
+  # a hole is refused rather than closed up.
   - role: reference_image
     kind: image
     required: false
-    label: REFERENCE IMAGE
+    label: PERSON 1 REFERENCE
     drop_hint: an optional person image
-    help: Optional. Leave it empty to restyle with your prompt alone. Add a
-      photo and that person replaces the one in your video. Works best when
-      your video shows one person.
+    help: Optional. Leave every slot empty to restyle with your prompt alone.
+      This one replaces the left-most person in your video.
     accept: ["image/jpeg", "image/png", "image/webp"]
     max_size_mb: 25
+  - role: reference_image_2
+    kind: image
+    required: false
+    label: PERSON 2 REFERENCE
+    drop_hint: an optional second person
+    help: Replaces the second person from the left. Fill the slots in order.
+    accept: ["image/jpeg", "image/png", "image/webp"]
+    max_size_mb: 25
+  - role: reference_image_3
+    kind: image
+    required: false
+    label: PERSON 3 REFERENCE
+    drop_hint: an optional third person
+    help: Replaces the third person from the left. Fill the slots in order.
+    accept: ["image/jpeg", "image/png", "image/webp"]
+    max_size_mb: 25
+  - role: reference_image_4
+    kind: image
+    required: false
+    label: PERSON 4 REFERENCE
+    drop_hint: an optional fourth person
+    help: Replaces the fourth person from the left. Fill the slots in order.
+    accept: ["image/jpeg", "image/png", "image/webp"]
+    max_size_mb: 25
+
+  - role: background_image
+    kind: image
+    required: false
+    label: BACKGROUND REFERENCE
+    drop_hint: an optional background image
+    help: Optional new environment. Your video still controls the camera and
+      the movement.
+    accept: ["image/jpeg", "image/png", "image/webp"]
+    max_size_mb: 25
+
+  # ── AI voice cloning, one slot per person ──────────────────────────────
+  #
+  # Positional like the pictures, and UNLIKE them a hole is meaningful: an
+  # empty slot keeps that person's own voice. Voice 3 alone is a valid
+  # request, and closing the gap would hand Person 1 the wrong voice.
+  #
+  # The words and the timing are the source's — this is speech-to-speech, not
+  # a rewrite — and music, ambience and effects are preserved. The conversion
+  # runs on a private service (`VOICE_CLONE_URL`); with none configured, a job
+  # carrying a voice sample FAILS rather than returning the original voices.
+  - role: voice_reference
+    kind: audio
+    required: false
+    label: PERSON 1 AI VOICE
+    drop_hint: an optional voice sample for person 1
+    help: Optional. Leave empty to keep this person's own voice. Their words
+      and timing do not change. Upload only voices you have permission to use.
+    accept: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg"]
+    max_size_mb: 100
+  - role: voice_reference_2
+    kind: audio
+    required: false
+    label: PERSON 2 AI VOICE
+    drop_hint: an optional voice sample for person 2
+    help: Optional. Leave empty to keep this person's own voice.
+    accept: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg"]
+    max_size_mb: 100
+  - role: voice_reference_3
+    kind: audio
+    required: false
+    label: PERSON 3 AI VOICE
+    drop_hint: an optional voice sample for person 3
+    help: Optional. Leave empty to keep this person's own voice.
+    accept: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg"]
+    max_size_mb: 100
+  - role: voice_reference_4
+    kind: audio
+    required: false
+    label: PERSON 4 AI VOICE
+    drop_hint: an optional voice sample for person 4
+    help: Optional. Leave empty to keep this person's own voice.
+    accept: ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/mp4", "audio/ogg"]
+    max_size_mb: 100
 
 # Duration is automatic (CR-006): the result matches the uploaded source video,
 # so the user picks nothing and the API rejects a supplied duration. A source
@@ -265,49 +339,33 @@ execution:
   # when footage says they need moving; the sweep clips backing the current
   # values are on the GPU box in /workspace/idtest/.
 
-  # ── Generate small, deliver large (client specification, 10 Sep 2026) ────
+  # ── Generate small, deliver large ───────────────────────────────────────
   #
-  # `render_proxy: 480p` puts generation on an 832x480-class grid matched to
-  # the source's own aspect, and `delivery` resizes the finished picture once,
-  # after the audio is back on. The customer's quality control picks the
-  # delivery size below.
+  # Generation runs on a small canvas and the finished picture is resized
+  # exactly once, to the size the customer picked.
   #
-  # BE CLEAR ABOUT WHAT THIS SELLS. The quality levels change the CONTAINER,
+  # BE CLEAR ABOUT WHAT THE QUALITY CONTROL SELLS. It changes the CONTAINER,
   # not the amount of detail generated: 8K is the same render as 1080p, just
   # enlarged further. A lanczos enlargement adds no detail — measured 0.29x on
-  # 7 Sep 2026 — so the size below is what decides how the result looks, and
+  # 7 Sep 2026 — so `render_proxy` is what decides how the result looks and
   # the ladder only decides how big the file is.
   #
-  # 704p since 11 Sep 2026, on the client's verdict against the first real
-  # result: the identity transferred correctly, but 480-class generation did
-  # not hold "fast hands, fingers, clothing edges and facial features", and
-  # enlarging to 8K only enlarged those distortions. Their canvases:
+  # `540p` is the client's name for it (11 Sep 2026). It resolves to 896x512
+  # at 16:9 and 512x896 at 9:16, which is their own arithmetic: this runtime
+  # needs both sides divisible by 64, so a literal 960x540 is not a shape the
+  # model will accept. Their 480 was rejected for the same reason on 10 Sep,
+  # measured on the card.
   #
-  #     landscape 1152x704 · vertical 704x1152 · square 704x704
-  #
-  # TWO DEPARTURES FROM THEIR NOTE, both measured on the card, both recorded
-  # in full against `_PROXY_704_DIMENSIONS` and `_PROXY_SHORT_SIDE`:
-  #
-  #   * the lattice is /64, not /32. 480 was /32 and could not render at all.
-  #     Their named canvases satisfy /64 anyway, so this only binds on the
-  #     unusual ratios;
-  #   * the long side is 1152, not 1280. 1280x704 renders a prompt-only
-  #     restyle fine and fails EVERY job carrying a reference photo, inside
-  #     the VAE's encode of the second video. Not headroom — it reproduced
-  #     with 70 GB free and with the transformer offloaded to CPU.
-  #
-  # Any other source shape gets the nearest /64 grid with a 704 short side and
-  # a long side no greater than 1152. That is still 1.77x the pixels of the
-  # 512-class canvas the client rejected, so passes cost appreciably more.
-  # Deleting the line puts generation back on the measured grid.
-  render_proxy: 704p
-  delivery: 4k
+  # THIS IS A DELIBERATE STEP BACK FROM 704, taken on the client's word on
+  # 11 Sep after they had asked for 704 the same morning. Their reason for 704
+  # stands on the record — 480-class "does not provide enough detail for fast
+  # hands, fingers, clothing edges and facial features" — and 1152x704 was
+  # measured working here at 152 s with a reference photo. Changing this line
+  # to `704p` is the whole revert.
+  render_proxy: 540p
+  delivery: 1080p
+  v2v_upscale_encoder: auto
 
-  # Keys here replace keys above for the matching quality level, and a request
-  # naming no level reads the block exactly as written. See `_execution_for`
-  # in the worker's resolver. Only the finish differs — deliberately: the
-  # render is identical, so a customer who re-runs at a larger size gets the
-  # same picture in a larger frame rather than a different video.
   execution_by_quality:
     1080p:
       delivery: 1080p
@@ -315,6 +373,31 @@ execution:
       delivery: 4k
     8k:
       delivery: 8k
+
+  # ── The cast, and their voices ─────────────────────────────────────────
+  #
+  # Up to four people, mapped from screen-left in the opening frame, and up to
+  # four voices where slot N belongs to person N. Both are optional and the
+  # picture slots must be contiguous; the VOICE slots need not be, because an
+  # empty voice slot is an instruction to keep that person's own voice.
+  v2v_max_people: 4
+  v2v_identity_composited_anchor: true
+  v2v_require_composited_anchor: true
+
+  # Identity locks FACE, HAIR, SKIN and BODY. Clothing and accessories stay
+  # under the prompt's control (client rule, 11 Sep 2026) — so a customer who
+  # asks for a charcoal suit gets one whatever the reference photo wears. The
+  # cost is stated where it belongs, in the adapter's caption block: nothing
+  # now refuses the SOURCE's clothing either.
+  v2v_identity_refresh_strength: 0.0
+  v2v_identity_subject_attention: 0.42
+  v2v_background_attention: 0.65
+
+  v2v_voice_clone: true
+  v2v_max_voices: 4
+  v2v_voice_mapping: visual_slot_order
+  v2v_preserve_unmapped_voices: true
+  v2v_preserve_non_speech_audio: true
 
   # M1 runs the mock runtime, which emits a placeholder image rather than
   # rendered media. `output_type` above stays the product truth; these two lines

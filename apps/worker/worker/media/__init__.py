@@ -33,6 +33,7 @@ from worker.media.ffmpeg import (
     tools_available,
 )
 from worker.media.frames import extract_final_frame, extract_frames_at, normalize_clip
+from worker.media.identity import build_multi_identity_anchor
 from worker.media.masks import (
     BACKGROUND_ATTENTION,
     build_attention_mask,
@@ -53,6 +54,7 @@ from worker.media.validate import (
     duration_tolerance,
     verify_output,
 )
+from worker.media.voice_clone import VoiceCloneError, clone_source_voices
 
 __all__ = [
     "BACKGROUND_ATTENTION",
@@ -63,12 +65,15 @@ __all__ = [
     "MediaInfo",
     "OutputExpectation",
     "Segment",
+    "VoiceCloneError",
     "audio_envelope",
     "audio_onsets",
     "build_attention_mask",
     "build_hybrid_control",
     "build_identity_anchor",
+    "build_multi_identity_anchor",
     "build_person_matte",
+    "clone_source_voices",
     "concat_segments",
     "crossfade_concat",
     "detect_onsets",

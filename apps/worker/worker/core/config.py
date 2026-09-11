@@ -319,6 +319,27 @@ class WorkerSettings(BaseSettings):
     ltx_frame_rate: int = 24
     """LTX-2.5's native rate; num_frames = seconds x this."""
 
+    voice_clone_url: str = ""
+    """The private speech-to-speech service Video to Video sends voices to.
+
+    Empty means the feature is unavailable, and a job carrying a voice sample
+    then FAILS rather than delivering the original voices under a claim that
+    they were replaced. That is the same posture as every other optional model
+    seam here, and for the same reason: silence is the expensive failure.
+
+    The worker embeds no cloning model. It owns the contract — up to four
+    positional slots, words and timing preserved, music and ambience
+    preserved, the mix conformed to the source's exact duration — and the
+    service owns diarization and conversion.
+    """
+
+    voice_clone_api_key: str = ""
+    """Bearer credential for `voice_clone_url`, when it wants one."""
+
+    voice_clone_timeout_seconds: float = 3600.0
+    """Whole-request budget. Conversion is a per-minute-of-audio cost on
+    someone else's hardware, so this is generous by design."""
+
     ltx_generation_delivery: str = "native"
     """
     Default delivery size when a workflow names none: `native`, `1080p`, `4k`

@@ -25,6 +25,7 @@ and `test_transform.py`.
 
 from __future__ import annotations
 
+import pathlib
 from pathlib import Path
 
 import pytest
@@ -42,10 +43,10 @@ from tests.conftest import (
     value_of,
 )
 from worker.adapters.ltx import (
-    _complete_outfit,
     delivery_dimensions_for_source,
     proxy_704_grid_for_source,
     proxy_canvas_for,
+    proxy_grid_for_source,
 )
 from worker.media import probe_media
 from worker.media.validate import OutputExpectation, verify_output
@@ -137,9 +138,18 @@ def test_the_profile_names_resolve_and_480_is_never_used_literally() -> None:
     assert proxy_canvas_for("nonsense") is None
 
 
-def test_the_shipped_definition_asks_for_704() -> None:
+def test_the_shipped_definition_asks_for_the_540_class_canvas() -> None:
+    """540p, the client's 11 Sep name, which resolves to 896x512 at 16:9.
+
+    They asked for 704 earlier the same day and then shipped a package built
+    on 540; 540 is the later word and this follows it. The 704 profile stays
+    in the adapter, measured and one word away — see `proxy_704_grid_for_source`
+    and the note in the definition.
+    """
     workflow = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
-    assert workflow["execution"]["render_proxy"] == "704p"
+    assert workflow["execution"]["render_proxy"] == "540p"
+    assert proxy_canvas_for("540p") == (512, 1152)
+    assert proxy_grid_for_source(1920, 1080, short_side=512, max_long_side=1152) == (896, 512)
 
 
 @needs_ffmpeg
@@ -187,47 +197,54 @@ async def test_no_photo_is_a_restyle_and_is_never_refused(
 # ── The replacement is complete ──────────────────────────────────────────
 
 
-def test_a_reference_that_stops_at_the_waist_is_given_a_whole_outfit() -> None:
-    """The client's own case: the reference showed a charcoal suit jacket and
-    the render kept the source's black trousers under it."""
-    completed = _complete_outfit(
-        "a man of about 40, charcoal suit jacket over a white dress shirt"
+def test_identity_locks_the_body_and_leaves_clothing_to_the_prompt() -> None:
+    """The client's 11 Sep rule, replacing their own earlier ask that morning.
+
+    Identity covers face, hair, skin and body. Clothing and accessories stay
+    under the prompt, so a customer asking for a charcoal suit gets one
+    whatever the reference photo happens to be wearing.
+
+    What this gives up is worth naming: nothing refuses the SOURCE's clothing
+    any more either, which is the defect their earlier ask was aimed at.
+    """
+    from worker.adapters import ltx
+
+    assert not hasattr(ltx, "_complete_outfit"), (
+        "outfit completion contradicts the prompt owning clothing"
     )
-    assert "trousers" in completed
-    assert "charcoal" in completed.split("with")[1]
-    assert "shoes" in completed
+    body = pathlib.Path(ltx.__file__).read_text(encoding="utf-8")
+    clause = "Their faces, hair, skin tone and body type stay exactly as"
+    assert clause in body, "the identity lock no longer names what it locks"
+    assert "None of the original clothing remains" not in body, (
+        "the clothing-refusal clause outlived the rule that asked for it"
+    )
 
 
-def test_an_outfit_that_already_reaches_the_floor_is_left_alone() -> None:
-    """Adding a second guess on top would describe two outfits, which is the
-    same failure in the other direction."""
-    for described in (
-        "a woman of about 30 in a black leather jacket and blue jeans",
-        "a woman of about 45 in a red dress",
-        "a man of about 60 in a brown overcoat and black boots",
-    ):
-        assert _complete_outfit(described) == described
+def _stub_hybrid(monkeypatch) -> list[bool]:
+    """Records every hybrid-control build and the side it protected."""
+    built: list[bool] = []
 
+    async def fake(edges, footage, matte, dest, *, frames, invert=False, **kwargs):
+        built.append(invert)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(Path(edges).read_bytes())
+        return dest
 
-def test_a_dress_shirt_is_not_a_dress() -> None:
-    """The first version of this read the word and concluded a suit jacket
-    already reached the floor."""
-    completed = _complete_outfit("a man of about 50 in a navy blazer and a white dress shirt")
-    assert completed != "a man of about 50 in a navy blazer and a white dress shirt"
-    assert "trousers" in completed
+    monkeypatch.setattr("worker.adapters.ltx.build_hybrid_control", fake)
+    return built
 
 
 @needs_ffmpeg
-async def test_identity_keeps_the_scene_and_frees_only_the_person(
+async def test_identity_uses_edges_alone_by_default(
     workspace: Path, fake_models: Path, stub_repo: Path,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The control clip must carry the scene's real pixels and give the
-    person's region edges alone. Without it the original's clothing is inside
-    the control signal everywhere, which is what it bled from.
+    """Matching the client's package, which builds identity with
+    `invert=False` and never takes the hybrid path.
 
-    One matte per section, not two: the mask and the control clip used to
-    build their own, at ~19s of GPU each.
+    The inverted control was added on 11 Sep for a clothing-bleed complaint
+    their later rule reframed — the prompt owns clothing now. It stays in the
+    adapter, off, because the measurement behind it still stands.
     """
     from tests.test_reference_identity import identity_job, stub_matte
     from worker.media import extract_final_frame
@@ -235,58 +252,47 @@ async def test_identity_keeps_the_scene_and_frees_only_the_person(
     source = await make_clip(workspace / "source.mp4", 2.0)
     reference = await extract_final_frame(source, workspace / "reference.png")
     mattes = stub_matte(monkeypatch)
-    hybrids: list[dict] = []
-
-    async def fake_hybrid(edges, footage, matte, dest, *, frames, invert=False, **kwargs):
-        hybrids.append({"invert": invert, "frames": frames})
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(Path(edges).read_bytes())
-        return dest
-
-    monkeypatch.setattr("worker.adapters.ltx.build_hybrid_control", fake_hybrid)
+    built = _stub_hybrid(monkeypatch)
     render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 2.0))
 
     await collect(identity_job(
         workspace, source, reference,
-        execution={"render_proxy": "704p", "delivery": "native"},
+        execution={"render_proxy": "540p", "delivery": "native"},
     ))
 
-    assert hybrids, "identity did not build a hybrid control clip"
-    assert all(item["invert"] for item in hybrids), (
-        "invert=False keeps the SOURCE person — the opposite of a replacement"
-    )
+    assert built == [], "the hybrid control ran without being asked for"
     assert len(mattes) == 1, f"the matte was built {len(mattes)} times for one section"
 
 
 @needs_ffmpeg
-async def test_the_hybrid_control_is_one_line_away_from_off(
+async def test_the_inverted_control_is_one_line_away(
     workspace: Path, fake_models: Path, stub_repo: Path,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """It changes more than identity: the background stops being restyled and
-    stays photographic. That is right for a replacement and wrong for a look
-    change, so the workflow can turn it off."""
+    """`invert=True` keeps the scene's own pixels and gives the person's
+    region edges alone, so the source's clothing is not in the control signal
+    to bleed from. One workflow key, and the matte is still built once."""
     from tests.test_reference_identity import identity_job, stub_matte
     from worker.media import extract_final_frame
 
     source = await make_clip(workspace / "source.mp4", 2.0)
     reference = await extract_final_frame(source, workspace / "reference.png")
-    stub_matte(monkeypatch)
-    built: list[bool] = []
-
-    async def fake_hybrid(edges, footage, matte, dest, *, frames, invert=False, **kwargs):
-        built.append(invert)
-        dest.write_bytes(Path(edges).read_bytes())
-        return dest
-
-    monkeypatch.setattr("worker.adapters.ltx.build_hybrid_control", fake_hybrid)
+    mattes = stub_matte(monkeypatch)
+    built = _stub_hybrid(monkeypatch)
     render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 2.0))
 
     await collect(identity_job(
         workspace, source, reference,
-        execution={"v2v_identity_hybrid_control": False, "delivery": "native"},
+        execution={
+            "v2v_identity_hybrid_control": True,
+            "render_proxy": "540p",
+            "delivery": "native",
+        },
     ))
-    assert built == [], "the flag did not turn it off"
+
+    assert built, "the flag did not turn the hybrid control on"
+    assert all(built), "invert=False keeps the SOURCE person — the opposite of a replacement"
+    assert len(mattes) == 1, "the control clip and the mask must share one matte"
 
 
 # ── The length is the source's, to the frame ─────────────────────────────

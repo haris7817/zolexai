@@ -152,7 +152,7 @@ async def test_later_passes_carry_the_seam_and_never_the_raw_photo(
     source = await make_clip(workspace / "source.mp4", 3.7)
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     job = identity_job(
         workspace, source, reference,
@@ -185,7 +185,7 @@ async def test_the_interior_anchor_is_still_a_knob_for_footage_that_drifts(
     source = await make_clip(workspace / "source.mp4", 3.7)
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     job = identity_job(
         workspace, source, reference,
@@ -211,15 +211,20 @@ def stub_anchor(monkeypatch: pytest.MonkeyPatch, *, succeed: bool = True) -> lis
     calls: list[dict] = []
 
     async def fake(
-        source: Path, reference: Path, dest: Path, *,
+        source: Path, references, dest: Path, *,
         start_seconds: float, width: int, height: int, **kwargs,
-    ) -> Path | None:
+    ) -> Path:
+        reference = references[0] if isinstance(references, list) else references
         calls.append(
             {"source": source, "reference": reference,
              "start_seconds": start_seconds, "width": width, "height": height}
         )
         if not succeed:
-            return None
+            # The multi-person builder RAISES where the old single-person one
+            # returned None; the caller's fallback is the same either way.
+            from worker.media import FfmpegError
+
+            raise FfmpegError("stubbed anchor failure")
         dest.parent.mkdir(parents=True, exist_ok=True)
         await run_ffmpeg(
             ["-f", "lavfi", "-i", f"color=red:s={width}x{height}",
@@ -227,7 +232,7 @@ def stub_anchor(monkeypatch: pytest.MonkeyPatch, *, succeed: bool = True) -> lis
         )
         return dest
 
-    monkeypatch.setattr("worker.adapters.ltx.build_identity_anchor", fake)
+    monkeypatch.setattr("worker.adapters.ltx.build_multi_identity_anchor", fake)
     return calls
 
 
@@ -245,7 +250,7 @@ async def test_the_composited_anchor_opens_the_video_at_full_strength(
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
     anchors = stub_anchor(monkeypatch)
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     await collect(identity_job(
         workspace, source, reference,
@@ -262,24 +267,45 @@ async def test_the_composited_anchor_opens_the_video_at_full_strength(
 
 
 @needs_ffmpeg
-async def test_an_unbuildable_anchor_falls_back_to_the_raw_photo_capped(
+async def test_an_unbuildable_anchor_refuses_by_default_and_can_fall_back(
     workspace: Path, fake_models: Path, stub_repo: Path,
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No person at frame 0, matting unavailable — the job still runs, with
-    the raw photo at the capped strength: weaker identity, never a failure,
-    and never a raw photo at 1.0 replacing the shot instead of the person."""
+    """Two behaviours, and which one you get is a workflow decision.
+
+    STRICT is the default and is what the client's 11 Sep package ships
+    (`v2v_require_composited_anchor: true`). With up to four references
+    mapped positionally onto the source's people, an anchor that could not be
+    built means the mapping is unknown — and delivering SOME arrangement of
+    four strangers is not a weaker result, it is a different one the customer
+    cannot see the wrongness of.
+
+    Turning the requirement off restores the older single-person behaviour:
+    the raw photo at the capped strength. Weaker identity, never a failure,
+    and never a raw photo at 1.0 replacing the shot instead of the person.
+    """
     source = await make_clip(workspace / "source.mp4", 2.0)
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
     stub_anchor(monkeypatch, succeed=False)
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
+
+    with pytest.raises(AdapterError) as refusal:
+        await collect(identity_job(
+            workspace, source, reference,
+            execution={"v2v_identity_composited_anchor": True},
+        ))
+    assert "could not be mapped" in refusal.value.user_message
+    assert refusal.value.retriable is False
+    assert invocations(log) == [], "the model ran before the mapping was known"
 
     await collect(identity_job(
         workspace, source, reference,
-        execution={"v2v_identity_composited_anchor": True},
+        execution={
+            "v2v_identity_composited_anchor": True,
+            "v2v_require_composited_anchor": False,
+        },
     ))
-
     (argv,) = invocations(log)
     assert conditioning_of(argv) == [(str(reference), 0, 0.65)]
     assert (workspace / "output.mp4").exists()
@@ -306,7 +332,7 @@ async def test_the_identity_strengths_are_tunable_per_workflow(
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
     stub_anchor(monkeypatch)
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     job = identity_job(
         workspace, source, reference,
@@ -349,7 +375,7 @@ async def test_identity_softens_the_control_grip_over_the_person(
     reference = await extract_final_frame(source, workspace / "reference.png")
     mattes = stub_matte(monkeypatch)
     weights = record_attention(monkeypatch)
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     job = identity_job(
         workspace, source, reference,
@@ -381,7 +407,7 @@ async def test_the_matte_matches_the_frames_actually_rendered(
     source = await make_clip(workspace / "source.mp4", 2.0)
     reference = await extract_final_frame(source, workspace / "reference.png")
     mattes = stub_matte(monkeypatch)
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     await collect(identity_job(workspace, source, reference))
 
@@ -422,7 +448,7 @@ async def test_the_worker_describes_the_reference_into_every_pass_prompt(
     shown = stub_describer(
         monkeypatch, "an adult woman with long dark hair, black leather jacket"
     )
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     job = identity_job(
         workspace, source, reference,
@@ -440,7 +466,7 @@ async def test_the_worker_describes_the_reference_into_every_pass_prompt(
             "keep the performance and the camera, use the person from the reference"
         ), "the user's text survives verbatim, first"
         assert "long dark hair, black leather jacket" in prompt
-        assert "The same person, with the same face, hair and clothing" in prompt
+        assert "faces, hair, skin tone and body type stay exactly as" in prompt
         # No photograph vocabulary: "image" and "photographed" in a prompt are
         # CONTENT to the model, and content is rendered — a posed photo shot
         # cut into the customer's video.
@@ -458,7 +484,7 @@ async def test_a_failed_description_leaves_the_prompt_untouched(
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
     stub_describer(monkeypatch, "")
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     job = identity_job(
         workspace, source, reference,
@@ -479,7 +505,7 @@ async def test_the_describer_is_optional_and_off_means_off(
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
     shown = stub_describer(monkeypatch, "should never be asked")
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     job = identity_job(
         workspace, source, reference,
@@ -502,7 +528,7 @@ async def test_without_identity_mode_nothing_is_described(
     source = await make_clip(workspace / "source.mp4", 2.0)
     reference = await extract_final_frame(source, workspace / "reference.png")
     shown = stub_describer(monkeypatch, "should never be asked")
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     job = identity_job(workspace, source, reference)
     job.execution.pop("v2v_reference_identity")
@@ -526,7 +552,7 @@ async def test_identity_without_a_reference_is_an_ordinary_transform(
     matte, no mask, no invented conditioning."""
     source = await make_clip(workspace / "source.mp4", 2.0)
     mattes = stub_matte(monkeypatch)
-    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    log = render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     await collect(identity_job(workspace, source, reference=None))
 
@@ -546,7 +572,7 @@ async def test_identity_and_person_lock_refuse_to_run_together(
     workflow carrying both is a configuration bug, not a preference order."""
     source = await make_clip(workspace / "source.mp4", 2.0)
     reference = await extract_final_frame(source, workspace / "reference.png")
-    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     with pytest.raises(AdapterError) as raised:
         await collect(
@@ -568,7 +594,7 @@ async def test_identity_on_the_still_engine_is_refused_not_ignored(
     the silent-success failure mode this feature must never ship."""
     source = await make_clip(workspace / "source.mp4", 2.0)
     reference = await extract_final_frame(source, workspace / "reference.png")
-    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     job = identity_job(workspace, source, reference)
     job.execution.pop("v2v_engine")
@@ -585,7 +611,7 @@ async def test_a_matting_failure_fails_the_job_not_the_promise(
 ) -> None:
     source = await make_clip(workspace / "source.mp4", 2.0)
     reference = await extract_final_frame(source, workspace / "reference.png")
-    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     async def broken(*args, **kwargs):
         raise FfmpegError("matting model unavailable")
@@ -611,7 +637,7 @@ async def test_identity_keeps_the_sources_length_and_audio(
     source = await make_clip(workspace / "source.mp4", 2.0, audio=True)
     reference = await extract_final_frame(source, workspace / "reference.png")
     stub_matte(monkeypatch)
-    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 1.0))
+    render_stub(tmp_path, monkeypatch, await make_clip(tmp_path / "render.mp4", 4.0))
 
     await collect(identity_job(workspace, source, reference))
 
